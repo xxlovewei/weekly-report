@@ -3,6 +3,30 @@ import { editNumberedText, moveNumberedText, reconcileNumberedInput } from './nu
 
 describe('numbered text editing', () => {
   it.each([
+    ['1. A\n2. B\n3. C', '1. AB\n2. C'],
+    ['1、A\n2、B\n3、C', '1、AB\n2、C'],
+    ['（1）A\n（2）B\n（3）C', '（1）AB\n（2）C'],
+    ['09. A\n10. B\n11. C', '09. AB\n10. C'],
+  ])('Backspace at the body start joins items and decrements the suffix: %s', (value, expected) => {
+    const position = value.indexOf('B')
+    expect(editNumberedText(value, position, position, { kind: 'backspace' })?.value).toBe(expected)
+  })
+
+  it('joins an empty item before Backspace can erase its marker', () => {
+    expect(editNumberedText('1. A\n2. \n3. C', 8, 8, { kind: 'backspace' })).toEqual({ value: '1. A\n2. C', start: 4, end: 4 })
+    expect(reconcileNumberedInput('1. A\n2. \n3. C', '1. A\n2.\n3. C', 7, 7, 'deleteContentBackward').value).toBe('1. A\n2. C')
+  })
+
+  it('Backspace at continuation body start removes only its formatting and line break', () => {
+    expect(editNumberedText('1. A\n   B\n2. C', 8, 8, { kind: 'backspace' })?.value).toBe('1. AB\n2. C')
+  })
+
+  it('does not merge a restarted group into the previous group', () => {
+    expect(editNumberedText('1. A\n7. B\n8. C', 8, 8, { kind: 'backspace' })?.value).toBe('1. A\nB\n7. C')
+    expect(editNumberedText('1. A\n12. B\n13. C', 6, 6, { kind: 'backspace' })).toBeNull()
+  })
+
+  it.each([
     ['1. A\n2. B\n3. C', 4, 'enter', '1. A\n2. \n3. B\n4. C'],
     ['1. AB\n2. C', 4, 'enter', '1. A\n2. B\n3. C'],
     ['1. A\n2. B', 3, 'enter', '1. \n2. A\n3. B'],

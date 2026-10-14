@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref, useId, watch } from 'vue'
+import { nextTick, onMounted, ref, useId, watch } from 'vue'
 import { DescriptionHistory } from './descriptionHistory'
 import { editNumberedText, moveNumberedText, reconcileNumberedInput } from './numberedLines'
 import type { NumberedEdit, TextSelection } from './numberedLines'
@@ -9,7 +9,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const text = ref(props.modelValue), error = ref('')
 const id = useId()
-const history = reactive(new DescriptionHistory())
+const history = new DescriptionHistory()
 let known: TextSelection = { value: props.modelValue, start: 0, end: 0 }
 let pending: { before: TextSelection; inputType: string; expected?: TextSelection | null } | null = null
 let composition: TextSelection | null = null
@@ -174,11 +174,6 @@ onMounted(resize)
 </script>
 
 <template>
-  <label><span>任务描述</span><textarea ref="textarea" :disabled="disabled" rows="2" :value="text" placeholder="写下这项工作…" :aria-invalid="!!error" :aria-describedby="`${id}-hint${error ? ` ${id}-error` : ''}`" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" /></label>
-  <div class="description-tools">
-    <span :id="`${id}-hint`" class="description-hint">Enter 续编号 · Shift+Enter 项内换行</span>
-    <button type="button" class="mini-button" :disabled="disabled || !history.canUndo" title="Ctrl/Cmd+Z" @mousedown.prevent @click="restoreHistory(false)">撤销</button>
-    <button type="button" class="mini-button" :disabled="disabled || !history.canRedo" title="Ctrl+Y / Ctrl/Cmd+Shift+Z" @mousedown.prevent @click="restoreHistory(true)">重做</button>
-  </div>
+  <label><span>任务描述</span><textarea ref="textarea" :disabled="disabled" rows="2" :value="text" placeholder="写下这项工作…" :aria-invalid="!!error" :aria-describedby="error ? `${id}-error` : undefined" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" /></label>
   <p v-if="error" :id="`${id}-error`" class="description-error" role="alert">{{ error }}</p>
 </template>
