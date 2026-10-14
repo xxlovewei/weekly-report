@@ -46,9 +46,10 @@ docker compose -p zhoubao-01a13375-test -f compose.yaml -f compose.test.yaml up 
 - 新建用户及重置密码后的用户必须先修改初始密码，新密码不能与初始密码相同。管理员不在周报汇总中展示。
 - 月历仅查询当前显示的六周任务标记；绿色 √ 表示该周有任务。会议记录对所有登录用户开放，按日期倒序分页，支持日期、内容及关联任务状态筛选。
 - 自动保存具有修订号保护，遇到其他标签页修改时会提示冲突。
+- 本周工作新增、修改任务时，任务描述中以 `1.`、`1、`、`1)`、`(1)`、`（1）` 等数字序号开头的行，按 Enter 会续写下一序号并保留缩进、分隔符及空格；Shift+Enter 可普通换行。
 
 API 文档在登录后的 `/api/docs`；所有受保护的写请求需要 `X-CSRF-Token`，登录和 `/api/auth/me` 返回该值。新增、复制行及跨周复制支持 `Idempotency-Key` 请求头。
 
 ## 发布版本号
 
-登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。每次发布前在 `frontend` 目录执行 `npm version <新版本号> --no-git-tag-version`，同步更新项目版本与锁文件，再构建发布。本次版本为 `1.0.2`。
+登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。每次发布前在 `frontend` 目录执行 `npm version <新版本号> --no-git-tag-version`，同步更新项目版本与锁文件，再构建发布。本次版本为 `1.0.3`。
