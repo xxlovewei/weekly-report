@@ -1,0 +1,17 @@
+services:
+  db:
+    container_name: zhoubao-server-db
+  api:
+    container_name: zhoubao-server-api
+    image: zhoubao-server-api:2026-10-13
+    environment:
+      COOKIE_PATH: /zhoubao
+  web:
+    container_name: zhoubao-server-web
+    image: zhoubao-server-web:2026-10-13-fix-task
+    build:
+      context: ./frontend
+      args:
+        VITE_BASE: /zhoubao/
+    volumes:
+      - ./frontend/nginx.server.conf:/etc/nginx/conf.d/default.conf:ro
