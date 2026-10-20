@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { version } from '../package.json'
+const brandLogo = `${import.meta.env.BASE_URL}logo.png`
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MonthCalendar from './MonthCalendar.vue'
@@ -296,7 +297,7 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
   <main v-else-if="!user" class="login-screen"><div class="login-poster"><span class="eyebrow">每周工作 / 团队周报</span><h1>把一周<br>写成进展。</h1><p>清晰记录每一天，也看见整个团队。</p></div><form class="login-panel" @submit.prevent="login"><span class="eyebrow">01 / 用户登录</span><h2>登录周报</h2><label>用户名<input name="username" autocomplete="username" required /></label><label>密码<input name="password" type="password" autocomplete="current-password" required /></label><button class="primary-button" type="submit">进入工作台 →</button><p v-if="notice" class="message error" role="alert">{{ notice }}</p></form></main>
   <div v-else class="shell">
     <button class="mobile-toggle" type="button" :aria-expanded="mobileOpen" aria-label="打开或关闭导航" @click="mobileOpen = !mobileOpen">☰ 菜单</button>
-    <aside class="sidebar" :class="{ open: mobileOpen }"><div class="brand"><span class="brand-mark">周</span><div><strong>周报</strong><small>当前版本：v{{ version }}</small></div></div>
+    <aside class="sidebar" :class="{ open: mobileOpen }"><div class="brand"><img class="brand-mark" :src="brandLogo" alt="周报" /><div><strong>周报</strong><small>当前版本：v{{ version }}</small></div></div>
       <nav v-if="!user.must_change_password" aria-label="主导航"><button type="button" :class="{ active: page === 'work' }" @click="navigate('work')">▣ 本周工作</button><button type="button" :class="{ active: page === 'reports' }" @click="navigate('reports')">▤ 周报汇总</button><button type="button" :class="{ active: page === 'categories' }" @click="navigate('categories')">▥ 任务类型</button><button type="button" :class="{ active: page === 'meetings' }" @click="navigate('meetings')">▧ 会议记录</button><button v-if="user.role === 'admin'" type="button" :class="{ active: page === 'users' }" @click="navigate('users')">▦ 用户管理</button></nav>
       <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" @select="selectWeek" />
       <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" @click="openMeeting()">＋ 新增会议记录</button>
