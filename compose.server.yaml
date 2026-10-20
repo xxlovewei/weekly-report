@@ -3,12 +3,12 @@ services:
     container_name: zhoubao-server-db
   api:
     container_name: zhoubao-server-api
-    image: zhoubao-server-api:1.0.6
+    image: zhoubao-server-api:1.0.7
     environment:
       COOKIE_PATH: /zhoubao
   web:
     container_name: zhoubao-server-web
-    image: zhoubao-server-web:1.0.6
+    image: zhoubao-server-web:1.0.7
     build:
       context: ./frontend
       args:
