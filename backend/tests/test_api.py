@@ -112,6 +112,34 @@ def test_no_source_does_not_clear_and_blank_status_copies():
     assert len(copied["tasks"]) == 2
     assert copied["tasks"][1]["status"] is None
 
+def test_reorder_tasks_persists_and_rejects_invalid_or_stale_orders():
+    alice, bob = client("alice"), client("bob")
+    week = "/api/weeks/2026-10-12"
+    for revision in range(3):
+        original = mutate(alice, "POST", f"{week}/tasks", revision).json()
+    ids = [task["id"] for task in original["tasks"]]
+    foreign = mutate(bob, "POST", f"{week}/tasks", 0).json()["tasks"][0]["id"]
+    other_week = mutate(alice, "POST", "/api/weeks/2026-10-19/tasks", 0).json()["tasks"][0]["id"]
+    endpoint = f"{week}/tasks/order"
+    for invalid in [[], ids[:-1], [ids[0], ids[0], ids[2]], [*ids, foreign], [ids[0], ids[1], foreign], [ids[0], ids[1], other_week]]:
+        assert mutate(alice, "PUT", endpoint, 3, {"task_ids": invalid}).status_code == 422
+        assert alice.get(week).json() == original
+
+    desired = [ids[2], ids[0], ids[1]]
+    response = mutate(alice, "PUT", endpoint, 3, {"task_ids": desired})
+    assert response.status_code == 200, response.text
+    reordered = response.json()
+    assert reordered["revision"] == 4
+    assert [task["id"] for task in reordered["tasks"]] == desired
+    assert [task["position"] for task in reordered["tasks"]] == [1, 2, 3]
+    assert alice.get(week).json() == reordered
+    assert client("admin").get(f"/api/reports/2026-10-12/users/2").json() == reordered
+    assert mutate(alice, "PUT", endpoint, 3, {"task_ids": ids}).status_code == 409
+    assert alice.get(week).json() == reordered
+    assert mutate(bob, "PUT", endpoint, 1, {"task_ids": desired}).status_code == 422
+    assert bob.get(week).json()["tasks"][0]["id"] == foreign
+    assert alice.put(f"{endpoint}?revision=4", json={"task_ids": ids}, headers={"X-CSRF-Token": "wrong"}).status_code == 403
+
 def test_all_statuses_user_edit_and_password_change():
     alice = client("alice")
     admin = client("admin")
