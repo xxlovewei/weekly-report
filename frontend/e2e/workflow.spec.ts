@@ -3,9 +3,9 @@ import { addDays, mondayOf, todayShanghai } from '../src/dates'
 
 test('管理员与普通用户完成周报流程', async ({ page, context }) => {
   const errors: string[] = []
-  const usernames: string[] = []
+  const loginBodies: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  page.on('request', request => { if (request.url().endsWith('/api/auth/login')) usernames.push(request.postDataJSON().username) })
+  page.on('request', request => { if (request.url().endsWith('/api/auth/login')) loginBodies.push(request.postData() || '') })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '登录周报' })).toBeVisible()
   await page.getByLabel('用户名').fill('admin')
@@ -22,8 +22,11 @@ test('管理员与普通用户完成周报流程', async ({ page, context }) => 
   const aliceLogin = page.waitForResponse(response => response.url().endsWith('/api/auth/login'))
   await page.getByRole('button', { name: /进入工作台/ }).click()
   const secondLogin = await aliceLogin
-  expect(usernames).toEqual(['admin', 'alice'])
-  expect(secondLogin.request().postDataJSON().username).toBe('alice')
+  expect(loginBodies).toHaveLength(2)
+  for (const body of loginBodies) {
+    expect(Object.keys(JSON.parse(body)).sort()).toEqual(['data', 'iv', 'key'])
+    expect(body).not.toContain('e2e-password-123')
+  }
   expect((await secondLogin.json()).user.username).toBe('alice')
   await expect(page.locator('.identity')).toContainText('alice')
   await expect(page.getByRole('button', { name: /用户管理/ })).toHaveCount(0)
@@ -140,7 +143,13 @@ test('新用户必须改密后才能维护会议记录', async ({ page }) => {
   const content = `首次登录后创建${username}`
   const editedContent = `已编辑的会议记录${username}`
   let passwordRequests = 0
-  page.on('request', request => { if (request.url().endsWith('/api/auth/password')) passwordRequests++ })
+  page.on('request', request => {
+    if (request.url().endsWith('/api/auth/password')) {
+      passwordRequests++
+      expect(request.postData()).not.toContain('123456')
+      expect(request.postData()).not.toContain('654321')
+    }
+  })
   await page.goto('/login')
   await page.getByLabel('用户名').fill('admin')
   await page.getByLabel('密码', { exact: true }).fill('e2e-password-123')

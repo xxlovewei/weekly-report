@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { generateKeyPairSync } from 'node:crypto'
 
 test('管理员保存锁定状态并可解锁，新用户默认正常', async ({ page }) => {
   const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', is_active: true, status: '正常', must_change_password: false }
@@ -33,7 +34,11 @@ test('管理员保存锁定状态并可解锁，新用户默认正常', async ({
 })
 
 test('登录显示账号锁定提示', async ({ page }) => {
-  await page.route('**/api/**', route => route.fulfill({ status: 401, json: { detail: '账号已锁定，请联系管理员。' } }))
+  const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+  await page.route('**/api/**', route => route.request().url().endsWith('/auth/public-key')
+    ? route.fulfill({ json: { key } })
+    : route.fulfill({ status: 401, json: { detail: '账号已锁定，请联系管理员。' } }))
   await page.goto('/login')
   await page.getByLabel('用户名').fill('alice')
   await page.getByLabel('密码', { exact: true }).fill('wrong-password')

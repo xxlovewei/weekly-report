@@ -54,6 +54,10 @@ docker compose -p zhoubao-01a13375-test -f compose.yaml -f compose.test.yaml up 
 
 API 文档在登录后的 `/api/docs`；所有受保护的写请求需要 `X-CSRF-Token`，登录和 `/api/auth/me` 返回该值。新增、复制行及跨周复制支持 `Idempotency-Key` 请求头。
 
+登录、修改密码、新建用户及重置密码的请求体均采用加密凭据：客户端从 `/api/auth/public-key` 获取当前进程的 RSA 公钥，以随机 AES-256-GCM 密钥加密整个 JSON 表单（请求路径作为认证附加数据），再以 RSA-OAEP/SHA-256 加密 AES 密钥。接口只接受 `key`、`iv`、`data` 三个 Base64 字段，不接受明文密码字段；数据库仍使用 Argon2 哈希存储密码。服务重启后公钥会更新，客户端每次提交都会重新获取。
+
+**对外部署必须通过 HTTPS 提供网页和 API**，在 TLS 入口终止 HTTPS，并将流量转发到容器内的 Nginx。浏览器加密不能保护通过 HTTP 下发的网页免遭篡改。`compose.server.yaml` 已启用 `COOKIE_SECURE=true`，因此正式站点必须使用 HTTPS；本机 `127.0.0.1` 开发环境可继续使用 HTTP。
+
 ## 发布版本号
 
 登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。每次发布前在 `frontend` 目录执行 `npm version <新版本号> --no-git-tag-version`，同步更新项目版本与锁文件，再构建发布。本次版本为 `1.2.0`。

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.db import Base, SessionLocal, engine
 from app.main import app, hasher
 from app.models import User
+from tests.credentials import credential_post, encrypted_body
 
 PASSWORD = "correct-horse-123"
 
@@ -28,7 +29,7 @@ def clean_db():
 
 def client(username):
     c = TestClient(app)
-    result = c.post("/api/auth/login", json={"username": username, "password": PASSWORD})
+    result = credential_post(c, "/api/auth/login", {"username": username, "password": PASSWORD})
     assert result.status_code == 200, result.text
     c.headers["X-CSRF-Token"] = result.json()["csrf_token"]
     return c
@@ -37,10 +38,27 @@ def mutate(c, method, path, revision, body=None, key=None):
     headers = {"Idempotency-Key": key} if key else None
     return c.request(method, f"{path}?revision={revision}", json=body, headers=headers)
 
+def test_credential_requests_require_valid_encryption():
+    anon = TestClient(app)
+    plain_login = {"username": "alice", "password": PASSWORD}
+    assert anon.post("/api/auth/login", json=plain_login).status_code == 422
+    encrypted = encrypted_body(anon, "/api/auth/login", plain_login)
+    assert PASSWORD not in str(encrypted)
+    assert anon.post("/api/auth/login", json={**encrypted, "data": encrypted["data"][:-4] + "AAAA"}).status_code == 422
+    assert anon.post("/api/auth/login", json=encrypted).status_code == 200
+
+    alice = client("alice")
+    assert alice.post("/api/auth/password", json={"old_password": PASSWORD, "new_password": "another-secret"}).status_code == 422
+    wrong_path = encrypted_body(alice, "/auth/login", {"old_password": PASSWORD, "new_password": "another-secret"})
+    assert alice.post("/api/auth/password", json=wrong_path).status_code == 422
+    admin = client("admin")
+    assert admin.post("/api/users", json={"username": "new", "display_name": "新人", "password": PASSWORD}).status_code == 422
+    assert admin.post("/api/users/2/password", json={"password": PASSWORD}).status_code == 422
+
 def test_auth_roles_sessions_and_history():
     with TestClient(app) as anon:
         assert anon.get("/api/users").status_code == 401
-        wrong = anon.post("/api/auth/login", json={"username":"admin","password":"wrong"})
+        wrong = credential_post(anon, "/api/auth/login", {"username":"admin","password":"wrong"})
         assert wrong.status_code == 401 and wrong.json()["detail"] == "用户名或密码错误"
     alice = client("alice")
     admin = client("admin")
@@ -72,9 +90,9 @@ def test_categories_snapshot_ownership_and_reset():
     assert bob.get("/api/weeks/2026-10-12").json()["tasks"] == []
     assert admin.patch(f"/api/weeks/2026-10-12/tasks/{task_id}?revision=0", json={"notes":"x"}).status_code == 404
     alice_id = next(u["id"] for u in admin.get("/api/users").json() if u["username"] == "alice")
-    assert admin.post(f"/api/users/{alice_id}/password", json={"password":"new-secret-123"}).status_code == 200
+    assert credential_post(admin, f"/api/users/{alice_id}/password", {"password":"new-secret-123"}).status_code == 200
     assert alice.get("/api/auth/me").status_code == 401
-    assert TestClient(app).post("/api/auth/login", json={"username":"alice","password":PASSWORD}).status_code == 401
+    assert credential_post(TestClient(app), "/api/auth/login", {"username":"alice","password":PASSWORD}).status_code == 401
 
 def test_task_order_copy_revision_and_idempotency():
     alice = client("alice")
@@ -151,29 +169,29 @@ def test_all_statuses_user_edit_and_password_change():
     for status in ["已完成", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%", "5%", None]:
         current = mutate(alice, "PATCH", f"/api/weeks/2026-10-12/tasks/{task_id}", current["revision"], {"status": status}).json()
         assert current["tasks"][0]["status"] == status
-    assert alice.post("/api/auth/password", json={"old_password":PASSWORD, "new_password":"another-secret-123"}).status_code == 200
+    assert credential_post(alice, "/api/auth/password", {"old_password":PASSWORD, "new_password":"another-secret-123"}).status_code == 200
     assert alice.get("/api/auth/me").status_code == 401
-    assert TestClient(app).post("/api/auth/login", json={"username":"alice.renamed", "password":"another-secret-123"}).status_code == 200
+    assert credential_post(TestClient(app), "/api/auth/login", {"username":"alice.renamed", "password":"another-secret-123"}).status_code == 200
 
 def test_new_user_password_gate_and_six_character_limit():
     manager = client("admin")
-    assert manager.post("/api/users", json={"username":"new","display_name":"新人","password":"12345"}).status_code == 422
-    created = manager.post("/api/users", json={"username":"new","display_name":"新人","password":"123456"})
+    assert credential_post(manager, "/api/users", {"username":"new","display_name":"新人","password":"12345"}).status_code == 422
+    created = credential_post(manager, "/api/users", {"username":"new","display_name":"新人","password":"123456"})
     assert created.status_code == 201 and created.json()["must_change_password"] is True
     new = client_with_password("new", "123456")
     assert new.get("/api/weeks/2026-10-12").status_code == 403
     assert new.get("/api/auth/me").json()["user"]["must_change_password"] is True
-    reused = new.post("/api/auth/password", json={"old_password":"123456","new_password":"123456"})
+    reused = credential_post(new, "/api/auth/password", {"old_password":"123456","new_password":"123456"})
     assert reused.status_code == 400 and reused.json()["detail"] == "新密码不能与当前密码相同"
-    assert new.post("/api/auth/password", json={"old_password":"123456","new_password":"654321"}).status_code == 200
+    assert credential_post(new, "/api/auth/password", {"old_password":"123456","new_password":"654321"}).status_code == 200
     assert new.get("/api/auth/me").status_code == 401
     assert client_with_password("new", "654321").get("/api/weeks/2026-10-12").status_code == 200
-    assert manager.post(f"/api/users/{created.json()['id']}/password", json={"password":"abcdef"}).status_code == 200
+    assert credential_post(manager, f"/api/users/{created.json()['id']}/password", {"password":"abcdef"}).status_code == 200
     assert client_with_password("new", "abcdef").get("/api/weeks/2026-10-12").status_code == 403
 
 def client_with_password(username, password):
     c = TestClient(app)
-    response = c.post("/api/auth/login", json={"username": username, "password": password})
+    response = credential_post(c, "/api/auth/login", {"username": username, "password": password})
     assert response.status_code == 200, response.text
     c.headers["X-CSRF-Token"] = response.json()["csrf_token"]
     return c
