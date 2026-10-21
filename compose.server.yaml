@@ -6,6 +6,7 @@ services:
     image: zhoubao-server-api:1.1.0
     environment:
       COOKIE_PATH: /zhoubao
+      COOKIE_SECURE: "true"
   web:
     container_name: zhoubao-server-web
     image: zhoubao-server-web:1.2.0

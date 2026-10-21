@@ -6,7 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import MonthCalendar from './MonthCalendar.vue'
 import MeetingEditor from './MeetingEditor.vue'
 import TaskTable from './TaskTable.vue'
-import { api, ApiError, newIdempotencyKey, setCsrf } from './api'
+import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
 import type { Category, Meeting, MeetingPage, ReportTab, Task, TaskField, User, WeekData } from './types'
@@ -318,7 +318,7 @@ async function navigate(name: string) {
 async function login(event: Event) {
   try {
     const form = new FormData(event.currentTarget as HTMLFormElement)
-    const result = await api<{ user: User; csrf_token: string }>('/auth/login', 'POST', { username: form.get('username'), password: form.get('password') })
+    const result = await credentialApi<{ user: User; csrf_token: string }>('/auth/login', { username: form.get('username'), password: form.get('password') })
     user.value = result.user; setCsrf(result.csrf_token); notice.value = ''
     await router.replace(result.user.must_change_password ? '/password' : '/work')
     await loadPage()
@@ -333,7 +333,7 @@ async function showLoginAfterRevocation() {
 }
 async function changePassword() {
   if (passwordForm.new_password !== passwordForm.confirm_password) { notice.value = '两次输入的新密码不一致。'; return }
-  try { await api('/auth/password', 'POST', { old_password: passwordForm.old_password, new_password: passwordForm.new_password }); await showLoginAfterRevocation(); passwordForm.old_password = ''; passwordForm.new_password = ''; passwordForm.confirm_password = ''; notice.value = '密码已更新，请重新登录。' } catch (error) { showError(error) }
+  try { await credentialApi('/auth/password', { old_password: passwordForm.old_password, new_password: passwordForm.new_password }); await showLoginAfterRevocation(); passwordForm.old_password = ''; passwordForm.new_password = ''; passwordForm.confirm_password = ''; notice.value = '密码已更新，请重新登录。' } catch (error) { showError(error) }
 }
 async function addCategory() {
   try { await api('/categories', 'POST', { name: newCategory.value }); newCategory.value = ''; await loadPage() } catch (error) { showError(error) }
@@ -346,7 +346,7 @@ async function deleteCategory(id: number) {
   try { await api(`/categories/${id}`, 'DELETE'); await loadPage() } catch (error) { showError(error) }
 }
 async function createUser() {
-  try { await api('/users', 'POST', newUser); Object.assign(newUser, { username: '', display_name: '', password: '', role: 'user', status: '正常' }); await loadPage() } catch (error) { showError(error) }
+  try { await credentialApi('/users', newUser); Object.assign(newUser, { username: '', display_name: '', password: '', role: 'user', status: '正常' }); await loadPage() } catch (error) { showError(error) }
 }
 async function saveUser(id: number) {
   try {
@@ -361,7 +361,7 @@ async function toggleUser(item: User) {
   try { await api(`/users/${item.id}`, 'PATCH', { is_active: !item.is_active }); if (user.value?.id === item.id && item.is_active) await showLoginAfterRevocation(); else await loadPage() } catch (error) { showError(error) }
 }
 async function resetPassword(id: number) {
-  try { await api(`/users/${id}/password`, 'POST', { password: userDrafts[id].password }); userDrafts[id].password = ''; if (user.value?.id === id) await showLoginAfterRevocation(); notice.value = '密码已重置，用户需重新登录。' } catch (error) { showError(error) }
+  try { await credentialApi(`/users/${id}/password`, { password: userDrafts[id].password }); userDrafts[id].password = ''; if (user.value?.id === id) await showLoginAfterRevocation(); notice.value = '密码已重置，用户需重新登录。' } catch (error) { showError(error) }
 }
 
 const removeRouteGuard = router.beforeEach(async (to, from) => {
