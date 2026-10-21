@@ -7,7 +7,7 @@ const props = defineProps<{ meeting?: Meeting | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 const form = reactive({
   meeting_date: props.meeting?.meeting_date || todayShanghai(),
-  meeting_type: props.meeting?.meeting_type || '',
+  meeting_type: props.meeting?.meeting_type || '周会',
   content: props.meeting?.content || '',
   needs_follow_up: props.meeting?.needs_follow_up || false,
   tasks: (props.meeting?.tasks || []).map(t => ({ name: t.name, status: t.status })) as MeetingTask[],
@@ -26,7 +26,7 @@ async function save() {
 <template>
   <div class="modal-scrim" @keydown.esc="emit('close')">
     <div class="modal meeting-modal" role="dialog" aria-modal="true" :aria-label="meeting ? '编辑会议记录' : '新增会议记录'">
-      <span class="eyebrow">会议记录</span><h2>{{ meeting ? '编辑会议记录' : '新增会议记录' }}</h2>
+      <div class="meeting-modal-head"><div><span class="eyebrow">会议记录</span><h2>{{ meeting ? '编辑会议记录' : '新增会议记录' }}</h2></div><button class="icon-btn" type="button" aria-label="关闭" @click="emit('close')">×</button></div>
       <form class="stack-form" @submit.prevent="save">
         <div class="meeting-form-row"><label>日期<input ref="first" v-model="form.meeting_date" type="date" required /></label><label>会议类型<input v-model="form.meeting_type" maxlength="100" required /></label></div>
         <label>会议内容<textarea v-model="form.content" rows="4" maxlength="10000" required /></label>

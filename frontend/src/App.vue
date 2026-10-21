@@ -21,6 +21,7 @@ const draggedReportTabId = ref<number | null>(null)
 const calendarKey = ref(0)
 const meetings = ref<MeetingPage>({ items: [], total: 0, page: 1, page_size: 10 })
 const meetingPage = ref(1), meetingOpen = ref(false), meetingDraft = ref<Meeting | null>(null)
+const todayWeeklyMeeting = ref<Meeting | null>(null), todayWeeklyMeetingLoading = ref(false)
 const meetingFilter = reactive({ date_from: '', date_to: '', content: '', status: '' })
 const notice = ref(''), saveStatus = ref<'saved' | 'saving' | 'failed' | 'conflict'>('saved')
 const mutating = ref(false)
@@ -34,7 +35,19 @@ const reportExportOpen = ref(false), reportExporting = ref(false), reportExportE
 const reportExportStart = ref(''), reportExportEnd = ref('')
 const reportExportStartInput = ref<HTMLInputElement | null>(null)
 const page = computed(() => String(route.name || 'work'))
-const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '我的任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码' }[page.value] || '周报'))
+const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码' }[page.value] || '周报'))
+const taskFontSizeKey = 'zhoubao.task-font-size'
+function loadTaskFontSize() {
+  try {
+    const size = Number(localStorage.getItem(taskFontSizeKey))
+    return Number.isInteger(size) && size >= 12 && size <= 24 ? size : 16
+  } catch { return 16 }
+}
+const taskFontSize = ref(loadTaskFontSize())
+function adjustTaskFontSize(delta: number) {
+  taskFontSize.value = Math.min(20, Math.max(12, taskFontSize.value + delta))
+  try { localStorage.setItem(taskFontSizeKey, String(taskFontSize.value)) } catch { /* 浏览器存储不可用时仍应用本次调整。 */ }
+}
 let timer: ReturnType<typeof setTimeout> | null = null
 let maxWaitTimer: ReturnType<typeof setTimeout> | null = null
 let flushPromise: Promise<void> | null = null
@@ -195,10 +208,15 @@ async function loadPage() {
       week.value = weekData; categories.value = categoryData
     } else if (page.value === 'reports') {
       reportTasks.value = []
-      const newTabs = await api<ReportTab[]>(`/reports/${selectedWeek.value}`)
+      todayWeeklyMeetingLoading.value = true
+      const [newTabs, weeklyMeeting] = await Promise.all([
+        api<ReportTab[]>(`/reports/${selectedWeek.value}`),
+        findTodayWeeklyMeeting(),
+      ])
       if (serial !== loadSerial) return
+      todayWeeklyMeeting.value = weeklyMeeting
       tabs.value = restoreReportTabOrder(newTabs, storedReportTabOrder())
-      if (!newTabs.some(tab => tab.id === activeTab.value)) activeTab.value = newTabs[0]?.id || null
+      if (!tabs.value.some(tab => tab.id === activeTab.value)) activeTab.value = tabs.value[0]?.id || null
       if (activeTab.value) {
         const requestedTab = activeTab.value
         const response = await api<WeekData>(`/reports/${selectedWeek.value}/users/${requestedTab}`)
@@ -215,6 +233,7 @@ async function loadPage() {
     }
     notice.value = ''
   } catch (error) { showError(error) }
+  finally { if (serial === loadSerial) todayWeeklyMeetingLoading.value = false }
 }
 async function loadMeetings() {
   const params = new URLSearchParams({ page: String(meetingPage.value), page_size: '10' })
@@ -224,10 +243,27 @@ async function loadMeetings() {
   if (meetingFilter.status) params.set('status', meetingFilter.status)
   meetings.value = await api<MeetingPage>(`/meetings?${params}`)
 }
+async function findTodayWeeklyMeeting() {
+  const today = todayShanghai(), pageSize = 50
+  for (let page = 1; ; page++) {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), date_from: today, date_to: today })
+    const result = await api<MeetingPage>(`/meetings?${params}`)
+    const meeting = result.items.find(item => item.meeting_type === '周会')
+    if (meeting || page * pageSize >= result.total) return meeting || null
+  }
+}
 async function searchMeetings() { meetingPage.value = 1; try { await loadMeetings() } catch (error) { showError(error) } }
 async function turnMeetingPage(offset: number) { meetingPage.value += offset; try { await loadMeetings() } catch (error) { meetingPage.value -= offset; showError(error) } }
 function openMeeting(meeting: Meeting | null = null) { meetingDraft.value = meeting; meetingOpen.value = true }
-async function meetingSaved() { meetingOpen.value = false; notice.value = '会议记录已保存。'; if (page.value === 'meetings') { meetingPage.value = 1; try { await loadMeetings() } catch (error) { showError(error) } } }
+async function meetingSaved() {
+  meetingOpen.value = false; notice.value = '会议记录已保存。'
+  if (page.value === 'meetings') { meetingPage.value = 1; try { await loadMeetings() } catch (error) { showError(error) } }
+  else if (page.value === 'reports') {
+    todayWeeklyMeetingLoading.value = true
+    try { todayWeeklyMeeting.value = await findTodayWeeklyMeeting() } catch (error) { showError(error) }
+    finally { todayWeeklyMeetingLoading.value = false }
+  }
+}
 async function removeMeeting(meeting: Meeting) {
   if (!window.confirm(`删除 ${meeting.meeting_date} 的会议记录？`)) return
   try { await api(`/meetings/${meeting.id}`, 'DELETE'); await loadMeetings() } catch (error) { showError(error) }
@@ -277,7 +313,7 @@ async function selectWeek(value: string, refresh = false) {
 }
 async function navigate(name: string) {
   if (page.value === name) { mobileOpen.value = false; return }
-  try { if (structuralPromise) await structuralPromise; await flushPending(); await router.push(`/${name}`); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
+  try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push(`/${name}`); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
 async function login(event: Event) {
   try {
@@ -361,17 +397,19 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
     <aside class="sidebar" :class="{ open: mobileOpen }"><div class="brand"><img class="brand-mark" :src="brandLogo" alt="周报" /><div><strong>周报</strong><small>当前版本：v{{ version }}</small></div></div>
       <nav v-if="!user.must_change_password" aria-label="主导航"><button type="button" :class="{ active: page === 'work' }" @click="navigate('work')">▣ 本周工作</button><button type="button" :class="{ active: page === 'reports' }" @click="navigate('reports')">▤ 周报汇总</button><button type="button" :class="{ active: page === 'categories' }" @click="navigate('categories')">▥ 任务类型</button><button type="button" :class="{ active: page === 'meetings' }" @click="navigate('meetings')">▧ 会议记录</button><button v-if="user.role === 'admin'" type="button" :class="{ active: page === 'users' }" @click="navigate('users')">▦ 用户管理</button></nav>
       <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" @select="selectWeek" />
-      <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" @click="openMeeting()">＋ 新增会议记录</button>
-      <div class="sidebar-bottom"><div class="identity"><strong>{{ user.display_name }}</strong><span>{{ user.role === 'admin' ? '管理员' : '普通用户' }} · {{ user.username }}</span></div><button type="button" @click="navigate('password')">修改密码</button><button type="button" @click="logout">退出登录 ↗</button></div>
+      <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" :disabled="todayWeeklyMeetingLoading" @click="openMeeting(todayWeeklyMeeting)">{{ todayWeeklyMeeting ? '✎ 修改会议记录' : '＋ 新增会议记录' }}</button>
+      <div class="sidebar-bottom"><div class="sidebar-user"><div class="identity"><strong>{{ user.display_name }}</strong><small>{{ user.username }}</small></div><div class="sidebar-actions"><button class="mini-button" type="button" @click="navigate('password')">修改密码</button><button class="mini-button" type="button" @click="logout">退出登录</button></div></div></div>
+      
     </aside>
-    <main class="content"><div class="page-top"><div><span class="eyebrow">周报系统 / {{ title }}</span><h1>{{ title }}</h1><p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p></div><div v-if="page === 'work' || page === 'reports'" class="top-actions"><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></div></div>
-      <p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
-      <div v-if="page === 'work'" class="work-area"><div class="section-head"><strong>任务清单 <span>{{ week.tasks.length }}</span></strong><div class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div></div><TaskTable :key="selectedWeek" :tasks="week.tasks" :categories="categories" :busy="mutating" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" /></div>
+    <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top"><div><span class="eyebrow">周报系统 / {{ title }}</span><h1>{{ title }}</h1><p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p></div><div v-if="page === 'work' || page === 'reports'" class="top-actions"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></div></div>
+      <div class="work-area"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
+      <div v-if="page === 'work'"><div class="section-head"><strong>任务清单 <span>{{ week.tasks.length }}</span></strong><div class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div></div><TaskTable :key="selectedWeek" :tasks="week.tasks" :categories="categories" :busy="mutating" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" /></div>
       <div v-else-if="page === 'reports'"><div v-if="tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="!tab.is_active">（已停用）</small></button></div><div v-else class="empty">暂无成员记录。</div><TaskTable v-if="activeTab" :tasks="reportTasks" readonly /></div>
       <section v-else-if="page === 'categories'" class="panel"><p>为自己的任务维护类型；修改或删除后，历史任务名称保持原样。系统内置类型所有人可直接选择。</p><form class="inline-form" @submit.prevent="addCategory"><label>新任务类型<input v-model="newCategory" maxlength="100" required placeholder="例如：产品开发" /></label><button class="primary-button" type="submit">新增类型</button></form><div v-for="category in categories" :key="category.id" class="list-row"><input v-model="categoryDrafts[category.id]" :aria-label="`任务类型 ${category.name}`" maxlength="100" /><button class="mini-button" type="button" @click="renameCategory(category.id)">保存名称</button><button class="mini-button danger" type="button" @click="deleteCategory(category.id)">删除</button></div><div v-if="!categories.length" class="empty">还没有个人任务类型，可在上方新增。</div></section>
-      <section v-else-if="page === 'meetings'" class="meetings-page"><form class="meeting-filters panel" @submit.prevent="searchMeetings"><label>开始日期<input v-model="meetingFilter.date_from" type="date" /></label><label>结束日期<input v-model="meetingFilter.date_to" type="date" /></label><label>会议内容<input v-model="meetingFilter.content" placeholder="模糊搜索" /></label><label>任务状态<select v-model="meetingFilter.status"><option value="">全部</option><option value="已完成">已完成</option><option value="未完成">未完成</option><option value="未选择">未选择</option></select></label><button class="secondary-button" type="submit">查询</button><button class="primary-button" type="button" @click="openMeeting()">＋ 新增会议记录</button></form><div class="meeting-list"><article v-for="item in meetings.items" :key="item.id" class="meeting-card"><div class="meeting-card-head"><div><strong>{{ item.meeting_date }}</strong><span>{{ item.meeting_type }}</span><small class="meeting-person">创建人：{{ item.creator?.display_name || '未知' }}</small><small class="meeting-person">更新人：{{ item.updaters.map(person => person.display_name).join('、') || '暂无' }}</small></div><div class="top-actions"><button class="mini-button" type="button" @click="openMeeting(item)">编辑</button><button class="mini-button danger" type="button" @click="removeMeeting(item)">删除</button></div></div><p class="preline">{{ item.content }}</p><div v-if="item.needs_follow_up" class="meeting-tasks"><strong>跟踪任务</strong><div v-for="task in item.tasks" :key="task.id" class="meeting-task-line"><span>{{ task.position }}. {{ task.name }}</span><b>{{ task.status || '未选择' }}</b></div><p v-if="!item.tasks.length">暂无关联任务</p></div></article><div v-if="!meetings.items.length" class="empty">没有符合条件的会议记录。</div></div><div class="meeting-pagination"><span>共 {{ meetings.total }} 条 · 第 {{ meetings.page }} 页</span><button class="mini-button" type="button" :disabled="meetingPage <= 1" @click="turnMeetingPage(-1)">上一页</button><button class="mini-button" type="button" :disabled="meetingPage * meetings.page_size >= meetings.total" @click="turnMeetingPage(1)">下一页</button></div></section>
+      <section v-else-if="page === 'meetings'" class="meetings-page"><form class="meeting-filters panel" @submit.prevent="searchMeetings"><label>开始日期<input v-model="meetingFilter.date_from" type="date" /></label><label>结束日期<input v-model="meetingFilter.date_to" type="date" /></label><label>会议内容<input v-model="meetingFilter.content" placeholder="模糊搜索" /></label><label>任务状态<select v-model="meetingFilter.status"><option value="">全部</option><option value="已完成">已完成</option><option value="未完成">未完成</option><option value="未选择">未选择</option></select></label><button class="secondary-button" type="submit">查询</button><button class="primary-button" type="button" @click="openMeeting()">＋ 新增会议记录</button></form><div class="meeting-list"><article v-for="item in meetings.items" :key="item.id" class="meeting-card"><div class="meeting-card-head"><div><strong>{{ item.meeting_date }}</strong><span>{{ item.meeting_type }}</span><small class="meeting-person">创建人：{{ item.creator?.display_name || '未知' }}</small><small class="meeting-person">更新人：{{ item.updaters.map(person => person.display_name).join('、') || '暂无' }}</small></div><div class="top-actions"><button class="mini-button" type="button" @click="openMeeting(item)">编辑</button><button class="mini-button danger" type="button" @click="removeMeeting(item)">删除</button></div></div><p class="preline">{{ item.content }}</p><div v-if="item.needs_follow_up" class="meeting-tasks"><strong>跟踪任务</strong><div v-for="task in item.tasks" :key="task.id" class="meeting-task-line"><b class="meeting-task-status" :class="{ completed: task.status === '已完成', pending: task.status === '未完成', unset: !task.status }">{{ task.status || '未选择' }}</b><span>{{ task.position }}. {{ task.name }}</span></div><p v-if="!item.tasks.length">暂无关联任务</p></div></article><div v-if="!meetings.items.length" class="empty">没有符合条件的会议记录。</div></div><div class="meeting-pagination"><span>共 {{ meetings.total }} 条 · 第 {{ meetings.page }} 页</span><button class="mini-button" type="button" :disabled="meetingPage <= 1" @click="turnMeetingPage(-1)">上一页</button><button class="mini-button" type="button" :disabled="meetingPage * meetings.page_size >= meetings.total" @click="turnMeetingPage(1)">下一页</button></div></section>
       <section v-else-if="page === 'users' && user.role === 'admin'" class="panel"><h2>新增用户</h2><form class="user-create" @submit.prevent="createUser"><label>用户名<input v-model="newUser.username" required pattern="[A-Za-z0-9_.-]+" /></label><label>显示姓名<input v-model="newUser.display_name" required /></label><label>初始密码<input v-model="newUser.password" type="password" minlength="6" required /></label><label>角色<select v-model="newUser.role"><option value="user">普通用户</option><option value="admin">管理员</option></select></label><label>状态<select v-model="newUser.status"><option>正常</option><option>锁定</option></select></label><button class="primary-button" type="submit">创建用户</button></form><h2>现有用户</h2><div v-for="item in users" :key="item.id" class="user-row"><div class="user-header"><strong>{{ item.username }}</strong><span>{{ item.is_active ? item.status : '已停用' }}</span></div><div class="user-controls"><label>用户名<input v-model="userDrafts[item.id].username" pattern="[A-Za-z0-9_.-]+" /></label><label>姓名<input v-model="userDrafts[item.id].display_name" /></label><label>角色<select v-model="userDrafts[item.id].role"><option value="user">普通用户</option><option value="admin">管理员</option></select></label><label>状态<select v-model="userDrafts[item.id].status"><option>正常</option><option>锁定</option></select></label><button class="mini-button" type="button" @click="saveUser(item.id)">保存资料</button><button class="mini-button danger" type="button" @click="toggleUser(item)">{{ item.is_active ? '删除用户' : '重新启用' }}</button></div><form class="inline-form" @submit.prevent="resetPassword(item.id)"><label>重置密码<input v-model="userDrafts[item.id].password" type="password" minlength="6" required placeholder="至少 6 位" /></label><button class="mini-button" type="submit">设置新密码</button></form></div></section>
       <section v-else-if="page === 'password'" class="panel narrow"><h2>{{ user.must_change_password ? '首次登录，请修改初始密码' : '修改我的密码' }}</h2><p v-if="user.must_change_password">新密码不能与初始密码相同。修改成功后请重新登录。</p><form class="stack-form" @submit.prevent="changePassword"><label>当前密码<input v-model="passwordForm.old_password" type="password" autocomplete="current-password" required /></label><label>新密码（至少 6 位）<input v-model="passwordForm.new_password" type="password" autocomplete="new-password" minlength="6" required /></label><label>确认新密码<input v-model="passwordForm.confirm_password" type="password" autocomplete="new-password" minlength="6" required /></label><button class="primary-button" type="submit">更新密码</button></form></section>
+      </div>
     </main>
     <div v-if="reportExportOpen" class="modal-scrim" @click.self="reportExportOpen = false" @keydown.esc="reportExportOpen = false"><form class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="report-export-title" @submit.prevent="exportReports"><span class="eyebrow">周报汇总</span><h2 id="report-export-title">导出 Excel</h2><p>选择起止周，每位成员将单独生成一个工作表。</p><div class="export-weeks"><label>起始周<input ref="reportExportStartInput" v-model="reportExportStart" type="week" required /></label><label>结束周<input v-model="reportExportEnd" type="week" required /></label></div><p v-if="reportExportError" class="message error" role="alert">{{ reportExportError }}</p><div class="modal-actions"><button class="secondary-button" type="button" :disabled="reportExporting" @click="reportExportOpen = false">取消</button><button class="primary-button" type="submit" :disabled="reportExporting">{{ reportExporting ? '生成中…' : '确定并导出' }}</button></div></form></div>
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="modal.kind === 'delete' ? '确认删除任务' : '复制上周任务'"><span class="eyebrow">操作确认</span><h2>{{ modal.kind === 'delete' ? '删除这项任务？' : '本周已有任务' }}</h2><p>{{ modal.kind === 'delete' ? '删除后，该任务将从本周移除。' : '请选择覆盖本周任务，或将上周未完成任务追加到末尾。' }}</p><div class="modal-actions"><template v-if="modal.kind === 'delete'"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete((modal as { taskId: number }).taskId)">确认删除</button></template><template v-else><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="secondary-button" type="button" @click="carry('append')">新增</button><button class="primary-button" type="button" @click="carry('overwrite')">覆盖</button></template></div></div></div>
