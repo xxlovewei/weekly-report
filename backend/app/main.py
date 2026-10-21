@@ -90,6 +90,9 @@ class TaskPatch(Input):
 class CopyInput(Input):
     mode: Literal["append", "overwrite"] = "append"
 
+class TaskOrderInput(Input):
+    task_ids: list[int]
+
 class MeetingTaskInput(Input):
     name: str = Field(min_length=1, max_length=500)
     status: Literal["已完成", "未完成"] | None = None
@@ -395,6 +398,17 @@ def own_task(db: Session, task_id: int, week_id: int):
     if not task or task.week_id != week_id:
         raise HTTPException(404, "任务不存在")
     return task
+
+@app.put("/api/weeks/{week_start}/tasks/order")
+def reorder_tasks(week_start: str, revision: int, data: TaskOrderInput, auth=Depends(active_session), db: Session = Depends(get_db)):
+    row = checked_week(db, auth[0].id, week_start, revision)
+    tasks = {task.id: task for task in db.scalars(select(Task).where(Task.week_id == row.id)).all()}
+    if len(data.task_ids) != len(tasks) or set(data.task_ids) != set(tasks):
+        raise HTTPException(422, "排序必须包含本周全部任务，且不能重复")
+    for position, task_id in enumerate(data.task_ids, 1):
+        tasks[task_id].position = position
+    db.flush(); payload = week_json(db, row); db.commit()
+    return payload
 
 @app.patch("/api/weeks/{week_start}/tasks/{task_id}")
 def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, auth=Depends(active_session), db: Session = Depends(get_db)):

@@ -1,20 +1,65 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import TaskDescription from './TaskDescription.vue'
 import type { Category, Task, TaskField } from './types'
 const props = defineProps<{ tasks: Task[]; categories?: Category[]; readonly?: boolean; busy?: boolean }>()
-const emit = defineEmits<{ edit: [id: number, patch: Partial<TaskField>]; duplicate: [id: number]; remove: [id: number] }>()
+const emit = defineEmits<{ edit: [id: number, patch: Partial<TaskField>]; duplicate: [id: number]; remove: [id: number]; reorder: [ids: number[]] }>()
+const draggedId = ref<number | null>(null)
+const dropTarget = ref<{ id: number; after: boolean } | null>(null)
+let keyboardHandle: HTMLButtonElement | null = null
+watch(() => props.busy, busy => {
+  if (!busy && keyboardHandle) { keyboardHandle.focus(); keyboardHandle = null }
+}, { flush: 'post' })
 const statuses = ['已完成','90%','80%','70%','60%','50%','40%','30%','20%','10%','5%']
 const sharedTypes = ['开发相关','联调联试','数据处理','运维相关','开会','其他']
 const taskTypes = computed(() => [...sharedTypes, ...(props.categories || []).map(c => c.name).filter(name => !sharedTypes.includes(name))])
 const days = ['一','二','三','四','五','六','日']
 function toggle(task: Task, day: number) { emit('edit', task.id, { work_days: task.work_days.includes(day) ? task.work_days.filter(x => x !== day) : [...task.work_days, day].sort() }) }
+function resetDrag() { draggedId.value = null; dropTarget.value = null }
+function reorder(id: number, targetId: number, after: boolean) {
+  if (props.readonly || props.busy || id === targetId || !props.tasks.some(task => task.id === id)) return
+  const ids = props.tasks.map(task => task.id).filter(taskId => taskId !== id)
+  const index = ids.indexOf(targetId)
+  if (index < 0) return
+  ids.splice(index + Number(after), 0, id)
+  if (ids.some((taskId, index) => taskId !== props.tasks[index].id)) emit('reorder', ids)
+}
+function startDrag(event: DragEvent, task: Task) {
+  if (props.readonly || props.busy || !event.dataTransfer) { event.preventDefault(); return }
+  draggedId.value = task.id
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('application/x-zhoubao-task', String(task.id))
+  event.dataTransfer.setDragImage((event.currentTarget as HTMLElement).closest('.task-row')!, 20, 20)
+}
+function dragOver(event: DragEvent, task: Task) {
+  if (draggedId.value === null || props.readonly || props.busy) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  dropTarget.value = { id: task.id, after: event.clientY > rect.top + rect.height / 2 }
+}
+function drop(event: DragEvent, task: Task) {
+  if (draggedId.value === null) return
+  dragOver(event, task)
+  if (dropTarget.value) reorder(draggedId.value, task.id, dropTarget.value.after)
+  resetDrag()
+}
+function moveWithKeyboard(event: KeyboardEvent, id: number) {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  event.preventDefault()
+  const offset = event.key === 'ArrowUp' ? -1 : 1
+  const target = props.tasks[props.tasks.findIndex(task => task.id === id) + offset]
+  if (target && !props.busy && !props.readonly) {
+    keyboardHandle = event.currentTarget as HTMLButtonElement
+    reorder(id, target.id, offset > 0)
+  }
+}
 </script>
 <template>
   <div v-if="tasks.length === 0" class="empty" role="status">本周还没有任务。</div>
   <div v-else class="task-list">
-    <article v-for="task in tasks" :key="task.id" class="task-row">
-      <span class="task-index">{{ String(task.position).padStart(2, '0') }}</span>
+    <article v-for="task in tasks" :key="task.id" class="task-row" :class="{ dragging: draggedId === task.id, 'drop-before': dropTarget?.id === task.id && !dropTarget.after && draggedId !== task.id, 'drop-after': dropTarget?.id === task.id && dropTarget.after && draggedId !== task.id }" @dragover="dragOver($event, task)" @drop="drop($event, task)">
+      <div class="task-leading"><button v-if="!readonly" type="button" class="task-drag-handle" :disabled="busy" :draggable="!busy" :aria-label="`拖动任务 ${task.position} 调整顺序`" title="拖动调整顺序，也可用上下方向键移动" @dragstart="startDrag($event, task)" @dragend="resetDrag" @keydown="moveWithKeyboard($event, task.id)"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v14M2 9h14M6 5l3-3 3 3M6 13l3 3 3-3M5 6 2 9l3 3M13 6l3 3-3 3" /></svg></button><span class="task-index">{{ String(task.position).padStart(2, '0') }}</span></div>
       <div class="task-fields">
         <label class="task-type"><span>任务类型</span><span v-if="readonly" class="read-value">{{ task.category_name || '—' }}</span><select v-else :disabled="busy" :value="task.category_name || ''" @change="emit('edit', task.id, { category_name: ($event.target as HTMLSelectElement).value || null })"><option value="">未选择</option><option v-if="task.category_name && !taskTypes.includes(task.category_name)" :value="task.category_name">{{ task.category_name }}（历史）</option><option v-for="name in taskTypes" :key="name" :value="name">{{ name }}</option></select></label>
         <label class="task-group"><span>任务大类</span><span v-if="readonly" class="read-value preline">{{ task.task_group || '—' }}</span><input v-else :disabled="busy" maxlength="200" :value="task.task_group" @input="emit('edit', task.id, { task_group: ($event.target as HTMLInputElement).value })" /></label>
