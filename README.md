@@ -56,4 +56,4 @@ API 文档在登录后的 `/api/docs`；所有受保护的写请求需要 `X-CSR
 
 ## 发布版本号
 
-登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。每次发布前在 `frontend` 目录执行 `npm version <新版本号> --no-git-tag-version`，同步更新项目版本与锁文件，再构建发布。本次版本为 `1.1.0`。
+登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。每次发布前在 `frontend` 目录执行 `npm version <新版本号> --no-git-tag-version`，同步更新项目版本与锁文件，再构建发布。本次版本为 `1.2.0`。
