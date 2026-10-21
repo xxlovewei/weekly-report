@@ -128,13 +128,14 @@ export function editNumberedText(value: string, start: number, end: number, oper
     return replace(value, start, end, text, [{ offset: 1 + owner.indent.length + owner.opening.length, group: owner.group }], true)
   }
   if (start !== end) return replace(value, start, end, '')
-  if (operation.kind === 'backspace' && line?.marker && start === line.start) {
+  if (operation.kind === 'backspace' && line?.marker && (start === line.start || start === line.marker.body)) {
     const previous = markers[markers.indexOf(line.marker) - 1]
-    if (previous?.group === line.marker.group) return replace(value, start - 1, line.marker.body, '', [], true)
-    return replace(value, start, line.marker.body, '', [], true)
+    if (previous?.group === line.marker.group) return replace(value, line.start - 1, line.marker.body, '', [], true)
+    return replace(value, line.start, line.marker.body, '', [], true)
   }
-  if (operation.kind === 'backspace' && owner && !line.marker && start === line.start) {
-    return replace(value, start - 1, start + /^[ \t]*/.exec(line.text)![0].length, '')
+  if (operation.kind === 'backspace' && owner && !line.marker) {
+    const body = line.start + /^[ \t]*/.exec(line.text)![0].length
+    if (start === line.start || start === body) return replace(value, line.start - 1, body, '')
   }
   if (operation.kind === 'delete' && start === line?.end) {
     const following = lines[index + 1], next = following?.marker
@@ -149,7 +150,7 @@ export function reconcileNumberedInput(before: string, after: string, start: num
     const position = start - 1, replacedEnd = position + before.length - after.length + 1
     return editNumberedText(before, position, replacedEnd, { kind: 'enter' }) || { value: after, start, end }
   }
-  if (before.length - after.length === 1 && start === end && before[start] === '\n') {
+  if (before.length - after.length === 1 && start === end) {
     const position = inputType === 'deleteContentBackward' ? start + 1 : start
     if (inputType === 'deleteContentBackward' || inputType === 'deleteContentForward') {
       const merged = editNumberedText(before, position, position, { kind: inputType === 'deleteContentBackward' ? 'backspace' : 'delete' })
