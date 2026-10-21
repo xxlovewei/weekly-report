@@ -13,3 +13,4 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 
 .meeting-card-head>div:first-child{min-width:0}.meeting-person{font-size:12px;overflow-wrap:anywhere}.meeting-card-head .top-actions{flex-shrink:0}
 .description-error{font-size:11px;margin:5px 0 0;color:#a30031}
+.task-leading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.task-drag-handle{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #000;background:#fff;cursor:grab}.task-drag-handle:hover{background:#ffff00}.task-drag-handle:active{cursor:grabbing}.task-row.dragging{opacity:.45}.task-row.drop-before{border-top-color:#ff006e;box-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}.task-row.drop-after{border-bottom-color:#ff006e;box-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
