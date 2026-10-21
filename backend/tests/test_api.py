@@ -196,3 +196,32 @@ def test_meeting_crud_shared_access_and_filter():
     assert bob.put(f"/api/meetings/{meeting_id}", json={**payload, "needs_follow_up":False, "tasks":[]}).json()["tasks"] == []
     assert alice.delete(f"/api/meetings/{meeting_id}").status_code == 200
     assert bob.get(f"/api/meetings/{meeting_id}").status_code == 404
+
+
+def test_meeting_creator_and_unique_updaters():
+    alice, bob = client("alice"), client("bob")
+    payload = {"meeting_date": "2026-10-14", "meeting_type": "例会", "content": "人员记录"}
+    created = alice.post("/api/meetings", json=payload).json()
+    assert created["creator"]["username"] == "alice"
+    assert created["updaters"] == []
+    path = f"/api/meetings/{created['id']}"
+    assert bob.put(path, json={**payload, "creator_id": 3}).status_code == 422
+    for editor in (bob, alice, bob):
+        updated = editor.put(path, json=payload)
+        assert updated.status_code == 200, updated.text
+    for result in (alice.get(path).json(), bob.get("/api/meetings").json()["items"][0]):
+        assert result["creator"]["username"] == "alice"
+        assert [u["username"] for u in result["updaters"]] == ["alice", "bob"]
+    # Records predating attribution must remain readable and editable.
+    from app.models import Meeting
+    with SessionLocal() as db:
+        legacy = Meeting(meeting_date=date(2026, 10, 13), meeting_type="历史", content="旧记录")
+        db.add(legacy)
+        db.commit()
+        legacy_id = legacy.id
+    legacy_path = f"/api/meetings/{legacy_id}"
+    assert alice.get(legacy_path).json()["creator"] is None
+    result = bob.put(legacy_path, json=payload).json()
+    assert result["creator"] is None
+    assert [u["username"] for u in result["updaters"]] == ["bob"]
+    assert alice.delete(path).status_code == 200
