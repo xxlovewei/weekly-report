@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .db import get_db
-from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week
+from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week, meeting_updaters
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
 hasher = PasswordHash.recommended()
@@ -21,6 +21,7 @@ SHARED_TYPES = {"开发相关", "联调联试", "数据处理", "运维相关", 
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_PATH = os.getenv("COOKIE_PATH", "/")
 SESSION_LIFETIME = timedelta(days=7)
+LOCKED_MESSAGE = "账号已锁定，请联系管理员。"
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -49,12 +50,14 @@ class UserCreate(Input):
     display_name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=6, max_length=128)
     role: Literal["user", "admin"] = "user"
+    status: Literal["正常", "锁定"] = "正常"
 
 class UserUpdate(Input):
     username: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     role: Literal["user", "admin"] | None = None
     is_active: bool | None = None
+    status: Literal["正常", "锁定"] | None = None
 
 class ResetPassword(Input):
     password: str = Field(min_length=6, max_length=128)
@@ -106,13 +109,16 @@ class MeetingInput(Input):
         return value
 
 def user_json(user: User):
-    return {"id": user.id, "username": user.username, "display_name": user.display_name, "role": user.role, "is_active": user.is_active, "must_change_password": user.must_change_password}
+    return {"id": user.id, "username": user.username, "display_name": user.display_name, "role": user.role, "is_active": user.is_active, "status": user.status, "must_change_password": user.must_change_password}
 
 def task_json(task: Task):
     return {"id": task.id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "work_days": task.work_days, "notes": task.notes}
 
+def meeting_person_json(user: User):
+    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+
 def meeting_json(row: Meeting):
-    return {"id": row.id, "meeting_date": row.meeting_date.isoformat(), "meeting_type": row.meeting_type, "content": row.content, "needs_follow_up": row.needs_follow_up, "tasks": [{"id": task.id, "position": task.position, "name": task.name, "status": task.status} for task in row.tasks]}
+    return {"id": row.id, "meeting_date": row.meeting_date.isoformat(), "meeting_type": row.meeting_type, "content": row.content, "needs_follow_up": row.needs_follow_up, "creator": meeting_person_json(row.creator) if row.creator else None, "updaters": [meeting_person_json(user) for user in row.updaters], "tasks": [{"id": task.id, "position": task.position, "name": task.name, "status": task.status} for task in row.tasks]}
 
 def active_session(request: Request, db: Session = Depends(get_db)):
     token = request.cookies.get("zhoubao_session", "")
@@ -123,6 +129,8 @@ def active_session(request: Request, db: Session = Depends(get_db)):
     user = db.get(User, row.user_id)
     if not user or not user.is_active:
         raise HTTPException(401, "账号已停用")
+    if user.status == "锁定":
+        raise HTTPException(401, LOCKED_MESSAGE)
     if user.must_change_password and request.url.path not in {"/api/auth/me", "/api/auth/password", "/api/auth/logout"}:
         raise HTTPException(403, "请先修改初始密码")
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
@@ -199,9 +207,24 @@ def health():
 
 @app.post("/api/auth/login")
 def login(data: LoginInput, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.username == data.username.lower()))
-    if not user or not user.is_active or not hasher.verify(data.password, user.password_hash):
+    # Serialize attempts across workers so concurrent failures cannot lose counts.
+    user = db.scalar(select(User).where(User.username == data.username.lower()).with_for_update())
+    if not user:
         raise HTTPException(401, "用户名或密码错误")
+    if user.status == "锁定":
+        raise HTTPException(401, LOCKED_MESSAGE)
+    if not user.is_active:
+        raise HTTPException(401, "用户名或密码错误")
+    now = datetime.now(timezone.utc)
+    failures = [stamp for stamp in user.failed_login_times if stamp > (now - timedelta(minutes=5)).timestamp()]
+    if not hasher.verify(data.password, user.password_hash):
+        user.failed_login_times = failures + [now.timestamp()]
+        if len(user.failed_login_times) > 5:
+            user.status = "锁定"
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+        db.commit()
+        raise HTTPException(401, LOCKED_MESSAGE if user.status == "锁定" else "用户名或密码错误")
+    user.failed_login_times = failures
     token = secrets.token_urlsafe(48)
     csrf = secrets.token_urlsafe(32)
     expiry = datetime.now(timezone.utc) + SESSION_LIFETIME
@@ -242,7 +265,7 @@ def create_user(data: UserCreate, _: User = Depends(admin), db: Session = Depend
     username = data.username.lower()
     if db.scalar(select(User.id).where(User.username == username)):
         raise HTTPException(409, "用户名已存在")
-    user = User(username=username, display_name=data.display_name, role=data.role, password_hash=hasher.hash(data.password), must_change_password=True)
+    user = User(username=username, display_name=data.display_name, role=data.role, status=data.status, password_hash=hasher.hash(data.password), must_change_password=True)
     db.add(user)
     try:
         db.commit()
@@ -252,11 +275,11 @@ def create_user(data: UserCreate, _: User = Depends(admin), db: Session = Depend
     db.refresh(user)
     return user_json(user)
 
-def protect_last_admin(db: Session, user: User, new_role: str, new_active: bool):
-    if user.role == "admin" and user.is_active and (new_role != "admin" or not new_active):
-        active_ids = db.scalars(select(User.id).where(User.role == "admin", User.is_active.is_(True)).order_by(User.id).with_for_update()).all()
+def protect_last_admin(db: Session, user: User, new_role: str, new_active: bool, new_status: str = "正常"):
+    if user.role == "admin" and user.is_active and user.status == "正常" and (new_role != "admin" or not new_active or new_status == "锁定"):
+        active_ids = db.scalars(select(User.id).where(User.role == "admin", User.is_active.is_(True), User.status == "正常").order_by(User.id).with_for_update()).all()
         if len(active_ids) <= 1:
-            raise HTTPException(409, "不能停用或降级最后一位有效管理员")
+            raise HTTPException(409, "不能停用、锁定或降级最后一位有效管理员")
 
 @app.patch("/api/users/{user_id}")
 def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Session = Depends(get_db)):
@@ -264,17 +287,20 @@ def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Sess
     if not user:
         raise HTTPException(404, "用户不存在")
     values = data.model_dump(exclude_unset=True)
-    protect_last_admin(db, user, values.get("role", user.role), values.get("is_active", user.is_active))
+    protect_last_admin(db, user, values.get("role", user.role), values.get("is_active", user.is_active), values.get("status", user.status))
     if "username" in values and values["username"] is not None:
         values["username"] = values["username"].lower()
         if db.scalar(select(User.id).where(User.username == values["username"], User.id != user_id)):
             raise HTTPException(409, "用户名已存在")
     old_role = user.role
+    old_status = user.status
     for key, value in values.items():
         if value is None:
             raise HTTPException(422, "此字段不能为空")
         setattr(user, key, value)
-    if not user.is_active or user.role != old_role:
+    if old_status == "锁定" and user.status == "正常":
+        user.failed_login_times = []
+    if not user.is_active or user.role != old_role or user.status == "锁定":
         db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
     try:
         db.commit()
@@ -495,7 +521,7 @@ def list_meetings(page: int = 1, page_size: int = 10, date_from: date | None = N
 
 @app.post("/api/meetings", status_code=201)
 def create_meeting(data: MeetingInput, auth=Depends(active_session), db: Session = Depends(get_db)):
-    row = Meeting()
+    row = Meeting(creator_id=auth[0].id)
     db.add(row)
     return save_meeting(db, row, data)
 
@@ -509,6 +535,7 @@ def get_meeting(meeting_id: int, auth=Depends(active_session), db: Session = Dep
 def update_meeting(meeting_id: int, data: MeetingInput, auth=Depends(active_session), db: Session = Depends(get_db)):
     row = db.get(Meeting, meeting_id)
     if not row: raise HTTPException(404, "会议记录不存在")
+    db.execute(insert(meeting_updaters).values(meeting_id=row.id, user_id=auth[0].id).on_conflict_do_nothing())
     return save_meeting(db, row, data)
 
 @app.delete("/api/meetings/{meeting_id}")

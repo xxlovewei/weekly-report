@@ -10,3 +10,5 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 @media(max-width:1350px){.task-fields{grid-template-columns:82px minmax(150px,200px) minmax(180px,1fr)}.task-fields .description,.task-fields .notes{grid-column:auto}.task-fields .task-status select{width:60px}}
 @media(max-width:800px){.task-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.task-fields .description,.task-fields .notes{grid-column:span 2}.meeting-filters label{min-width:120px}}
 @media(max-width:480px){.task-fields{grid-template-columns:minmax(0,1fr)}.task-fields .description,.task-fields .notes{grid-column:auto}.meeting-form-row{grid-template-columns:1fr}.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit label:nth-of-type(2){grid-column:2}.meeting-task-edit button{grid-column:2;justify-self:start}.meeting-card-head{flex-direction:column}.meeting-filters label{min-width:100%}}
+
+.meeting-card-head>div:first-child{min-width:0}.meeting-person{font-size:12px;overflow-wrap:anywhere}.meeting-card-head .top-actions{flex-shrink:0}
