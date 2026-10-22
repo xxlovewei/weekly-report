@@ -49,7 +49,7 @@ class UserCreate(Input):
     username: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     display_name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=6, max_length=128)
-    role: Literal["user", "admin"] = "user"
+    role: Literal["user"] = "user"
     status: Literal["正常", "锁定"] = "正常"
 
 class UserUpdate(Input):
@@ -130,7 +130,9 @@ def active_session(request: Request, db: Session = Depends(get_db)):
     if not row or row.expires_at <= datetime.now(timezone.utc):
         raise HTTPException(401, "请先登录")
     user = db.get(User, row.user_id)
-    if not user or not user.is_active:
+    if not user or user.is_deleted:
+        raise HTTPException(401, "账号已删除")
+    if not user.is_active:
         raise HTTPException(401, "账号已停用")
     if user.status == "锁定":
         raise HTTPException(401, LOCKED_MESSAGE)
@@ -214,10 +216,10 @@ def login(data: LoginInput, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == data.username.lower()).with_for_update())
     if not user:
         raise HTTPException(401, "用户名或密码错误")
+    if not user.is_active or user.is_deleted:
+        raise HTTPException(401, "用户名或密码错误")
     if user.status == "锁定":
         raise HTTPException(401, LOCKED_MESSAGE)
-    if not user.is_active:
-        raise HTTPException(401, "用户名或密码错误")
     now = datetime.now(timezone.utc)
     failures = [stamp for stamp in user.failed_login_times if stamp > (now - timedelta(minutes=5)).timestamp()]
     if not hasher.verify(data.password, user.password_hash):
@@ -261,7 +263,7 @@ def change_password(data: PasswordInput, auth=Depends(active_session), db: Sessi
 
 @app.get("/api/users")
 def list_users(_: User = Depends(admin), db: Session = Depends(get_db)):
-    return [user_json(x) for x in db.scalars(select(User).order_by(User.id)).all()]
+    return [user_json(x) for x in db.scalars(select(User).where(User.is_deleted.is_(False)).order_by(User.id)).all()]
 
 @app.post("/api/users", status_code=201)
 def create_user(data: UserCreate, _: User = Depends(admin), db: Session = Depends(get_db)):
@@ -287,9 +289,11 @@ def protect_last_admin(db: Session, user: User, new_role: str, new_active: bool,
 @app.patch("/api/users/{user_id}")
 def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Session = Depends(get_db)):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")
     values = data.model_dump(exclude_unset=True)
+    if user.role == "admin" and values.get("role", "admin") != "admin":
+        raise HTTPException(403, "管理员角色不可修改")
     protect_last_admin(db, user, values.get("role", user.role), values.get("is_active", user.is_active), values.get("status", user.status))
     if "username" in values and values["username"] is not None:
         values["username"] = values["username"].lower()
@@ -313,19 +317,20 @@ def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Sess
     return user_json(user)
 
 @app.delete("/api/users/{user_id}")
-def disable_user(user_id: int, current: User = Depends(admin), db: Session = Depends(get_db)):
+def delete_user(user_id: int, _: User = Depends(admin), db: Session = Depends(get_db)):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")
-    protect_last_admin(db, user, user.role, False)
-    user.is_active = False
+    if user.role == "admin":
+        raise HTTPException(403, "管理员不可删除")
+    user.is_deleted = True
     db.execute(delete(LoginSession).where(LoginSession.user_id == user.id)); db.commit()
-    return user_json(user)
+    return {"ok": True}
 
 @app.post("/api/users/{user_id}/password")
 def reset_password(user_id: int, data: ResetPassword, _: User = Depends(admin), db: Session = Depends(get_db)):
     user = db.get(User, user_id)
-    if not user:
+    if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")
     user.password_hash = hasher.hash(data.password)
     user.must_change_password = True
@@ -475,13 +480,13 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
 @app.get("/api/reports/{week_start}")
 def report_tabs(week_start: str, auth=Depends(active_session), db: Session = Depends(get_db)):
     start = monday(week_start)
-    active = db.scalars(select(User).where(User.is_active.is_(True), User.role != "admin")).all()
+    active = db.scalars(select(User).where(User.is_active.is_(True), User.is_deleted.is_(False), User.role != "admin")).all()
     past_ids = db.scalars(select(Week.user_id).join(Task).where(Week.start_date == start).distinct()).all()
-    inactive = db.scalars(select(User).where(User.is_active.is_(False), User.role != "admin", User.id.in_(past_ids))).all() if past_ids else []
+    inactive = db.scalars(select(User).where((User.is_active.is_(False)) | (User.is_deleted.is_(True)), User.role != "admin", User.id.in_(past_ids))).all() if past_ids else []
     users = sorted(active + inactive, key=lambda u: (u.display_name, u.username))
     counts = {}
     for u in users: counts[u.display_name] = counts.get(u.display_name, 0) + 1
-    return [{"id": u.id, "name": f"{u.display_name} ({u.username})" if counts[u.display_name] > 1 else u.display_name, "is_active": u.is_active} for u in users]
+    return [{"id": u.id, "name": f"{u.display_name} ({u.username})" if counts[u.display_name] > 1 else u.display_name, "is_active": u.is_active and not u.is_deleted, "is_deleted": u.is_deleted} for u in users]
 
 @app.get("/api/reports/{week_start}/users/{user_id}")
 def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):

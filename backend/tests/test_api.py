@@ -51,11 +51,20 @@ def test_auth_roles_sessions_and_history():
     users = admin.get("/api/users").json()
     alice_id = next(u["id"] for u in users if u["username"] == "alice")
     admin_id = next(u["id"] for u in users if u["username"] == "admin")
-    assert admin.patch(f"/api/users/{admin_id}", json={"role":"user"}).status_code == 409
+    assert admin.patch(f"/api/users/{admin_id}", json={"role":"user"}).status_code == 403
+    assert admin.delete(f"/api/users/{admin_id}").status_code == 403
     assert admin.delete(f"/api/users/{alice_id}").status_code == 200
+    assert all(u["id"] != alice_id for u in admin.get("/api/users").json())
     assert alice.get("/api/auth/me").status_code == 401
     assert admin.get("/api/reports/2026-10-12/users/2").json()["tasks"]
-    assert any(not u["is_active"] and u["id"] == alice_id for u in admin.get("/api/reports/2026-10-12").json())
+    assert any(u["is_deleted"] and u["id"] == alice_id for u in admin.get("/api/reports/2026-10-12").json())
+    with SessionLocal() as db:
+        deleted = db.get(User, alice_id)
+        assert deleted is not None and deleted.is_deleted and deleted.is_active
+    assert admin.patch(f"/api/users/{alice_id}", json={"is_active": True}).status_code == 404
+    assert admin.post(f"/api/users/{alice_id}/password", json={"password": PASSWORD}).status_code == 404
+    assert TestClient(app).post("/api/auth/login", json={"username": "alice", "password": PASSWORD}).status_code == 401
+    assert admin.post("/api/users", json={"username": "next-admin", "display_name": "管理员", "password": PASSWORD, "role": "admin"}).status_code == 422
 
 def test_categories_snapshot_ownership_and_reset():
     alice = client("alice")
