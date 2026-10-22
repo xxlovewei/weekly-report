@@ -30,6 +30,7 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .description-error{font-size:11px;margin:5px 0 0;color:#a30031}
 .task-leading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.task-drag-handle{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #000;background:#fff;cursor:grab}.task-drag-handle:hover{background:#ffff00}.task-drag-handle:active{cursor:grabbing}.task-row.dragging{opacity:.45}.task-row.drop-before{border-top-color:#ff006e;box-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}.task-row.drop-after{border-bottom-color:#ff006e;box-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
 .task-row.selected{outline:3px solid #ff006e;outline-offset:2px}.task-drag-handle[aria-pressed=true]{outline:3px solid #ff006e;outline-offset:2px}
+.status-tag{display:inline-block;min-width:68px;padding:3px 6px;border:1px solid #000;text-align:center;white-space:nowrap;font-weight:900}.status-tag.completed{background:#59d98e}.status-tag.pending{background:#ff8585}
 .export-weeks{display:grid;grid-template-columns:1fr 1fr;gap:12px}.export-weeks label{display:grid;gap:6px;font-size:12px;font-weight:800}.export-weeks input{min-width:0}
 .tabs [role=tab]{cursor:grab}.tabs [role=tab]:active{cursor:grabbing}.tabs [role=tab].dragging{opacity:.45}
 .font-size-controls{display:flex;align-items:center;gap:6px}.font-size-controls output{min-width:40px;text-align:center;font-size:12px;font-weight:900}.font-size-controls button:disabled{cursor:not-allowed}
