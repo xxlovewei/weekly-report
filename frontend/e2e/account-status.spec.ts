@@ -41,3 +41,43 @@ test('登录显示账号锁定提示', async ({ page }) => {
   await expect(page.getByRole('alert')).toHaveText('账号已锁定，请联系管理员。')
   await expect(page).toHaveURL(/\/login$/)
 })
+
+test('只能创建普通用户，管理员角色和删除受限，删除后列表隐藏用户', async ({ page }) => {
+  const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', is_active: true, status: '正常', must_change_password: false }
+  const alice = { ...admin, id: 2, username: 'alice', display_name: '小王', role: 'user' }
+  let users = [admin, alice]
+  let createdRole: string | undefined
+  let created = false
+  let deleted = false
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/me')) return route.fulfill({ json: { user: admin, csrf_token: 'test' } })
+    if (path.endsWith('/users') && route.request().method() === 'POST') {
+      created = true
+      createdRole = route.request().postDataJSON().role
+      return route.fulfill({ status: 201, json: { ...alice, id: 3, username: 'new' } })
+    }
+    if (path.endsWith('/users/2') && route.request().method() === 'DELETE') {
+      deleted = true
+      users = [admin]
+      return route.fulfill({ json: { ok: true } })
+    }
+    return route.fulfill({ json: path.endsWith('/users') ? users : [] })
+  })
+  await page.goto('/users')
+  const create = page.locator('.user-create')
+  await expect(create.locator('label').filter({ hasText: '角色' })).toContainText('普通用户')
+  const adminRow = page.locator('.user-row').filter({ hasText: 'admin' })
+  await expect(adminRow.locator('label').filter({ hasText: '角色' })).toContainText('管理员')
+  await expect(adminRow.getByRole('button', { name: '删除用户' })).toHaveCount(0)
+  await create.getByLabel('用户名').fill('new')
+  await create.getByLabel('显示姓名').fill('新人')
+  await create.getByLabel('初始密码').fill('123456')
+  await create.getByRole('button', { name: '创建用户' }).click()
+  await expect.poll(() => created).toBe(true)
+  expect(createdRole).toBeUndefined()
+  page.once('dialog', dialog => dialog.accept())
+  await page.locator('.user-row').filter({ hasText: 'alice' }).getByRole('button', { name: '删除用户' }).click()
+  await expect(page.locator('.user-row').filter({ hasText: 'alice' })).toHaveCount(0)
+  expect(deleted).toBe(true)
+})

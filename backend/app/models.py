@@ -11,6 +11,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(16), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(16), default="正常", server_default="正常")
     failed_login_times: Mapped[list[float]] = mapped_column(JSON, default=list, server_default="[]")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
