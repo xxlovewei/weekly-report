@@ -20,14 +20,16 @@ test('周报汇总按当天周会记录显示新增或修改入口，并可重�
     await expect(dialog.getByLabel('日期')).toHaveValue(todayShanghai())
     await expect(dialog.getByLabel('会议类型')).toHaveValue('周会')
     content = await dialog.getByLabel('会议内容').inputValue()
-    await dialog.getByRole('button', { name: '取消' }).click()
+    await dialog.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
   } else {
     await expect(dialog.getByLabel('会议类型')).toHaveValue('周会')
     await expect(dialog.getByLabel('日期')).toHaveValue(todayShanghai())
     await dialog.getByLabel('会议内容').fill('自动化测试周会记录')
     content = '自动化测试周会记录'
-    await dialog.getByRole('button', { name: '保存会议记录' }).click()
+    await dialog.getByRole('button', { name: '保存' }).click()
+    await expect(dialog).toBeVisible()
     await expect(reportMeetingButton).toHaveText(/修改会议记录/)
+    await dialog.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
   }
 
   await page.getByRole('button', { name: /本周工作/ }).click()

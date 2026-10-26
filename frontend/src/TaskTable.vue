@@ -15,8 +15,8 @@ const statuses = ['已完成','90%','80%','70%','60%','50%','40%','30%','20%','1
 function progressStyle(status: string | null) {
   if (!status || !/^\d+%$/.test(status)) return
   const progress = Math.min(100, Number.parseInt(status))
-  // 进度越高蓝色越深；深色背景使用白字，确保状态仍易读。
-  return { backgroundColor: `hsl(210 85% ${90 - progress * 0.55}%)`, color: progress >= 80 ? '#fff' : '#000' }
+  // 进度决定填充宽度，填充色随完成度加深，并保持黑字清晰可读。
+  return { background: `linear-gradient(to right, hsl(210 85% ${90 - progress * 0.4}%) ${progress}%, #eef7ff ${progress}%)` }
 }
 const sharedTypes = ['开发相关','联调联试','数据处理','运维相关','开会','其他']
 const taskTypes = computed(() => [...sharedTypes, ...(props.categories || []).map(c => c.name).filter(name => !sharedTypes.includes(name))])
