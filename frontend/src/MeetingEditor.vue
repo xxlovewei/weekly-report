@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { reactive, ref, nextTick, onMounted } from 'vue'
+import { reactive, ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { api, ApiError } from './api'
 import { todayShanghai } from './dates'
 import type { Meeting, MeetingTask } from './types'
 const props = defineProps<{ meeting?: Meeting | null }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
+const meetingId = ref(props.meeting?.id ?? null)
 const form = reactive({
   meeting_date: props.meeting?.meeting_date || todayShanghai(),
   meeting_type: props.meeting?.meeting_type || '周会',
@@ -12,12 +13,18 @@ const form = reactive({
   needs_follow_up: props.meeting?.needs_follow_up || false,
   tasks: (props.meeting?.tasks || []).map(t => ({ name: t.name, status: t.status })) as MeetingTask[],
 })
-const error = ref(''), saving = ref(false), first = ref<HTMLInputElement | null>(null)
+const error = ref(''), success = ref(false), saving = ref(false), first = ref<HTMLInputElement | null>(null)
+let successTimer: ReturnType<typeof setTimeout> | undefined
 onMounted(() => { void nextTick(() => first.value?.focus()) })
+onUnmounted(() => clearTimeout(successTimer))
 async function save() {
-  saving.value = true; error.value = ''
+  saving.value = true; error.value = ''; success.value = false
   try {
-    await api(props.meeting ? `/meetings/${props.meeting.id}` : '/meetings', props.meeting ? 'PUT' : 'POST', { ...form, tasks: form.needs_follow_up ? form.tasks : [] })
+    const saved = await api<Meeting>(meetingId.value ? `/meetings/${meetingId.value}` : '/meetings', meetingId.value ? 'PUT' : 'POST', { ...form, tasks: form.needs_follow_up ? form.tasks : [] })
+    meetingId.value = saved.id
+    success.value = true
+    clearTimeout(successTimer)
+    successTimer = setTimeout(() => { success.value = false }, 3000)
     emit('saved')
   } catch (cause) { error.value = cause instanceof ApiError ? cause.message : '保存失败，请重试。' }
   finally { saving.value = false }
@@ -35,7 +42,8 @@ async function save() {
           <div v-for="(task, index) in form.tasks" :key="index" class="meeting-task-edit"><strong>{{ index + 1 }}</strong><label>任务名称<input v-model="task.name" maxlength="500" required /></label><label>任务状态<select v-model="task.status"><option :value="null">未选择</option><option value="未完成">未完成</option><option value="已完成">已完成</option></select></label><button class="mini-button danger" type="button" :aria-label="`删除关联任务 ${index+1}`" @click="form.tasks.splice(index, 1)">删除</button></div>
         </div>
         <p v-if="error" class="message error" role="alert">{{ error }}</p>
-        <div class="modal-actions"><button class="secondary-button" type="button" @click="emit('close')">取消</button><button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存会议记录' }}</button></div>
+        <p v-if="success" class="message" role="status">会议记录已保存。</p>
+        <div class="modal-actions"><button class="secondary-button" type="button" @click="emit('close')">关闭</button><button class="primary-button" type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button></div>
       </form>
     </div>
   </div>

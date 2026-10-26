@@ -256,7 +256,6 @@ async function searchMeetings() { meetingPage.value = 1; try { await loadMeeting
 async function turnMeetingPage(offset: number) { meetingPage.value += offset; try { await loadMeetings() } catch (error) { meetingPage.value -= offset; showError(error) } }
 function openMeeting(meeting: Meeting | null = null) { meetingDraft.value = meeting; meetingOpen.value = true }
 async function meetingSaved() {
-  meetingOpen.value = false; notice.value = '会议记录已保存。'
   if (page.value === 'meetings') { meetingPage.value = 1; try { await loadMeetings() } catch (error) { showError(error) } }
   else if (page.value === 'reports') {
     todayWeeklyMeetingLoading.value = true
