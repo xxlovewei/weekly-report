@@ -121,6 +121,8 @@ test('行中续号、选区替换、普通换行及输入法确认', async ({ pa
   await notes.press('End')
   await notes.press('Enter')
   await expect(notes).toHaveValue('1. 备注\n')
+  await notes.fill('第一行\n第二行\n第三行\n第四行')
+  expect(await notes.evaluate(el => (el as HTMLTextAreaElement).clientHeight >= (el as HTMLTextAreaElement).scrollHeight)).toBe(true)
   await expect(page.getByText('✓ 已保存')).toBeVisible()
 })
 
