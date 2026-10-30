@@ -15,7 +15,8 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .task-fields .task-type select{width:97px}
 .task-fields .task-status select{width:75px}
 .task-fields .task-type select,.task-fields .task-group input,.task-fields .task-status select{height:28px;padding:3px 8px}
-.task-fields .notes textarea{width:100%}
+/* 备注内容增加时由浏览器扩展高度，保留原有的最小高度。 */
+.task-fields .notes textarea{width:100%;field-sizing:content;resize:none}
 @media(max-width:1350px){.task-fields{grid-template-columns:97px minmax(150px,200px) minmax(180px,1fr)}}
 .task-fields .notes textarea{padding:3px}
 .task-fields .task-type select,.task-fields .task-group input,.task-fields .description textarea,.task-fields .task-status select{padding:3px}
@@ -33,5 +34,8 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .status-tag{display:inline-block;min-width:68px;padding:3px 6px;border:1px solid #000;text-align:center;white-space:nowrap;font-weight:900}.status-tag.completed{background:#59d98e}.status-tag.pending{background:#ff8585}
 .export-weeks{display:grid;grid-template-columns:1fr 1fr;gap:12px}.export-weeks label{display:grid;gap:6px;font-size:12px;font-weight:800}.export-weeks input{min-width:0}
 .tabs [role=tab]{cursor:grab}.tabs [role=tab]:active{cursor:grabbing}.tabs [role=tab].dragging{opacity:.45}
+/* 成员标签占据标题与操作按钮之间的空间，水平居中且底边对齐。 */
+.report-top .tabs{order:1;flex:1;min-width:0;width:auto;align-self:end;margin:0;padding:0}.report-top .tabs button:first-child{margin-left:auto}.report-top .tabs button:last-child{margin-right:auto}.report-top .top-actions{order:2}
+@media(max-width:800px){.report-top .tabs{width:100%;flex:none}}
 .font-size-controls{display:flex;align-items:center;gap:6px}.font-size-controls output{min-width:40px;text-align:center;font-size:12px;font-weight:900}.font-size-controls button:disabled{cursor:not-allowed}
 .sidebar-bottom{height:70px;padding-top:12px}.sidebar-user{height:56px;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px}.sidebar-bottom .identity{height:56px;grid-template-rows:1fr 1fr;align-content:stretch;gap:0;padding:0}.sidebar-bottom .identity strong{font-size:18px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-bottom .identity small{font-size:11px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-actions{display:grid;grid-template-rows:1fr 1fr;gap:6px}.sidebar-actions button{width:100%;min-height:0;padding:4px 5px}

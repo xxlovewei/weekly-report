@@ -14,6 +14,7 @@ async function setup(page: Page) {
     if (path.endsWith('/auth/me')) {
       data = { user: { id: 1, username: 'test', display_name: '测试用户', role: 'user', is_active: true, status: '正常', must_change_password: false }, csrf_token: 'test-csrf' }
     } else if (path.endsWith('/categories') || path.endsWith('/calendar/marks')) data = []
+    else if (path.endsWith('/meetings')) data = { items: [], total: 0, page: 1, page_size: 50 }
     else if (/\/reports\/[^/]+$/.test(path)) data = [{ id: 1, name: '测试用户', is_active: true }]
     else if (path.includes('/weeks/') || path.includes('/reports/')) {
       if (request.method() !== 'GET') {
@@ -112,6 +113,16 @@ test('周报汇总只读卡片不显示拖拽手柄', async ({ page }) => {
   const state = await setup(page)
   await page.getByRole('button', { name: /周报汇总/ }).click()
   await expect(page.locator('.task-row')).toHaveCount(3)
+  expect(await page.getByRole('tablist', { name: '成员' }).evaluate(el => {
+    const header = el.closest('.page-top')!, title = header.firstElementChild!, actions = header.querySelector('.top-actions')!
+    const tabs = el.getBoundingClientRect(), heading = title.getBoundingClientRect(), buttons = actions.getBoundingClientRect()
+    const tabButton = el.querySelector('button')!.getBoundingClientRect()
+    return tabs.left >= heading.right && tabs.right <= buttons.left && tabs.top < heading.bottom
+      && Math.abs((tabButton.left + tabButton.right) / 2 - (heading.right + buttons.left) / 2) < 1
+      && Math.abs(tabButton.bottom - buttons.bottom) < 1
+  })).toBe(true)
+  await page.setViewportSize({ width: 320, height: 700 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await expect(page.locator('.task-drag-handle')).toHaveCount(0)
   expect(state.writes).toEqual([])
 })
