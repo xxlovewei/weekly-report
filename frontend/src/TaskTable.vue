@@ -85,7 +85,7 @@ function moveWithKeyboard(event: KeyboardEvent, id: number) {
         <div class="work-days"><span>工作日期</span><div class="day-tags" :class="{ readonly }"><template v-for="(label, index) in days" :key="index"><span v-if="readonly" class="day-tag" :class="{ selected: task.work_days.includes(index + 1) }">{{ label }}</span><button v-else type="button" :disabled="busy" class="day-tag" :class="{ selected: task.work_days.includes(index + 1) }" :aria-label="`周${label}${task.work_days.includes(index+1) ? '已选中' : '未选中'}`" :aria-pressed="task.work_days.includes(index+1)" @click="toggle(task, index+1)">{{ label }}</button></template></div></div>
         <label class="notes"><span>备注</span><span v-if="readonly" class="read-value preline">{{ task.notes || '—' }}</span><textarea v-else :disabled="busy" rows="2" :value="task.notes" placeholder="补充说明…" @input="emit('edit', task.id, { notes: ($event.target as HTMLTextAreaElement).value })" /></label>
       </div>
-      <div v-if="!readonly" class="task-actions"><button type="button" :disabled="busy" class="mini-button" @click="emit('duplicate', task.id)">复制一行</button><button type="button" :disabled="busy" class="mini-button danger" @click="emit('remove', task.id)">删除</button></div>
+      <div v-if="!readonly" class="task-actions"><button type="button" :disabled="busy" class="mini-button" @click="emit('duplicate', task.id)">复制一行</button><button type="button" :disabled="busy || !!task.meeting_task_id" :title="task.meeting_task_id ? '会议指派任务，请在会议记录中取消指派' : undefined" class="mini-button danger" @click="emit('remove', task.id)">删除</button></div>
     </article>
   </div>
 </template>
