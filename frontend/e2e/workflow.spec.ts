@@ -98,6 +98,8 @@ test('管理员与普通用户完成周报流程', async ({ page, context }) => 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     if (width === 320) await page.screenshot({ path: 'test-results/report-mobile.png', fullPage: true })
   }
+  // 从会议列表新增，避免当天周会已存在时汇总入口变为编辑。
+  await page.getByRole('navigation').getByRole('button', { name: /会议记录/ }).click()
   await page.getByRole('button', { name: '＋ 新增会议记录' }).click()
   await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('会议类型').fill('例会')
   await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('会议内容').fill('项目同步')
