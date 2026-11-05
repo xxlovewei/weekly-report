@@ -73,8 +73,8 @@ async function save() {
               <select v-if="!task.assignments?.length" v-model="task.status" class="meeting-completion-select" :aria-label="`任务 ${index + 1} 完成状态`"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select>
               <div v-else class="assignment-statuses">
                 <label v-for="assignment in task.assignments" :key="assignment.user_id" class="assignment-status">
-                  <span>{{ personName(task, assignment.user_id) }}</span>
                   <select v-model="assignment.status" class="meeting-completion-select" :aria-label="`${personName(task, assignment.user_id)}的完成状态`"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select>
+                  <span>{{ personName(task, assignment.user_id) }}</span>
                   <button v-if="!people.some(p => p.id === assignment.user_id)" type="button" class="mini-button" @click="task.assignments = task.assignments.filter(a => a.user_id !== assignment.user_id)">取消指派</button>
                 </label>
               </div>
