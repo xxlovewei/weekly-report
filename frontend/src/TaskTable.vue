@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { taskStatuses as statuses } from './taskStatuses'
 import TaskDescription from './TaskDescription.vue'
 import type { Category, Task, TaskField } from './types'
 const props = defineProps<{ tasks: Task[]; categories?: Category[]; readonly?: boolean; busy?: boolean }>()
@@ -11,7 +12,7 @@ let keyboardHandle: HTMLButtonElement | null = null
 watch(() => props.busy, busy => {
   if (!busy && keyboardHandle) { keyboardHandle.focus(); keyboardHandle = null }
 }, { flush: 'post' })
-const statuses = ['已完成','90%','80%','70%','60%','50%','40%','30%','20%','10%','5%']
+
 function progressStyle(status: string | null) {
   if (!status || !/^\d+%$/.test(status)) return
   const progress = Math.min(100, Number.parseInt(status))

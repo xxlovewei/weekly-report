@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { taskStatuses } from './taskStatuses'
 import { api, ApiError } from './api'
 import { todayShanghai } from './dates'
 import type { Meeting, MeetingTask } from './types'
@@ -39,7 +40,7 @@ async function save() {
         <label>会议内容<textarea v-model="form.content" rows="4" maxlength="10000" required /></label>
         <label>是否需要跟踪完成情况<select v-model="form.needs_follow_up"><option :value="false">否</option><option :value="true">是</option></select></label>
         <div v-if="form.needs_follow_up" class="meeting-followups"><div class="section-head"><strong>关联任务</strong><button class="mini-button" type="button" @click="form.tasks.push({ name: '', status: null })">＋ 添加任务</button></div>
-          <div v-for="(task, index) in form.tasks" :key="index" class="meeting-task-edit"><strong>{{ index + 1 }}</strong><label>任务名称<input v-model="task.name" maxlength="500" required /></label><label>任务状态<select v-model="task.status"><option :value="null">未选择</option><option value="未完成">未完成</option><option value="已完成">已完成</option></select></label><button class="mini-button danger" type="button" :aria-label="`删除关联任务 ${index+1}`" @click="form.tasks.splice(index, 1)">删除</button></div>
+          <div v-for="(task, index) in form.tasks" :key="index" class="meeting-task-edit"><strong>{{ index + 1 }}</strong><label>任务描述<input v-model="task.name" maxlength="500" required /></label><label>完成状态<select v-model="task.status"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select></label><button class="mini-button danger" type="button" :aria-label="`删除关联任务 ${index+1}`" @click="form.tasks.splice(index, 1)">删除</button></div>
         </div>
         <p v-if="error" class="message error" role="alert">{{ error }}</p>
         <p v-if="success" class="message" role="status">会议记录已保存。</p>

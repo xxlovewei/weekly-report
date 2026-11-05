@@ -214,14 +214,14 @@ def test_report_admin_hidden_and_calendar_marks_task_group():
 def test_meeting_crud_shared_access_and_filter():
     alice, bob = client("alice"), client("bob")
     payload = {"meeting_date":"2026-10-13", "meeting_type":"例会", "content":"项目同步", "needs_follow_up":True,
-               "tasks":[{"name":"联调", "status":"未完成"}, {"name":"验收", "status":None}]}
+               "tasks":[{"name":"联调", "status":"50%"}, {"name":"验收", "status":None}]}
     created = alice.post("/api/meetings", json=payload)
     assert created.status_code == 201, created.text
     assert alice.post("/api/meetings", json={**payload, "needs_follow_up":False}).status_code == 422
     meeting_id = created.json()["id"]
     assert [t["position"] for t in created.json()["tasks"]] == [1, 2]
     assert bob.get(f"/api/meetings/{meeting_id}").status_code == 200
-    assert bob.get("/api/meetings?status=未完成").json()["total"] == 1
+    assert bob.get("/api/meetings?status=50%25").json()["total"] == 1
     assert bob.get("/api/meetings?status=已完成").json()["total"] == 0
     assert bob.get("/api/meetings?status=未选择").json()["total"] == 1
     assert bob.get("/api/meetings?content=同步&date_from=2026-10-13&date_to=2026-10-13").json()["total"] == 1
