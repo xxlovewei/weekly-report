@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref, nextTick, onMounted, onUnmounted } from 'vue'
+import AssigneeSelect from './AssigneeSelect.vue'
 import { taskStatuses } from './taskStatuses'
 import { api, ApiError } from './api'
 import { todayShanghai } from './dates'
@@ -33,7 +34,7 @@ function togglePerson(task: MeetingTask, person: MeetingPerson) {
 }
 function personName(task: MeetingTask, id: number) {
   const person = people.value.find(p => p.id === id) || task.assignments?.find(a => a.user_id === id)?.person
-  return person ? `${person.display_name}（${person.username}）` : `用户 ${id}`
+  return person?.display_name || `用户 ${id}`
 }
 onUnmounted(() => clearTimeout(successTimer))
 async function save() {
@@ -60,7 +61,26 @@ async function save() {
         <label>会议内容<textarea v-model="form.content" rows="4" maxlength="10000" required /></label>
         <label>是否需要跟踪完成情况<select v-model="form.needs_follow_up"><option :value="false">否</option><option :value="true">是</option></select></label>
         <div v-if="form.needs_follow_up" class="meeting-followups"><div class="section-head"><strong>关联任务</strong><button class="mini-button" type="button" @click="form.tasks.push({ name: '', status: null, assignments: [] })">＋ 添加任务</button></div>
-          <div v-for="(task, index) in form.tasks" :key="index" class="meeting-task-edit"><strong>{{ index + 1 }}</strong><label>任务描述<textarea v-model="task.name" maxlength="5000" rows="3" /></label><div class="meeting-assignees"><span>指派人员</span><details><summary>{{ task.assignments?.length ? `已选择 ${task.assignments.length} 人` : '未选择' }}</summary><div class="assignee-options"><label v-for="person in people" :key="person.id"><input type="checkbox" :checked="task.assignments?.some(a => a.user_id === person.id)" @change="togglePerson(task, person)" />{{ person.display_name }}（{{ person.username }}）</label><span v-if="!people.length">{{ peopleLoading ? '加载中…' : '暂无普通用户' }}</span></div></details></div><label v-if="!task.assignments?.length">完成状态<select v-model="task.status"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select></label><div v-else class="assignment-statuses"><label v-for="assignment in task.assignments" :key="assignment.user_id">{{ personName(task, assignment.user_id) }} · 完成状态<select v-model="assignment.status"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select><button v-if="!people.some(p => p.id === assignment.user_id)" type="button" class="mini-button" @click="task.assignments = task.assignments.filter(a => a.user_id !== assignment.user_id)">取消指派</button></label></div><button class="mini-button danger" type="button" :aria-label="`删除关联任务 ${index+1}`" @click="form.tasks.splice(index, 1)">删除</button></div>
+          <div v-for="(task, index) in form.tasks" :key="index" class="meeting-task-edit">
+            <strong>{{ index + 1 }}</strong>
+            <label class="meeting-task-description"><span class="meeting-task-field-title">任务描述</span><textarea v-model="task.name" maxlength="5000" rows="3" /></label>
+            <div class="meeting-task-field meeting-assignees">
+              <span class="meeting-task-field-title">指派人员</span>
+              <AssigneeSelect :people="people" :selected="(task.assignments || []).map(a => a.user_id)" :loading="peopleLoading" :label="`任务 ${index + 1} 指派人员`" @toggle="togglePerson(task, $event)" />
+            </div>
+            <div class="meeting-task-field meeting-task-completion">
+              <span class="meeting-task-field-title">完成状态</span>
+              <select v-if="!task.assignments?.length" v-model="task.status" class="meeting-completion-select" :aria-label="`任务 ${index + 1} 完成状态`"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select>
+              <div v-else class="assignment-statuses">
+                <label v-for="assignment in task.assignments" :key="assignment.user_id" class="assignment-status">
+                  <span>{{ personName(task, assignment.user_id) }}</span>
+                  <select v-model="assignment.status" class="meeting-completion-select" :aria-label="`${personName(task, assignment.user_id)}的完成状态`"><option :value="null">未开始</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option></select>
+                  <button v-if="!people.some(p => p.id === assignment.user_id)" type="button" class="mini-button" @click="task.assignments = task.assignments.filter(a => a.user_id !== assignment.user_id)">取消指派</button>
+                </label>
+              </div>
+            </div>
+            <button class="mini-button danger" type="button" :aria-label="`删除关联任务 ${index+1}`" @click="form.tasks.splice(index, 1)">删除</button>
+          </div>
         </div>
         <p v-if="error" class="message error" role="alert">{{ error }}</p>
         <p v-if="success" class="message" role="status">会议记录已保存。</p>

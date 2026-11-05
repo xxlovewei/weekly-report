@@ -40,6 +40,17 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .font-size-controls{display:flex;align-items:center;gap:6px}.font-size-controls output{min-width:40px;text-align:center;font-size:12px;font-weight:900}.font-size-controls button:disabled{cursor:not-allowed}
 .sidebar-bottom{height:70px;padding-top:12px}.sidebar-user{height:56px;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px}.sidebar-bottom .identity{height:56px;grid-template-rows:1fr 1fr;align-content:stretch;gap:0;padding:0}.sidebar-bottom .identity strong{font-size:18px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-bottom .identity small{font-size:11px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-actions{display:grid;grid-template-rows:1fr 1fr;gap:6px}.sidebar-actions button{width:100%;min-height:0;padding:4px 5px}
 
-/* 指派人员采用复选下拉，每人的完成状态单独编辑。 */
-.meeting-modal{max-width:1000px}.meeting-task-edit{grid-template-columns:26px minmax(150px,1fr) 180px minmax(160px,1fr) auto}.meeting-assignees{align-self:start;min-width:0;font-size:12px;display:grid;gap:6px}.meeting-assignees details{border:1px solid #000;background:white;padding:8px}.meeting-assignees summary{cursor:pointer}.assignee-options{max-height:200px;overflow:auto;display:grid;gap:8px;margin-top:8px}.assignee-options label{display:flex;align-items:center;gap:6px}.assignee-options input{width:auto}.assignment-statuses{display:grid;gap:8px}.meeting-person-progress{padding:4px 7px;background:#eef7ff}.meeting-task-line{flex-wrap:wrap}
-@media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.meeting-assignees,.meeting-task-edit>.assignment-statuses,.meeting-task-edit>button{grid-column:2}}
+/* 任务字段标题统一顶部对齐，人员完成状态按姓名、状态纵向组成紧凑分组。 */
+.meeting-modal{max-width:1000px}
+.meeting-task-edit{grid-template-columns:26px minmax(160px,1fr) 165px minmax(184px,1fr) auto;align-items:start}
+.meeting-task-field{display:grid;gap:7px;min-width:0}
+.meeting-task-field-title{font-size:12px;font-weight:700;line-height:17px}
+.meeting-task-description{gap:7px}
+.meeting-task-completion .assignment-statuses{display:flex;flex-wrap:wrap;align-items:start;gap:10px 8px}
+.assignment-status{width:88px;min-width:0;gap:4px}
+.assignment-status>span{line-height:17px;overflow-wrap:anywhere}
+.meeting-completion-select{width:88px;padding:9px 7px;font-size:12px}
+.meeting-task-edit>.danger{align-self:end}
+.meeting-person-progress{padding:4px 7px;background:#eef7ff}
+.meeting-task-line{flex-wrap:wrap}
+@media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.meeting-task-field,.meeting-task-edit>button{grid-column:2}}
