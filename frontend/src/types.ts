@@ -4,7 +4,7 @@ export interface Task { id: number; position: number; category_name: string | nu
 export interface WeekData { revision: number; tasks: Task[]; no_source?: boolean }
 export interface ReportTab { id: number; name: string; is_active: boolean; is_deleted?: boolean }
 export type TaskField = Pick<Task, 'category_name' | 'task_group' | 'description' | 'status' | 'work_days' | 'notes'>
-export interface MeetingTask { id?: number; position?: number; name: string; status: '已完成' | '未完成' | null }
+export interface MeetingTask { id?: number; position?: number; name: string; status: string | null }
 export type MeetingPerson = Pick<User, 'id' | 'username' | 'display_name'>
 export interface Meeting { id: number; meeting_date: string; meeting_type: string; content: string; needs_follow_up: boolean; creator: MeetingPerson | null; updaters: MeetingPerson[]; tasks: MeetingTask[] }
 export interface MeetingPage { items: Meeting[]; total: number; page: number; page_size: number }

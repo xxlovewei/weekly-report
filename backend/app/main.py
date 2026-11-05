@@ -95,7 +95,9 @@ class TaskOrderInput(Input):
 
 class MeetingTaskInput(Input):
     name: str = Field(min_length=1, max_length=500)
-    status: Literal["已完成", "未完成"] | None = None
+    status: str | None = None
+
+    _valid_status = field_validator("status")(TaskPatch.valid_status.__func__)
 
 class MeetingInput(Input):
     meeting_date: date
@@ -524,7 +526,7 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
     return meeting_json(row)
 
 @app.get("/api/meetings")
-def list_meetings(page: int = 1, page_size: int = 10, date_from: date | None = None, date_to: date | None = None, content: str = "", status: Literal["已完成", "未完成", "未选择"] | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
+def list_meetings(page: int = 1, page_size: int = 10, date_from: date | None = None, date_to: date | None = None, content: str = "", status: str | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
     if page < 1 or page_size < 1 or page_size > 50 or (date_from and date_to and date_from > date_to):
         raise HTTPException(422, "页码或日期范围无效")
     query = select(Meeting)
@@ -532,7 +534,9 @@ def list_meetings(page: int = 1, page_size: int = 10, date_from: date | None = N
     if date_to: query = query.where(Meeting.meeting_date <= date_to)
     if content: query = query.where(Meeting.content.ilike(f"%{content}%"))
     if status:
-        matching = select(MeetingTask.meeting_id).where(MeetingTask.status.is_(None) if status == "未选择" else MeetingTask.status == status)
+        if status not in STATUSES | {"未开始", "未选择"}:
+            raise HTTPException(422, "完成状态无效")
+        matching = select(MeetingTask.meeting_id).where(MeetingTask.status.is_(None) if status in {"未开始", "未选择"} else MeetingTask.status == status)
         query = query.where(Meeting.id.in_(matching))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.scalars(query.order_by(Meeting.meeting_date.desc(), Meeting.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
