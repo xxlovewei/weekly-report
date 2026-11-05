@@ -27,7 +27,7 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 @media(max-width:480px){.task-fields{grid-template-columns:minmax(0,1fr)}.task-fields .description,.task-fields .notes{grid-column:auto}.meeting-form-row{grid-template-columns:1fr}.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label:nth-of-type(2){grid-column:2}.meeting-task-edit>button{grid-column:2;justify-self:start}.meeting-card-head{flex-direction:column}.meeting-filters label{min-width:100%}}
 
 .meeting-card-head>div:first-child{min-width:0}.meeting-person{font-size:12px;overflow-wrap:anywhere}.meeting-card-head .top-actions{flex-shrink:0}
-.meeting-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.meeting-modal-head h2{margin-bottom:10px}.meeting-modal-head .icon-btn{font-size:22px;line-height:1}.meeting-task-line{justify-content:flex-start;align-items:center}.meeting-task-status{min-width:64px;padding:4px 7px;border:1px solid #000;text-align:center}.meeting-task-status.completed{background:#ccff00}.meeting-task-status.pending{background:#ff9500}.meeting-task-status.unset{background:#ddd}
+.meeting-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.meeting-modal-head h2{margin-bottom:10px}.meeting-modal-head .icon-btn{font-size:22px;line-height:1}.meeting-task-line{justify-content:flex-start;align-items:center}
 .description-error{font-size:11px;margin:5px 0 0;color:#a30031}
 .task-leading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.task-drag-handle{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #000;background:#fff;cursor:grab}.task-drag-handle:hover{background:#ffff00}.task-drag-handle:active{cursor:grabbing}.task-row.dragging{opacity:.45}.task-row.drop-before{border-top-color:#ff006e;box-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}.task-row.drop-after{border-bottom-color:#ff006e;box-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
 .task-row.selected{outline:3px solid #ff006e;outline-offset:2px}.task-drag-handle[aria-pressed=true]{outline:3px solid #ff006e;outline-offset:2px}
@@ -52,6 +52,7 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .assignment-status>span{line-height:17px;overflow-wrap:anywhere;text-align:center}
 .meeting-completion-select{width:88px;padding:9px 7px;font-size:12px}
 .meeting-task-edit>.danger{align-self:end}
-.meeting-person-progress{padding:4px 7px;background:#eef7ff}
+/* 人员姓名放在状态标签外，填充区域仅覆盖完成状态。 */
+.meeting-person-progress{display:inline-flex;align-items:center;gap:4px}
 .meeting-task-line{flex-wrap:wrap}
 @media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.meeting-task-field,.meeting-task-edit>button{grid-column:2}}
