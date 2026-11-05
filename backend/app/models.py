@@ -94,3 +94,12 @@ class MeetingTask(Base):
 
     # 每个被指派人仅关联当前有效的周任务；复制时将关联移动到新行。
     linked_tasks: Mapped[list["Task"]] = relationship(back_populates="meeting_task", order_by="Task.id")
+
+
+class ReleaseRecord(Base):
+    """按版本保留生产发版内容，重复启动不覆盖历史记录。"""
+    __tablename__ = "release_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[str] = mapped_column(String(40), unique=True)
+    description: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

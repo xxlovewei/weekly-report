@@ -56,3 +56,6 @@ button:disabled,select:disabled,textarea:disabled{cursor:wait;background:#f1f1f1
 .meeting-person-progress{display:inline-flex;align-items:center;gap:4px}
 .meeting-task-line{flex-wrap:wrap}
 @media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.meeting-task-field,.meeting-task-edit>button{grid-column:2}}
+
+/* 跟踪任务的人员姓名使用浅色标签，与进度标签分别呈现。 */
+.meeting-assignee-name{display:inline-block;padding:3px 6px;background:#e6f4ff;border:1px solid #b8d9ef;white-space:nowrap}

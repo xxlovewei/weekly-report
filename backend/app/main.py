@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 from .db import get_db
-from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week, meeting_updaters
+from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week, ReleaseRecord, meeting_updaters
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
 hasher = PasswordHash.recommended()
@@ -689,3 +689,11 @@ def delete_meeting(meeting_id: int, auth=Depends(active_session), db: Session = 
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/releases/{version}")
+def release_notes(version: str, auth=Depends(active_session), db: Session = Depends(get_db)):
+    record = db.scalar(select(ReleaseRecord).where(ReleaseRecord.version == version))
+    if record is None:
+        return None
+    return {"version": record.version, "description": record.description, "created_at": record.created_at.isoformat()}
