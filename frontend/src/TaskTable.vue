@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { taskStatuses as statuses } from './taskStatuses'
+import { taskStatuses as statuses, progressStyle } from './taskStatuses'
 import TaskDescription from './TaskDescription.vue'
 import type { Category, Task, TaskField } from './types'
 const props = defineProps<{ tasks: Task[]; categories?: Category[]; readonly?: boolean; busy?: boolean }>()
@@ -13,12 +13,6 @@ watch(() => props.busy, busy => {
   if (!busy && keyboardHandle) { keyboardHandle.focus(); keyboardHandle = null }
 }, { flush: 'post' })
 
-function progressStyle(status: string | null) {
-  if (!status || !/^\d+%$/.test(status)) return
-  const progress = Math.min(100, Number.parseInt(status))
-  // 进度决定填充宽度，填充色随完成度加深，并保持黑字清晰可读。
-  return { background: `linear-gradient(to right, hsl(210 85% ${90 - progress * 0.4}%) ${progress}%, #eef7ff ${progress}%)` }
-}
 const sharedTypes = ['开发相关','联调联试','数据处理','运维相关','开会','其他']
 const taskTypes = computed(() => [...sharedTypes, ...(props.categories || []).map(c => c.name).filter(name => !sharedTypes.includes(name))])
 const days = ['一','二','三','四','五','六','日']
