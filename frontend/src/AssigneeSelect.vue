@@ -65,7 +65,7 @@ onUnmounted(() => {
 <style scoped>
 .assignee-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:38px;padding:9px 10px;border:2px solid #000;background:#fff;font-size:12px;text-align:left}
 .assignee-trigger svg{flex-shrink:0}
-.assignee-trigger:disabled{cursor:wait}
+.assignee-trigger:disabled{cursor:not-allowed}
 .assignee-menu{position:fixed;z-index:50;overflow-y:auto;border:2px solid #000;background:#fff;box-shadow:3px 3px 0 #000;padding:4px}
 .assignee-option{display:flex;align-items:center;gap:7px;padding:7px 5px;cursor:pointer;font-size:12px;font-weight:700;overflow-wrap:anywhere}
 .assignee-option:hover{background:#eef7ff}
