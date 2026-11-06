@@ -45,7 +45,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .meeting-modal{max-width:1000px}
 .meeting-task-edit{grid-template-columns:26px minmax(160px,1fr) 123.75px minmax(184px,1fr) auto;align-items:start}
 .meeting-task-field{display:grid;gap:7px;min-width:0}
-.meeting-task-field-title{font-size:12px;font-weight:700;line-height:17px;text-align:center}
+.meeting-task-field-title{font-size:12px;font-weight:700;line-height:17px;text-align:left}
 .meeting-assignees{width:123.75px;max-width:100%}
 .meeting-task-description{gap:7px}
 .meeting-task-completion .assignment-statuses{display:flex;flex-wrap:wrap;align-items:start;gap:10px 8px}
@@ -56,7 +56,10 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 /* 人员姓名放在状态标签外，填充区域仅覆盖完成状态。 */
 .meeting-person-progress{display:inline-flex;align-items:center;gap:4px}
 .meeting-task-line{flex-wrap:wrap}
-@media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.meeting-task-field,.meeting-task-edit>button{grid-column:2}}
+@media(max-width:700px){.meeting-task-edit{grid-template-columns:24px minmax(0,1fr)}.meeting-task-edit>label,.meeting-task-edit>.numbered-text-field,.meeting-task-edit>.meeting-task-field,.meeting-task-edit>button{grid-column:2}}
 
 /* 跟踪任务的人员姓名使用浅色标签，与进度标签分别呈现。 */
 .meeting-assignee-name{display:inline-block;padding:3px 6px;background:#e6f4ff;border:1px solid #b8d9ef;white-space:nowrap}
+
+/* 共用编号输入组件不改变原有任务字段的列宽。 */
+.numbered-text-field{min-width:0}
