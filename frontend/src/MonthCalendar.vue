@@ -40,9 +40,9 @@ function goCurrent() {
     <div class="calendar-head">
       <strong>{{ compact ? `${displayed.month}月` : `${displayed.year} / ${String(displayed.month).padStart(2, '0')}` }}</strong>
       <div>
-        <button class="icon-btn" type="button" aria-label="回到本周" title="回到本周" @click="goCurrent">回</button>
-        <button class="icon-btn" type="button" :aria-label="compact ? '上一周' : '上个月'" :title="compact ? '上一周' : undefined" @click="compact ? emit('select', addDays(selected, -7)) : shift(-1)">{{ compact ? '↑' : '←' }}</button>
-        <button class="icon-btn" type="button" :aria-label="compact ? '下一周' : '下个月'" :title="compact ? '下一周' : undefined" @click="compact ? emit('select', addDays(selected, 7)) : shift(1)">{{ compact ? '↓' : '→' }}</button>
+        <button class="icon-btn" data-sidebar-tour="current-week" type="button" aria-label="回到本周" title="回到本周" @click="goCurrent">回</button>
+        <button class="icon-btn" data-sidebar-tour="previous-week" type="button" :aria-label="compact ? '上一周' : '上个月'" :title="compact ? '上一周' : undefined" @click="compact ? emit('select', addDays(selected, -7)) : shift(-1)">{{ compact ? '↑' : '←' }}</button>
+        <button class="icon-btn" data-sidebar-tour="next-week" type="button" :aria-label="compact ? '下一周' : '下个月'" :title="compact ? '下一周' : undefined" @click="compact ? emit('select', addDays(selected, 7)) : shift(1)">{{ compact ? '↓' : '→' }}</button>
       </div>
     </div>
     <div v-if="!compact" class="calendar-grid"><span v-for="label in ['一','二','三','四','五','六','日']" :key="label" class="calendar-label">{{ label }}</span>

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { addDays, mondayOf, todayShanghai } from '../src/dates'
 
 test('管理员与普通用户完成周报流程', async ({ page, context }) => {

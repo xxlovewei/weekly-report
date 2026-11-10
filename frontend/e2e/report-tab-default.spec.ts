@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test('进入周报汇总时选中用户保存顺序的首个姓名并加载其周报', async ({ page }) => {
   await page.goto('/')

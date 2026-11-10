@@ -25,8 +25,10 @@ const navItems = [
   { name: 'categories', label: '任务类型', icon: 'M3 4h7v7H3z M14 4h7v7h-7z M3 15h7v6H3z M14 15h7v6h-7z' },
   { name: 'meetings', label: '会议记录', icon: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5' },
   { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
-]
+] as const
 const visibleNavItems = computed(() => navItems.filter(item => item.name !== 'users' || user.value?.role === 'admin'))
+const sidebarTourActive = ref(false)
+const seenSidebarTours = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const week = ref<WeekData>({ revision: 0, tasks: [] })
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
@@ -50,6 +52,47 @@ const reportExportOpen = ref(false), reportExporting = ref(false), reportExportE
 const reportExportStart = ref(''), reportExportEnd = ref('')
 const reportExportStartInput = ref<HTMLInputElement | null>(null)
 const page = computed(() => String(route.name || 'work'))
+const sidebarTourAccount = computed(() =>
+  ready.value && desktopSidebar.value && !user.value?.must_change_password && (page.value === 'work' || page.value === 'reports')
+    ? user.value?.id : undefined,
+)
+function hasSeenSidebarTour(key: string) {
+  if (seenSidebarTours.has(key)) return true
+  try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCleanup) => {
+  if (account === undefined) return
+  // 使用固定的功能版本标识，后续发布新版本也不会重播这次引导。
+  const key = `zhoubao.sidebar-tour.v1.4.0.${account}`
+  if (hasSeenSidebarTour(key)) return
+  let cancelled = false
+  let stop: (() => void) | undefined
+  onCleanup(() => { cancelled = true; stop?.() })
+
+  const module = await import('./sidebarTour').catch(() => undefined)
+  if (cancelled || !module || hasSeenSidebarTour(key)) return
+  const wasCollapsed = sidebarCollapsed.value
+  const close = (completed = false) => {
+    sidebarCollapsed.value = completed ? false : wasCollapsed
+    sidebarTourActive.value = false
+  }
+  stop = close
+  sidebarTourActive.value = true
+  sidebarCollapsed.value = false
+  await nextTick()
+  if (cancelled) return
+
+  stop = module.startSidebarTour({
+    menu: visibleNavItems.value,
+    showMeetingShortcut: activePage === 'reports',
+    setCollapsed: collapsed => { sidebarCollapsed.value = collapsed },
+    onShown: () => {
+      seenSidebarTours.add(key)
+      try { localStorage.setItem(key, '1') } catch { /* 浏览器存储不可用时，仅记录当前页面的展示状态。 */ }
+    },
+    onClosed: close,
+  })
+}, { flush: 'post' })
 const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码' }[page.value] || '周报'))
 const taskFontSizeKey = 'zhoubao.task-font-size'
 function loadTaskFontSize() {
@@ -411,34 +454,34 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
 <template>
   <div v-if="!ready" class="loading">正在加载周报…</div>
   <main v-else-if="!user" class="login-screen"><div class="login-poster"><span class="eyebrow">每周工作 / 团队周报</span><h1>把一周<br>写成进展。</h1><p>清晰记录每一天，也看见整个团队。</p></div><form class="login-panel" @submit.prevent="login"><span class="eyebrow">01 / 用户登录</span><h2>登录周报</h2><label>用户名<input name="username" autocomplete="username" required /></label><label>密码<input name="password" type="password" autocomplete="current-password" required /></label><button class="primary-button" type="submit">进入工作台 →</button><p v-if="notice" class="message error" role="alert">{{ notice }}</p></form></main>
-  <div v-else class="shell" :class="{ 'sidebar-collapsed': compactSidebar }">
+  <div v-else class="shell" :class="{ 'sidebar-collapsed': compactSidebar, 'sidebar-guided': sidebarTourActive }">
     <button class="mobile-toggle" type="button" :aria-expanded="mobileOpen" aria-label="打开或关闭导航" @click="mobileOpen = !mobileOpen">☰ 菜单</button>
     <aside class="sidebar" :class="{ open: mobileOpen }">
       <div class="brand">
         <img class="brand-mark" :src="brandLogo" alt="周报" />
-        <div><strong v-if="!compactSidebar">周报</strong><ReleaseNotes :version="version" :compact="compactSidebar" /></div>
-        <button v-if="desktopSidebar" class="icon-btn sidebar-toggle" type="button" aria-controls="sidebar-body" :aria-expanded="!compactSidebar" :aria-label="compactSidebar ? '展开侧栏' : '收起侧栏'" :title="compactSidebar ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed = !sidebarCollapsed">{{ compactSidebar ? '→' : '←' }}</button>
+        <div data-sidebar-tour="brand"><strong v-if="!compactSidebar">周报</strong><ReleaseNotes :version="version" :compact="compactSidebar" /></div>
+        <button v-if="desktopSidebar" class="icon-btn sidebar-toggle" data-sidebar-tour="toggle" type="button" aria-controls="sidebar-body" :aria-expanded="!compactSidebar" :aria-label="compactSidebar ? '展开侧栏' : '收起侧栏'" :title="compactSidebar ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed = !sidebarCollapsed">{{ compactSidebar ? '→' : '←' }}</button>
       </div>
       <div id="sidebar-body" class="sidebar-body">
         <nav v-if="!user.must_change_password" aria-label="主导航">
-          <button v-for="item in visibleNavItems" :key="item.name" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
+          <button v-for="item in visibleNavItems" :key="item.name" :data-sidebar-tour="item.name" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
             <svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
             <span v-if="!compactSidebar">{{ item.label }}</span>
           </button>
         </nav>
         <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
-        <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
+        <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
           {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
         </button>
         <div class="sidebar-bottom">
           <div class="sidebar-user">
             <div class="identity"><strong>{{ user.display_name }}</strong><small v-if="!compactSidebar">{{ user.username }}</small></div>
             <div class="sidebar-actions">
-              <button class="mini-button" type="button" aria-label="修改密码" :title="compactSidebar ? '修改密码' : undefined" @click="navigate('password')">
+              <button class="mini-button" data-sidebar-tour="password" type="button" aria-label="修改密码" :title="compactSidebar ? '修改密码' : undefined" @click="navigate('password')">
                 <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 7a5 5 0 0 1-6.7 4.7L8 18H4v-4l6.3-6.3A5 5 0 1 1 21 7z M16 7h.01" /></svg>
                 <span v-else>修改密码</span>
               </button>
-              <button class="mini-button" type="button" aria-label="退出登录" :title="compactSidebar ? '退出登录' : undefined" @click="logout">
+              <button class="mini-button" data-sidebar-tour="logout" type="button" aria-label="退出登录" :title="compactSidebar ? '退出登录' : undefined" @click="logout">
                 <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4v16h7 M9 12h12 M17 8l4 4-4 4" /></svg>
                 <span v-else>退出登录</span>
               </button>
