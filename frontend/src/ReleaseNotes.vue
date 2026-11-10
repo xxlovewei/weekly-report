@@ -2,7 +2,7 @@
 import { ref, useId } from 'vue'
 import { api } from './api'
 
-const props = defineProps<{ version: string }>()
+const props = defineProps<{ version: string; compact?: boolean }>()
 const tooltipId = useId()
 const open = ref(false), loading = ref(false), loaded = ref(false)
 const description = ref(''), error = ref('')
@@ -22,7 +22,7 @@ async function showNotes() {
 
 <template>
   <div class="release-notes" @mouseenter="showNotes" @mouseleave="open = false" @keydown.esc.stop.prevent="open = false">
-    <small tabindex="0" :aria-describedby="open ? tooltipId : undefined" @focus="showNotes" @blur="open = false">当前版本：v{{ version }}</small>
+    <small tabindex="0" :aria-describedby="open ? tooltipId : undefined" @focus="showNotes" @blur="open = false"><span v-if="!compact">当前版本：</span>v{{ version }}</small>
     <div v-if="open" :id="tooltipId" class="release-tooltip" role="tooltip">
       <strong>v{{ version }} 更新内容</strong>
       <p>{{ loading ? '正在加载更新内容…' : error || description }}</p>
