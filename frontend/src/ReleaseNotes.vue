@@ -37,4 +37,8 @@ async function showNotes() {
 .release-tooltip{position:absolute;top:100%;left:0;z-index:60;width:min(340px,calc(100vw - 120px));padding:12px;border:2px solid #000;background:#fff;box-shadow:4px 4px 0 #000;letter-spacing:normal}
 .release-tooltip strong{display:block;font-size:13px;margin-bottom:8px}
 .release-tooltip p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;max-height:320px;overflow-y:auto}
+/* 引导弹窗贴着版本号时，把更新说明放到弹窗下方，并保留可悬停的路径。 */
+.release-notes:has(small.driver-active-element) .release-tooltip{--release-tour-gap:180px;top:calc(100% + var(--release-tour-gap))}
+.release-notes:has(small.driver-active-element) .release-tooltip::before{content:"";position:absolute;bottom:100%;left:0;width:38px;height:calc(var(--release-tour-gap) + 4px)}
+.release-notes:has(small.driver-active-element) .release-tooltip p{max-height:clamp(48px,calc(100dvh - 340px),320px)}
 </style>

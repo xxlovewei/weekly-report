@@ -459,7 +459,7 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
     <aside class="sidebar" :class="{ open: mobileOpen }">
       <div class="brand">
         <img class="brand-mark" :src="brandLogo" alt="周报" />
-        <div data-sidebar-tour="brand"><strong v-if="!compactSidebar">周报</strong><ReleaseNotes :version="version" :compact="compactSidebar" /></div>
+        <div><strong v-if="!compactSidebar">周报</strong><ReleaseNotes :version="version" :compact="compactSidebar" /></div>
         <button v-if="desktopSidebar" class="icon-btn sidebar-toggle" data-sidebar-tour="toggle" type="button" aria-controls="sidebar-body" :aria-expanded="!compactSidebar" :aria-label="compactSidebar ? '展开侧栏' : '收起侧栏'" :title="compactSidebar ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed = !sidebarCollapsed">{{ compactSidebar ? '→' : '←' }}</button>
       </div>
       <div id="sidebar-body" class="sidebar-body">
