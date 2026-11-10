@@ -15,6 +15,18 @@ import type { Category, Meeting, MeetingPage, ReportTab, Task, TaskField, User, 
 
 const route = useRoute(), router = useRouter()
 const user = ref<User | null>(null), ready = ref(false), mobileOpen = ref(false)
+const mobileSidebarQuery = window.matchMedia('(max-width: 800px)')
+const desktopSidebar = ref(!mobileSidebarQuery.matches), sidebarCollapsed = ref(false)
+const compactSidebar = computed(() => desktopSidebar.value && sidebarCollapsed.value)
+function updateSidebarViewport(event: MediaQueryListEvent) { desktopSidebar.value = !event.matches }
+const navItems = [
+  { name: 'work', label: '本周工作', icon: 'M8 7V3h8v4 M3 7h18v13H3z M3 12h18 M10 12v2h4v-2' },
+  { name: 'reports', label: '周报汇总', icon: 'M5 3h14v18H5z M8 16v-3 M12 16V8 M16 16v-5' },
+  { name: 'categories', label: '任务类型', icon: 'M3 4h7v7H3z M14 4h7v7h-7z M3 15h7v6H3z M14 15h7v6h-7z' },
+  { name: 'meetings', label: '会议记录', icon: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5' },
+  { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
+]
+const visibleNavItems = computed(() => navItems.filter(item => item.name !== 'users' || user.value?.role === 'admin'))
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const week = ref<WeekData>({ revision: 0, tasks: [] })
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
@@ -24,6 +36,7 @@ const calendarKey = ref(0)
 const meetings = ref<MeetingPage>({ items: [], total: 0, page: 1, page_size: 10 })
 const meetingPage = ref(1), meetingOpen = ref(false), meetingDraft = ref<Meeting | null>(null)
 const todayWeeklyMeeting = ref<Meeting | null>(null), todayWeeklyMeetingLoading = ref(false)
+const meetingActionLabel = computed(() => todayWeeklyMeeting.value ? '修改会议记录' : '新增会议记录')
 const meetingFilter = reactive({ date_from: '', date_to: '', content: '', status: '' })
 const notice = ref(''), saveStatus = ref<'saved' | 'saving' | 'failed' | 'conflict'>('saved')
 const mutating = ref(false)
@@ -379,6 +392,7 @@ const removeRouteGuard = router.beforeEach(async (to, from) => {
   }
 })
 onMounted(async () => {
+  mobileSidebarQuery.addEventListener('change', updateSidebarViewport)
   window.addEventListener('beforeunload', beforeUnload)
   document.addEventListener('invalid', localizeInvalid, true)
   document.addEventListener('input', clearValidation, true)
@@ -390,21 +404,48 @@ onMounted(async () => {
   else if (user.value && (page.value === 'login' || (page.value === 'users' && user.value.role !== 'admin'))) await router.replace('/work')
   if (user.value) await loadPage()
 })
-onUnmounted(() => { removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
+onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
 watch(() => route.name, () => { if (ready.value && user.value) void loadPage() })
 </script>
 
 <template>
   <div v-if="!ready" class="loading">正在加载周报…</div>
   <main v-else-if="!user" class="login-screen"><div class="login-poster"><span class="eyebrow">每周工作 / 团队周报</span><h1>把一周<br>写成进展。</h1><p>清晰记录每一天，也看见整个团队。</p></div><form class="login-panel" @submit.prevent="login"><span class="eyebrow">01 / 用户登录</span><h2>登录周报</h2><label>用户名<input name="username" autocomplete="username" required /></label><label>密码<input name="password" type="password" autocomplete="current-password" required /></label><button class="primary-button" type="submit">进入工作台 →</button><p v-if="notice" class="message error" role="alert">{{ notice }}</p></form></main>
-  <div v-else class="shell">
+  <div v-else class="shell" :class="{ 'sidebar-collapsed': compactSidebar }">
     <button class="mobile-toggle" type="button" :aria-expanded="mobileOpen" aria-label="打开或关闭导航" @click="mobileOpen = !mobileOpen">☰ 菜单</button>
-    <aside class="sidebar" :class="{ open: mobileOpen }"><div class="brand"><img class="brand-mark" :src="brandLogo" alt="周报" /><div><strong>周报</strong><ReleaseNotes :version="version" /></div></div>
-      <nav v-if="!user.must_change_password" aria-label="主导航"><button type="button" :class="{ active: page === 'work' }" @click="navigate('work')">▣ 本周工作</button><button type="button" :class="{ active: page === 'reports' }" @click="navigate('reports')">▤ 周报汇总</button><button type="button" :class="{ active: page === 'categories' }" @click="navigate('categories')">▥ 任务类型</button><button type="button" :class="{ active: page === 'meetings' }" @click="navigate('meetings')">▧ 会议记录</button><button v-if="user.role === 'admin'" type="button" :class="{ active: page === 'users' }" @click="navigate('users')">▦ 用户管理</button></nav>
-      <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" @select="selectWeek" />
-      <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" :disabled="todayWeeklyMeetingLoading" @click="openMeeting(todayWeeklyMeeting)">{{ todayWeeklyMeeting ? '✎ 修改会议记录' : '＋ 新增会议记录' }}</button>
-      <div class="sidebar-bottom"><div class="sidebar-user"><div class="identity"><strong>{{ user.display_name }}</strong><small>{{ user.username }}</small></div><div class="sidebar-actions"><button class="mini-button" type="button" @click="navigate('password')">修改密码</button><button class="mini-button" type="button" @click="logout">退出登录</button></div></div></div>
-      
+    <aside class="sidebar" :class="{ open: mobileOpen }">
+      <div class="brand">
+        <img class="brand-mark" :src="brandLogo" alt="周报" />
+        <div><strong v-if="!compactSidebar">周报</strong><ReleaseNotes :version="version" :compact="compactSidebar" /></div>
+        <button v-if="desktopSidebar" class="icon-btn sidebar-toggle" type="button" aria-controls="sidebar-body" :aria-expanded="!compactSidebar" :aria-label="compactSidebar ? '展开侧栏' : '收起侧栏'" :title="compactSidebar ? '展开侧栏' : '收起侧栏'" @click="sidebarCollapsed = !sidebarCollapsed">{{ compactSidebar ? '→' : '←' }}</button>
+      </div>
+      <div id="sidebar-body" class="sidebar-body">
+        <nav v-if="!user.must_change_password" aria-label="主导航">
+          <button v-for="item in visibleNavItems" :key="item.name" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
+            <svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
+            <span v-if="!compactSidebar">{{ item.label }}</span>
+          </button>
+        </nav>
+        <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
+        <button v-if="page === 'reports'" class="primary-button sidebar-meeting" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
+          {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
+        </button>
+        <div class="sidebar-bottom">
+          <div class="sidebar-user">
+            <div class="identity"><strong>{{ user.display_name }}</strong><small v-if="!compactSidebar">{{ user.username }}</small></div>
+            <div class="sidebar-actions">
+              <button class="mini-button" type="button" aria-label="修改密码" :title="compactSidebar ? '修改密码' : undefined" @click="navigate('password')">
+                <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 7a5 5 0 0 1-6.7 4.7L8 18H4v-4l6.3-6.3A5 5 0 1 1 21 7z M16 7h.01" /></svg>
+                <span v-else>修改密码</span>
+              </button>
+              <button class="mini-button" type="button" aria-label="退出登录" :title="compactSidebar ? '退出登录' : undefined" @click="logout">
+                <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4v16h7 M9 12h12 M17 8l4 4-4 4" /></svg>
+                <span v-else>退出登录</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </aside>
     <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports' }"><div><span class="eyebrow">周报系统 / {{ title }}</span><h1>{{ title }}</h1><p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p></div><div v-if="page === 'work' || page === 'reports'" class="top-actions"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></div>
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
