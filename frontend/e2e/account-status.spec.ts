@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test('管理员保存锁定状态并可解锁，新用户默认正常', async ({ page }) => {
   const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', is_active: true, status: '正常', must_change_password: false }

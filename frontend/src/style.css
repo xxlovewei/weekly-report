@@ -73,6 +73,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 @media(min-width:801px){
   /* 左边缘固定，收起后把腾出的宽度让给工作区。 */
   .shell{transition:grid-template-columns 180ms ease-out}
+  .shell.sidebar-guided{transition:none}
   .shell.sidebar-collapsed{grid-template-columns:88px minmax(0,1fr)}
   .sidebar-collapsed .sidebar{gap:8px;padding:12px 8px}
   .sidebar-collapsed .brand{flex-direction:column;gap:8px;padding-bottom:8px}
@@ -92,3 +93,10 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   .sidebar-collapsed .sidebar-actions{justify-items:center}
   .sidebar-collapsed .sidebar-actions button{display:grid;place-items:center;width:40px;height:32px;padding:0}
 }
+
+.driver-popover.sidebar-tour-popover{border:2px solid #000;border-radius:0;box-shadow:4px 4px 0 #000;font-family:inherit;max-width:340px}
+.sidebar-tour-popover .driver-popover-description{line-height:1.6}
+.sidebar-tour-popover .driver-popover-close-btn{color:#000}
+.sidebar-tour-popover .driver-popover-footer button{border:2px solid #000;border-radius:0;text-shadow:none}
+.sidebar-tour-popover .driver-popover-footer .driver-popover-next-btn{background:#ccff00}
+.sidebar-tour-popover .driver-popover-footer button:hover:not(:disabled){background:#ffff00}

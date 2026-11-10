@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { todayShanghai } from '../src/dates'
 
 test('周报汇总按当天周会记录显示新增或修改入口，并可重新打开', async ({ page }) => {

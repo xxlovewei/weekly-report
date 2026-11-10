@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import packageInfo from '../package.json' with { type: 'json' }
 import type { Task } from '../src/types'
 
