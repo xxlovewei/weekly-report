@@ -28,15 +28,16 @@ test('首次进入逐步演示收起和展开，完成后刷新不再显示', as
   await expect(page.locator('.shell')).not.toHaveClass(/sidebar-collapsed/)
   await tour.getByRole('button', { name: '收起侧栏' }).click()
 
-  await expect(tour).toHaveAccessibleName('Logo 和版本号')
-  await tour.getByRole('button', { name: '下一步' }).click()
   await expect(tour).toHaveAccessibleName('查看版本更新内容')
-  await page.locator('.release-notes small').hover()
+  const version = page.locator('.release-notes small')
+  const versionBox = (await version.boundingBox())!
+  const tourBox = (await tour.boundingBox())!
+  expect(tourBox.x - (versionBox.x + versionBox.width)).toBeLessThan(32)
+  await version.hover()
   const releaseNotes = page.getByRole('tooltip')
   await expect(releaseNotes).toContainText('新增侧栏折叠和按周导航。')
   const notesBox = (await releaseNotes.boundingBox())!
-  const tourBox = (await tour.boundingBox())!
-  expect(notesBox.x + notesBox.width).toBeLessThanOrEqual(tourBox.x)
+  expect(notesBox.y).toBeGreaterThanOrEqual(tourBox.y + tourBox.height)
   expect(tourBox.x + tourBox.width).toBeLessThanOrEqual(width)
   await releaseNotes.hover()
   await tour.getByRole('button', { name: '下一步' }).click()
@@ -68,7 +69,7 @@ test('移动端不消耗首次机会，桌面跳过后只对新账号显示', as
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(tour).toHaveAccessibleName('收起侧栏', { timeout: 3000 })
   await tour.getByRole('button', { name: '收起侧栏' }).click()
-  for (const title of ['Logo 和版本号', '查看版本更新内容', '本周工作', '周报汇总', '任务类型', '会议记录', '用户管理', '回到本周', '上一周', '下一周', '周会快捷入口']) {
+  for (const title of ['查看版本更新内容', '本周工作', '周报汇总', '任务类型', '会议记录', '用户管理', '回到本周', '上一周', '下一周', '周会快捷入口']) {
     await expect(tour).toHaveAccessibleName(title)
     await tour.getByRole('button', { name: '下一步' }).click()
   }
