@@ -67,8 +67,13 @@ export function startSidebarTour(options: SidebarTourOptions) {
   collapse.advanceOn = 'click'
   collapse.popover = { ...collapse.popover, nextBtnText: '收起侧栏', onNextClick: () => changeLayout(true, tour.moveNext) }
 
-  const brand = step('brand', 'Logo 和版本号', '收起后仍可看到 Logo 和版本号。悬停在版本号上可查看该版本的更新内容。')
+  const brand = step('brand', 'Logo 和版本号', '收起后，Logo 和版本号仍显示在侧栏顶部。')
   brand.popover = { ...brand.popover, onPrevClick: () => changeLayout(false, tour.movePrevious) }
+
+  const releaseNotes = step('release-notes', '查看版本更新内容', '将鼠标移到高亮的版本号上，即可查看本次更新。也可以用 Tab 聚焦版本号。')
+  releaseNotes.disableActiveInteraction = false
+  releaseNotes.allowedElements = '.sidebar .release-notes [role="tooltip"]'
+  releaseNotes.popover = { ...releaseNotes.popover, popoverClass: 'sidebar-tour-popover sidebar-tour-release-popover' }
 
   const expand = step('toggle', '展开侧栏', '点击高亮的右箭头恢复完整菜单和月历。')
   expand.disableActiveInteraction = false
@@ -78,6 +83,7 @@ export function startSidebarTour(options: SidebarTourOptions) {
   const steps = [
     collapse,
     brand,
+    releaseNotes,
     ...options.menu.map(item => step(item.name, item.label, menuDescriptions[item.name])),
     step('current-week', '回到本周', '返回今天所在的一周。折叠月历显示所选周的月份，底部显示它在该月是第几周。'),
     step('previous-week', '上一周', '切换到所选周的前一周，工作区会显示那一周的数据。'),

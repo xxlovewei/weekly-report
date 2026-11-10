@@ -7,6 +7,7 @@ async function mockWorkspace(page: Page, user: User) {
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
     if (path.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks: [] } })
     if (path.endsWith('/meetings')) return route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 50 } })
+    if (path.includes('/releases/')) return route.fulfill({ json: { description: '新增侧栏折叠和按周导航。' } })
     return route.fulfill({ json: [] })
   })
 }
@@ -14,7 +15,8 @@ async function mockWorkspace(page: Page, user: User) {
 const member: User = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
 
 test('首次进入逐步演示收起和展开，完成后刷新不再显示', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 720 })
+  const width = 801
+  await page.setViewportSize({ width, height: 720 })
   await mockWorkspace(page, member)
   await page.goto('/work')
   const tour = page.locator('.driver-popover')
@@ -26,7 +28,20 @@ test('首次进入逐步演示收起和展开，完成后刷新不再显示', as
   await expect(page.locator('.shell')).not.toHaveClass(/sidebar-collapsed/)
   await tour.getByRole('button', { name: '收起侧栏' }).click()
 
-  for (const title of ['Logo 和版本号', '本周工作', '周报汇总', '任务类型', '会议记录', '回到本周', '上一周', '下一周', '修改密码', '退出登录']) {
+  await expect(tour).toHaveAccessibleName('Logo 和版本号')
+  await tour.getByRole('button', { name: '下一步' }).click()
+  await expect(tour).toHaveAccessibleName('查看版本更新内容')
+  await page.locator('.release-notes small').hover()
+  const releaseNotes = page.getByRole('tooltip')
+  await expect(releaseNotes).toContainText('新增侧栏折叠和按周导航。')
+  const notesBox = (await releaseNotes.boundingBox())!
+  const tourBox = (await tour.boundingBox())!
+  expect(notesBox.x + notesBox.width).toBeLessThanOrEqual(tourBox.x)
+  expect(tourBox.x + tourBox.width).toBeLessThanOrEqual(width)
+  await releaseNotes.hover()
+  await tour.getByRole('button', { name: '下一步' }).click()
+
+  for (const title of ['本周工作', '周报汇总', '任务类型', '会议记录', '回到本周', '上一周', '下一周', '修改密码', '退出登录']) {
     await expect(tour).toHaveAccessibleName(title)
     await tour.getByRole('button', { name: '下一步' }).click()
   }
@@ -53,7 +68,7 @@ test('移动端不消耗首次机会，桌面跳过后只对新账号显示', as
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(tour).toHaveAccessibleName('收起侧栏', { timeout: 3000 })
   await tour.getByRole('button', { name: '收起侧栏' }).click()
-  for (const title of ['Logo 和版本号', '本周工作', '周报汇总', '任务类型', '会议记录', '用户管理', '回到本周', '上一周', '下一周', '周会快捷入口']) {
+  for (const title of ['Logo 和版本号', '查看版本更新内容', '本周工作', '周报汇总', '任务类型', '会议记录', '用户管理', '回到本周', '上一周', '下一周', '周会快捷入口']) {
     await expect(tour).toHaveAccessibleName(title)
     await tour.getByRole('button', { name: '下一步' }).click()
   }
