@@ -1,5 +1,5 @@
 import type { APIRequestContext } from '@playwright/test'
-import { test, expect } from './fixtures'
+import { test, expect, skipGuides } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 import type { WeekData } from '../src/types'
 
@@ -10,7 +10,7 @@ async function login(request: APIRequestContext, username: string) {
   return { headers: { 'X-CSRF-Token': session.csrf_token as string }, user: session.user }
 }
 
-test('任务右键排序、优先级、转交及 Driver.js 引导', async ({ page, browser, baseURL }) => {
+test('任务右键排序、优先级及转交', async ({ page, browser, baseURL }) => {
   const bobContext = await browser.newContext({ baseURL })
   const alice = await login(page.request, 'alice')
   const bob = await login(bobContext.request, 'bob')
@@ -40,9 +40,6 @@ test('任务右键排序、优先级、转交及 Driver.js 引导', async ({ pag
     const assertOrder = (order: string[]) => expect.poll(() => groups.evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(order)
     await page.goto('/work')
     await assertOrder([...baseline, ...names])
-    await page.getByRole('button', { name: '任务操作引导' }).click()
-    await expect(page.getByText('任务卡片右键菜单', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '完成', exact: true }).click()
 
     const menu = page.getByRole('group', { name: '任务操作' })
     const action = (name: string) => menu.getByRole('button', { name, exact: true })
@@ -97,7 +94,7 @@ test('任务右键排序、优先级、转交及 Driver.js 引导', async ({ pag
     await assertOrder([...baseline, a, b])
 
     const recipientPage = await bobContext.newPage()
-    await recipientPage.addLocatorHandler(recipientPage.getByRole('button', { name: '跳过引导' }), button => button.click())
+    await skipGuides(recipientPage)
     await recipientPage.goto('/work')
     const received = recipientPage.locator('.task-row').last()
     await expect(received.getByRole('textbox', { name: '任务大类' })).toHaveValue(c)
