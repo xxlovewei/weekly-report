@@ -66,10 +66,18 @@ test('任务右键排序、优先级、转交及 Driver.js 引导', async ({ pag
     await assertOrder([...baseline, a, b, c])
 
     const last = rows.last()
-    for (const [priority, background] of [['高', 'rgb(255, 87, 87)'], ['中', 'rgb(255, 255, 0)'], ['低', 'rgba(0, 0, 0, 0)'], ['无优先级', 'rgba(0, 0, 0, 0)'], ['高', 'rgb(255, 87, 87)']]) {
+    const priorityMenu = page.getByRole('group', { name: '设置优先级' })
+    await open(baseline.length + 2)
+    await action('设置优先级').click()
+    await expect(priorityMenu.getByRole('button')).toHaveText(['高', '中', '低'])
+    await expect(priorityMenu.getByRole('button', { name: '低' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(priorityMenu.getByRole('button', { name: '低' })).toBeFocused()
+    await page.keyboard.press('Escape')
+
+    for (const [priority, background] of [['高', 'rgb(255, 87, 87)'], ['中', 'rgb(255, 149, 0)'], ['低', 'rgba(0, 0, 0, 0)'], ['高', 'rgb(255, 87, 87)']]) {
       await open(baseline.length + 2)
       await action('设置优先级').click()
-      await page.getByRole('group', { name: '设置优先级' }).getByRole('button', { name: priority, exact: true }).click()
+      await priorityMenu.getByRole('button', { name: priority, exact: true }).click()
       await expect(last.locator('.task-leading')).toHaveCSS('background-color', background)
       await expect(page.getByText('✓ 已保存')).toBeVisible()
     }

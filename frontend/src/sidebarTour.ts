@@ -108,7 +108,7 @@ export function startTaskActionsTour() {
       element: '.task-list .task-row .task-leading',
       popover: {
         title: '任务卡片右键菜单',
-        description: '右键点击任意任务卡片，或在卡片内按 Shift+F10，即可置顶、上移一行、下移一行或置底。设置高、中优先级后，序号区域会分别显示红色、黄色。转交任务时请选择接收人并确认，接收人可悬停在序号下的灯泡上查看转交来源。',
+        description: '右键点击任意任务卡片，或在卡片内按 Shift+F10，即可置顶、上移一行、下移一行或置底。高、中优先级的序号区域分别显示红色、橙色，未设置时菜单默认选中低。转交任务时请选择接收人并确认，接收人可悬停在序号下的灯泡上查看转交来源。',
         side: 'right',
       },
     }],
