@@ -70,18 +70,20 @@ watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCle
   const key = `zhoubao.sidebar-tour.v1.4.0.${account}`
   if (hasSeenGuide(key)) return
   let cancelled = false
-  let stop: (() => void) | undefined
-  onCleanup(() => { cancelled = true; stop?.() })
+  let stop = () => { sidebarTourActive.value = false }
+  onCleanup(() => { cancelled = true; stop() })
 
+  // 加载侧栏引导期间先阻止任务引导，避免两个弹窗同时启动。
+  sidebarTourActive.value = true
   const module = await import('./sidebarTour').catch(() => undefined)
-  if (cancelled || !module || hasSeenGuide(key)) return
+  if (cancelled) return
+  if (!module || hasSeenGuide(key)) { stop(); return }
   const wasCollapsed = sidebarCollapsed.value
   const close = (completed = false) => {
     sidebarCollapsed.value = completed ? false : wasCollapsed
     sidebarTourActive.value = false
   }
   stop = close
-  sidebarTourActive.value = true
   sidebarCollapsed.value = false
   await nextTick()
   if (cancelled) return

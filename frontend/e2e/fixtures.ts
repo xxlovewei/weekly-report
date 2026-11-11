@@ -3,9 +3,9 @@ import { test as base, type Page } from '@playwright/test'
 export { expect } from '@playwright/test'
 
 export async function skipGuides(page: Page) {
-  for (const name of ['跳过引导', '关闭引导']) {
-    await page.addLocatorHandler(page.getByRole('button', { name, exact: true }), button => button.click())
-  }
+  await page.addLocatorHandler(page.getByRole('button', { name: '跳过引导', exact: true }), button => button.click())
+  const taskGuide = page.getByRole('dialog', { name: '任务卡片右键菜单', exact: true })
+  await page.addLocatorHandler(taskGuide.getByRole('button', { name: '完成', exact: true }), button => button.click())
 }
 
 export const test = base.extend({
