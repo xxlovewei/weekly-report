@@ -6,7 +6,7 @@ import type { MeetingPerson, Task, TaskPriority } from './types'
 const props = defineProps<{ tasks: Task[]; busy?: boolean }>()
 const emit = defineEmits<{
   move: [id: number, targetId: number, after: boolean]
-  priority: [id: number, priority: TaskPriority | null]
+  priority: [id: number, priority: TaskPriority]
   transfer: [id: number, userId: number]
 }>()
 
@@ -14,7 +14,9 @@ const menu = ref<HTMLElement | null>(null)
 const action = ref<{ id: number; x: number; y: number } | null>(null)
 const choosingPriority = ref(false)
 const index = computed(() => props.tasks.findIndex(task => task.id === action.value?.id))
-const priorities = ['高', '中', '低', null] as const
+const priorities = ['高', '中', '低'] as const
+// 历史任务的空优先级在菜单里默认选中低，主动选择后才保存。
+const currentPriority = computed(() => props.tasks[index.value]?.priority ?? '低')
 let previousFocus: HTMLElement | null = null
 
 async function placeMenu() {
@@ -24,7 +26,9 @@ async function placeMenu() {
   const { offsetWidth, offsetHeight } = menu.value
   menu.value.style.left = `${Math.max(8, Math.min(action.value.x, window.innerWidth - offsetWidth - 8))}px`
   menu.value.style.top = `${Math.max(8, Math.min(action.value.y, window.innerHeight - offsetHeight - 8))}px`
-  menu.value.querySelector<HTMLElement>('button:not(:disabled)')?.focus({ preventScroll: true })
+  const focusTarget = menu.value.querySelector<HTMLElement>('button[aria-pressed="true"]')
+    ?? menu.value.querySelector<HTMLElement>('button:not(:disabled)')
+  focusTarget?.focus({ preventScroll: true })
 }
 function open(event: MouseEvent | KeyboardEvent, id: number) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
@@ -72,10 +76,10 @@ function showPriorities() {
   choosingPriority.value = true
   void placeMenu()
 }
-function setPriority(priority: TaskPriority | null) {
+function setPriority(priority: TaskPriority) {
   const task = props.tasks[index.value]
   close(true)
-  if (task && (task.priority ?? null) !== priority) emit('priority', task.id, priority)
+  if (task && task.priority !== priority) emit('priority', task.id, priority)
 }
 
 const dialog = ref<HTMLDialogElement | null>(null)
@@ -119,8 +123,8 @@ function confirmTransfer() {
   <Teleport to="body">
     <div v-if="action && index >= 0" ref="menu" class="task-context-menu" role="group" :aria-label="choosingPriority ? '设置优先级' : '任务操作'" @keydown.esc.stop.prevent="close(true)">
       <template v-if="choosingPriority">
-        <button v-for="priority in priorities" :key="priority || 'none'" type="button"
-          :aria-pressed="(tasks[index]?.priority ?? null) === priority" @click="setPriority(priority)">{{ priority || '无优先级' }}</button>
+        <button v-for="priority in priorities" :key="priority" type="button"
+          :aria-pressed="currentPriority === priority" @click="setPriority(priority)">{{ priority }}</button>
       </template>
       <template v-else>
         <button type="button" :disabled="index === 0" @click="move(0)">置顶</button>

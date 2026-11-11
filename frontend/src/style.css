@@ -32,7 +32,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .description-error{font-size:11px;margin:5px 0 0;color:#a30031}
 .task-leading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.task-drag-handle{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #000;background:#fff;cursor:grab}.task-drag-handle:hover{background:#ffff00}.task-drag-handle:active{cursor:grabbing}.task-row.dragging{opacity:.45}.task-row.drop-before{border-top-color:#ff006e;box-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}.task-row.drop-after{border-bottom-color:#ff006e;box-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
 .task-row.selected{outline:3px solid #ff006e;outline-offset:2px}.task-drag-handle[aria-pressed=true]{outline:3px solid #ff006e;outline-offset:2px}
-.task-leading.priority-high{background:#ff5757}.task-leading.priority-medium{background:#ffff00}
+.task-leading.priority-high{background:#ff5757}.task-leading.priority-medium{background:#ff9500}
 .task-transfer-mark{line-height:1;cursor:help}
 .task-context-menu{position:fixed;z-index:19;display:grid;min-width:154px;max-height:calc(100dvh - 16px);overflow:auto;padding:4px;border:2px solid #000;background:#fff;box-shadow:4px 4px 0 #000}
 .task-context-menu button{display:flex;justify-content:space-between;gap:12px;border:0;background:#fff;padding:8px 12px;text-align:left;font-size:13px;font-weight:700}
