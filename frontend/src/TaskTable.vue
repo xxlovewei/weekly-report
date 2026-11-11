@@ -2,9 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { taskStatuses as statuses, progressStyle } from './taskStatuses'
 import TaskDescription from './TaskDescription.vue'
+import TaskActions from './TaskActions.vue'
 import type { Category, Task, TaskField } from './types'
 const props = defineProps<{ tasks: Task[]; categories?: Category[]; readonly?: boolean; busy?: boolean }>()
-const emit = defineEmits<{ edit: [id: number, patch: Partial<TaskField>]; duplicate: [id: number]; remove: [id: number]; reorder: [ids: number[]] }>()
+const emit = defineEmits<{ edit: [id: number, patch: Partial<TaskField>]; duplicate: [id: number]; remove: [id: number]; reorder: [ids: number[]]; transfer: [id: number, userId: number] }>()
+const actions = ref<InstanceType<typeof TaskActions> | null>(null)
 const draggedId = ref<number | null>(null)
 const dropTarget = ref<{ id: number; after: boolean } | null>(null)
 const selectedId = ref<number | null>(null)
@@ -65,12 +67,21 @@ function moveWithKeyboard(event: KeyboardEvent, id: number) {
     reorder(id, target.id, offset > 0)
   }
 }
+function openActions(event: MouseEvent | KeyboardEvent, id: number) {
+  if (props.readonly) return
+  event.preventDefault()
+  if (!props.busy) actions.value?.open(event, id)
+}
 </script>
 <template>
   <div v-if="tasks.length === 0" class="empty" role="status">本周还没有任务。</div>
   <div v-else class="task-list">
-    <article v-for="task in tasks" :key="task.id" class="task-row" :class="{ selected: selectedId === task.id, dragging: draggedId === task.id, 'drop-before': dropTarget?.id === task.id && !dropTarget.after && draggedId !== task.id, 'drop-after': dropTarget?.id === task.id && dropTarget.after && draggedId !== task.id }" @dragover="dragOver($event, task)" @drop="drop($event, task)">
-      <div class="task-leading"><button v-if="!readonly" type="button" class="task-drag-handle" :disabled="busy" :draggable="!busy" :aria-pressed="selectedId === task.id" :aria-label="`${selectedId === task.id ? '取消选中' : '选中'}任务 ${task.position}，使用上下方向键调整顺序`" title="点击选中或取消选中；选中后按上下方向键调整顺序，也可拖动" @click="toggleSelection(task.id)" @dragstart="startDrag($event, task)" @dragend="resetDrag" @keydown="moveWithKeyboard($event, task.id)"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v14M2 9h14M6 5l3-3 3 3M6 13l3 3 3-3M5 6 2 9l3 3M13 6l3 3-3 3" /></svg></button><span class="task-index">{{ String(task.position).padStart(2, '0') }}</span></div>
+    <article v-for="task in tasks" :key="task.id" class="task-row" :class="{ selected: selectedId === task.id, dragging: draggedId === task.id, 'drop-before': dropTarget?.id === task.id && !dropTarget.after && draggedId !== task.id, 'drop-after': dropTarget?.id === task.id && dropTarget.after && draggedId !== task.id }" @dragover="dragOver($event, task)" @drop="drop($event, task)" @contextmenu="openActions($event, task.id)" @keydown.shift.f10="openActions($event, task.id)" @keydown.context-menu="openActions($event, task.id)">
+      <div class="task-leading" :class="{ 'priority-high': task.priority === '高', 'priority-medium': task.priority === '中' }">
+        <button v-if="!readonly" type="button" class="task-drag-handle" :disabled="busy" :draggable="!busy" :aria-pressed="selectedId === task.id" :aria-label="`${selectedId === task.id ? '取消选中' : '选中'}任务 ${task.position}，使用上下方向键调整顺序`" title="点击选中或取消选中；选中后按上下方向键调整顺序，也可拖动" @click="toggleSelection(task.id)" @dragstart="startDrag($event, task)" @dragend="resetDrag" @keydown="moveWithKeyboard($event, task.id)"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v14M2 9h14M6 5l3-3 3 3M6 13l3 3 3-3M5 6 2 9l3 3M13 6l3 3-3 3" /></svg></button>
+        <span class="task-index" :aria-label="task.priority ? `任务 ${task.position}，优先级${task.priority}` : undefined">{{ String(task.position).padStart(2, '0') }}</span>
+        <span v-if="task.transferred_by" class="task-transfer-mark" role="img" :aria-label="`由${task.transferred_by}转交的任务`" :title="`由${task.transferred_by}转交的任务`">💡</span>
+      </div>
       <div class="task-fields">
         <label class="task-type"><span>任务类型</span><span v-if="readonly" class="read-value">{{ task.category_name || '—' }}</span><select v-else :disabled="busy" :value="task.category_name || ''" @change="emit('edit', task.id, { category_name: ($event.target as HTMLSelectElement).value || null })"><option value="">未选择</option><option v-if="task.category_name && !taskTypes.includes(task.category_name)" :value="task.category_name">{{ task.category_name }}（历史）</option><option v-for="name in taskTypes" :key="name" :value="name">{{ name }}</option></select></label>
         <label class="task-group"><span>任务大类</span><span v-if="readonly" class="read-value preline">{{ task.task_group || '—' }}</span><input v-else :disabled="busy" maxlength="200" :value="task.task_group" @input="emit('edit', task.id, { task_group: ($event.target as HTMLInputElement).value })" /></label>
@@ -82,4 +93,5 @@ function moveWithKeyboard(event: KeyboardEvent, id: number) {
       <div v-if="!readonly" class="task-actions"><button type="button" :disabled="busy" class="mini-button" @click="emit('duplicate', task.id)">复制一行</button><button type="button" :disabled="busy || !!task.meeting_task_id" :title="task.meeting_task_id ? '会议指派任务，请在会议记录中取消指派' : undefined" class="mini-button danger" @click="emit('remove', task.id)">删除</button></div>
     </article>
   </div>
+  <TaskActions v-if="!readonly" ref="actions" :tasks="tasks" :busy="busy" @move="reorder" @priority="(id, priority) => emit('edit', id, { priority })" @transfer="(id, userId) => emit('transfer', id, userId)" />
 </template>

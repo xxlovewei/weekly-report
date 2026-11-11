@@ -95,3 +95,24 @@ export function startSidebarTour(options: SidebarTourOptions) {
   tour.drive()
   return () => { if (tour.isActive()) closeTour() }
 }
+
+export function startTaskActionsTour() {
+  // 独立入口让已看过侧栏引导的用户也能查看任务卡片操作。
+  const tour = driver({
+    animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    doneBtnText: '完成',
+    closeBtnLabel: '关闭引导',
+    popoverClass: 'sidebar-tour-popover',
+    disableActiveInteraction: true,
+    steps: [{
+      element: '.task-list .task-row .task-leading',
+      popover: {
+        title: '任务卡片右键菜单',
+        description: '右键点击任意任务卡片，或在卡片内按 Shift+F10，即可置顶、上移一行、下移一行或置底。设置高、中优先级后，序号区域会分别显示红色、黄色。转交任务时请选择接收人并确认，接收人可悬停在序号下的灯泡上查看转交来源。',
+        side: 'right',
+      },
+    }],
+  })
+  tour.drive()
+  return () => { if (tour.isActive()) tour.destroy() }
+}
