@@ -28,7 +28,7 @@ const navItems = [
 ] as const
 const visibleNavItems = computed(() => navItems.filter(item => item.name !== 'users' || user.value?.role === 'admin'))
 const sidebarTourActive = ref(false)
-const seenSidebarTours = new Set<string>()
+const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const week = ref<WeekData>({ revision: 0, tasks: [] })
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
@@ -56,21 +56,25 @@ const sidebarTourAccount = computed(() =>
   ready.value && desktopSidebar.value && !user.value?.must_change_password && (page.value === 'work' || page.value === 'reports')
     ? user.value?.id : undefined,
 )
-function hasSeenSidebarTour(key: string) {
-  if (seenSidebarTours.has(key)) return true
+function hasSeenGuide(key: string) {
+  if (seenGuides.has(key)) return true
   try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+function markGuideSeen(key: string) {
+  seenGuides.add(key)
+  try { localStorage.setItem(key, '1') } catch { /* 浏览器存储不可用时，仅记录当前页面的展示状态。 */ }
 }
 watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCleanup) => {
   if (account === undefined) return
   // 使用固定的功能版本标识，后续发布新版本也不会重播这次引导。
   const key = `zhoubao.sidebar-tour.v1.4.0.${account}`
-  if (hasSeenSidebarTour(key)) return
+  if (hasSeenGuide(key)) return
   let cancelled = false
   let stop: (() => void) | undefined
   onCleanup(() => { cancelled = true; stop?.() })
 
   const module = await import('./sidebarTour').catch(() => undefined)
-  if (cancelled || !module || hasSeenSidebarTour(key)) return
+  if (cancelled || !module || hasSeenGuide(key)) return
   const wasCollapsed = sidebarCollapsed.value
   const close = (completed = false) => {
     sidebarCollapsed.value = completed ? false : wasCollapsed
@@ -86,10 +90,7 @@ watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCle
     menu: visibleNavItems.value,
     showMeetingShortcut: activePage === 'reports',
     setCollapsed: collapsed => { sidebarCollapsed.value = collapsed },
-    onShown: () => {
-      seenSidebarTours.add(key)
-      try { localStorage.setItem(key, '1') } catch { /* 浏览器存储不可用时，仅记录当前页面的展示状态。 */ }
-    },
+    onShown: () => markGuideSeen(key),
     onClosed: close,
   })
 }, { flush: 'post' })
@@ -233,16 +234,24 @@ function reorderTasks(ids: number[]) { void structural(() => api(`/weeks/${selec
 function transferTask(id: number, userId: number) {
   void structural(() => api(`/weeks/${selectedWeek.value}/tasks/${id}/transfer?revision=${week.value.revision}`, 'POST', { user_id: userId }))
 }
-let stopTaskGuide: (() => void) | undefined
-async function showTaskGuide() {
-  const requestedWeek = selectedWeek.value
-  const module = await import('./sidebarTour')
-  if (page.value !== 'work' || selectedWeek.value !== requestedWeek || !week.value.tasks.length || sidebarTourActive.value) return
-  stopTaskGuide?.()
-  stopTaskGuide = module.startTaskActionsTour()
-}
-watch([page, selectedWeek], () => { stopTaskGuide?.(); stopTaskGuide = undefined })
-onUnmounted(() => stopTaskGuide?.())
+const taskGuideAccount = computed(() =>
+  ready.value && page.value === 'work' && !user.value?.must_change_password &&
+    week.value.tasks.length && !mutating.value && !modal.value && !sidebarTourActive.value
+    ? user.value?.id : undefined,
+)
+watch([taskGuideAccount, selectedWeek], async ([account, requestedWeek], _previous, onCleanup) => {
+  if (account === undefined) return
+  // 等待可高亮的任务卡片，且同一账号在当前浏览器只展示一次。
+  const key = `zhoubao.task-actions-tour.${account}`
+  if (hasSeenGuide(key)) return
+  let cancelled = false
+  let stop: (() => void) | undefined
+  onCleanup(() => { cancelled = true; stop?.() })
+
+  const module = await import('./sidebarTour').catch(() => undefined)
+  if (!module || cancelled || taskGuideAccount.value !== account || selectedWeek.value !== requestedWeek || hasSeenGuide(key)) return
+  stop = module.startTaskActionsTour(() => markGuideSeen(key))
+}, { flush: 'post' })
 function askDelete(id: number) { openModal({ kind: 'delete', taskId: id }) }
 function openModal(value: NonNullable<typeof modal.value>) { modal.value = value; void nextTick(() => modalFirst.value?.focus()) }
 async function confirmDelete(id: number) {
@@ -509,7 +518,6 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
       <div v-if="page === 'work'">
         <div class="section-head">
           <strong>任务清单 <span>{{ week.tasks.length }}</span></strong>
-          <button v-if="week.tasks.length" class="mini-button" type="button" :disabled="sidebarTourActive || mutating" @click="showTaskGuide">任务操作引导</button>
           <div class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
         <TaskTable :key="selectedWeek" :tasks="week.tasks" :categories="categories" :busy="mutating" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />

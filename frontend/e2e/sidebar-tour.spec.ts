@@ -1,11 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { User } from '../src/types'
+import type { Task, User } from '../src/types'
 
-async function mockWorkspace(page: Page, user: User) {
+async function mockWorkspace(page: Page, user: User, tasks: Task[] = []) {
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
-    if (path.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks: [] } })
+    if (path.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks } })
     if (path.endsWith('/meetings')) return route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 50 } })
     if (path.includes('/releases/')) return route.fulfill({ json: { description: '新增侧栏折叠和按周导航。' } })
     return route.fulfill({ json: [] })
@@ -13,6 +13,24 @@ async function mockWorkspace(page: Page, user: User) {
 }
 
 const member: User = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
+
+test('任务引导自动高亮整张卡片，每个账号只显示一次', async ({ page }) => {
+  await mockWorkspace(page, member, [{ id: 1, position: 1, category_name: null, task_group: '', description: '', status: null, work_days: [], notes: '' }])
+  await page.goto('/work')
+  const tour = page.locator('.driver-popover')
+  await expect(tour).toHaveAccessibleName('收起侧栏')
+  await tour.getByRole('button', { name: '跳过引导' }).click()
+  await expect(tour).toHaveAccessibleName('任务卡片右键菜单')
+  await expect(page.locator('.task-row').first()).toHaveClass(/driver-active-element/)
+  await expect(tour.locator('.driver-popover-description')).toHaveText('右键点击任意任务卡片，即可置顶、上移一行、下移一行或置底。高、中优先级的序号区域分别显示红色、橙色。转交任务时请选择接收人并确认，接收人可悬停在序号下的灯泡上查看转交来源。')
+  await tour.getByRole('button', { name: '完成' }).click()
+  await expect(page.getByRole('button', { name: '任务操作引导' })).toHaveCount(0)
+  await page.reload()
+  await page.getByRole('button', { name: '任务类型', exact: true }).click()
+  await page.getByRole('button', { name: '本周工作', exact: true }).click()
+  await expect(page.locator('.task-row')).toHaveCount(1)
+  await expect(tour).toHaveCount(0)
+})
 
 test('首次进入逐步演示收起和展开，完成后刷新不再显示', async ({ page }) => {
   const width = 801
