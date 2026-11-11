@@ -99,8 +99,8 @@ export function startSidebarTour(options: SidebarTourOptions) {
 export function startTaskActionsTour(onShown: () => void) {
   const tour = driver({
     animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    showButtons: ['next'],
     doneBtnText: '完成',
-    closeBtnLabel: '关闭引导',
     popoverClass: 'sidebar-tour-popover',
     disableActiveInteraction: true,
     onPopoverRender: onShown,
