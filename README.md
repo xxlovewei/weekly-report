@@ -56,9 +56,9 @@ API 文档在登录后的 `/api/docs`；所有受保护的写请求需要 `X-CSR
 
 ## 发布版本号
 
-登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停或键盘聚焦版本号时，从发版记录表读取本版本的更新说明。本次版本为 `1.5.0`。
+登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停或键盘聚焦版本号时，从发版记录表读取本版本的更新说明。本次版本为 `1.6.0`。
 
-每次生产发版先将变更描述写入一个 UTF-8 文本文件，再从仓库根目录执行：
+发版说明省略引导功能相关的改动。每次生产发版先将变更描述写入一个 UTF-8 文本文件，再从仓库根目录执行：
 
 ```sh
 python scripts/prepare_release.py 1.2.6 --notes-file release-notes.txt
