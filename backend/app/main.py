@@ -70,6 +70,7 @@ class TaskPatch(Input):
     task_group: str | None = Field(default=None, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     status: str | None = None
+    priority: Literal["高", "中", "低"] | None = None
     work_days: list[int] | None = None
     notes: str | None = Field(default=None, max_length=5000)
 
@@ -92,6 +93,9 @@ class CopyInput(Input):
 
 class TaskOrderInput(Input):
     task_ids: list[int]
+
+class TaskTransferInput(Input):
+    user_id: int
 
 class AssignmentInput(Input):
     user_id: int
@@ -126,7 +130,7 @@ def user_json(user: User):
     return {"id": user.id, "username": user.username, "display_name": user.display_name, "role": user.role, "is_active": user.is_active, "status": user.status, "must_change_password": user.must_change_password}
 
 def task_json(task: Task):
-    return {"id": task.id, "meeting_task_id": task.meeting_task_id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "work_days": task.work_days, "notes": task.notes}
+    return {"id": task.id, "meeting_task_id": task.meeting_task_id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "priority": task.priority, "transferred_by": task.transferred_by, "work_days": task.work_days, "notes": task.notes}
 
 def meeting_person_json(user: User):
     return {"id": user.id, "username": user.username, "display_name": user.display_name}
@@ -429,6 +433,43 @@ def own_task(db: Session, task_id: int, week_id: int):
         raise HTTPException(404, "任务不存在")
     return task
 
+def transfer_recipients(sender_id: int):
+    return select(User).where(
+        User.id != sender_id, User.role == "user", User.is_active.is_(True),
+        User.is_deleted.is_(False), User.status == "正常",
+    )
+
+@app.get("/api/task-transfer-recipients")
+def list_transfer_recipients(auth=Depends(active_session), db: Session = Depends(get_db)):
+    users = db.scalars(transfer_recipients(auth[0].id).order_by(User.display_name, User.username)).all()
+    return [meeting_person_json(user) for user in users]
+
+@app.post("/api/weeks/{week_start}/tasks/{task_id}/transfer")
+def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransferInput, auth=Depends(active_session), db: Session = Depends(get_db)):
+    sender = auth[0]
+    source = checked_week(db, sender.id, week_start, revision)
+    task = own_task(db, task_id, source.id)
+    recipient = db.scalar(transfer_recipients(sender.id).where(User.id == data.user_id).with_for_update())
+    if recipient is None:
+        raise HTTPException(422, "请选择其他可用的普通用户")
+    if task.meeting_task_id:
+        meeting_task = task.meeting_task
+        if any(linked.week.user_id == recipient.id for linked in meeting_task.linked_tasks):
+            raise HTTPException(409, "接收人已被指派同一会议任务，请选择其他用户")
+        meeting_task.meeting.revision += 1
+
+    # 转交与两份周报的修订号、序号更新在同一事务中提交。
+    target = week_row(db, recipient.id, source.start_date, create=True)
+    db.execute(update(Task).where(Task.week_id == source.id, Task.position > task.position).values(position=Task.position - 1))
+    task.position = (db.scalar(select(func.max(Task.position)).where(Task.week_id == target.id)) or 0) + 1
+    task.week_id = target.id
+    task.transferred_by = sender.display_name
+    target.revision += 1
+    db.flush()
+    payload = week_json(db, source)
+    db.commit()
+    return payload
+
 @app.put("/api/weeks/{week_start}/tasks/order")
 def reorder_tasks(week_start: str, revision: int, data: TaskOrderInput, auth=Depends(active_session), db: Session = Depends(get_db)):
     row = checked_week(db, auth[0].id, week_start, revision)
@@ -488,7 +529,7 @@ def duplicate_task(week_start: str, task_id: int, revision: int, idempotency_key
     row = checked_week(db, auth[0].id, week_start, revision)
     source = own_task(db, task_id, row.id)
     db.execute(update(Task).where(Task.week_id == row.id, Task.position > source.position).values(position=Task.position + 1))
-    db.add(Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id))
+    db.add(Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id))
     source.meeting_task_id = None
     db.flush()
     return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
@@ -516,7 +557,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
         next_position = len(existing) + 1
     db.flush()
     for source in sources:
-        db.add(Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id))
+        db.add(Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id))
         if source.meeting_task_id:
             source.meeting_task_id = None
             source_week.revision += 1

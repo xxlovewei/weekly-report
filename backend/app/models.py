@@ -50,6 +50,9 @@ class Task(Base):
     task_group: Mapped[str] = mapped_column(String(200), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    priority: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # 保存转交时的姓名，之后账号更名也能保留来源。
+    transferred_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     work_days: Mapped[list[int]] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, default="")
     week: Mapped[Week] = relationship(back_populates="tasks")
