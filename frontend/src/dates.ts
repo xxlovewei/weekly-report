@@ -5,6 +5,12 @@ export function parseDay(day: string) { return new Date(`${day}T12:00:00Z`) }
 export function dayString(day: Date) { return day.toISOString().slice(0, 10) }
 export function addDays(day: string, count: number) { const date = parseDay(day); date.setUTCDate(date.getUTCDate() + count); return dayString(date) }
 export function mondayOf(day: string) { const weekday = parseDay(day).getUTCDay(); return addDays(day, -(weekday === 0 ? 6 : weekday - 1)) }
+export function weekOfMonth(day: string) {
+  // 与周一开头的月历对齐，月初不足一周也计为第一周。
+  const first = parseDay(`${day.slice(0, 7)}-01`)
+  const leadingDays = (first.getUTCDay() + 6) % 7
+  return Math.ceil((parseDay(day).getUTCDate() + leadingDays) / 7)
+}
 export function weekInputToMonday(value: string) {
   const match = /^(\d{4})-W(\d{2})$/.exec(value)
   if (!match) return null

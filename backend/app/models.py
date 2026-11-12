@@ -43,11 +43,16 @@ class Task(Base):
     __tablename__ = "tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
     week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
+    meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", name="fk_tasks_meeting_task", ondelete="RESTRICT"), nullable=True, index=True)
+    meeting_task: Mapped["MeetingTask | None"] = relationship(back_populates="linked_tasks")
     position: Mapped[int] = mapped_column(Integer)
     category_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     task_group: Mapped[str] = mapped_column(String(200), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    priority: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # 保存转交时的姓名，之后账号更名也能保留来源。
+    transferred_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     work_days: Mapped[list[int]] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, default="")
     week: Mapped[Week] = relationship(back_populates="tasks")
@@ -71,6 +76,7 @@ meeting_updaters = Table(
 class Meeting(Base):
     __tablename__ = "meetings"
     id: Mapped[int] = mapped_column(primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     meeting_date: Mapped[date] = mapped_column(Date, index=True)
     meeting_type: Mapped[str] = mapped_column(String(100))
     content: Mapped[str] = mapped_column(Text)
@@ -85,6 +91,18 @@ class MeetingTask(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer)
-    name: Mapped[str] = mapped_column(String(500))
+    name: Mapped[str] = mapped_column(Text)
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     meeting: Mapped[Meeting] = relationship(back_populates="tasks")
+
+    # 每个被指派人仅关联当前有效的周任务；复制时将关联移动到新行。
+    linked_tasks: Mapped[list["Task"]] = relationship(back_populates="meeting_task", order_by="Task.id")
+
+
+class ReleaseRecord(Base):
+    """按版本保留生产发版内容，重复启动不覆盖历史记录。"""
+    __tablename__ = "release_records"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    version: Mapped[str] = mapped_column(String(40), unique=True)
+    description: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

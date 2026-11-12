@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { test, expect } from './fixtures'
 import type { Task } from '../src/types'
 
 async function setup(page: Page) {
@@ -82,6 +83,8 @@ test('手柄拖拽上下排序，松手才保存，刷新后保留顺序与编�
 test('排序前保存待提交的编辑，手柄支持键盘上下移动', async ({ page }) => {
   const state = await setup(page)
   await page.getByRole('textbox', { name: '任务大类' }).first().fill('修改后')
+  // 现有手柄交互要求先选中卡片，再用方向键排序。
+  await page.locator('.task-drag-handle').first().click()
   await page.locator('.task-drag-handle').first().press('ArrowDown')
   await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '修改后', '第三项'])
   expect(state.writes).toEqual(['PATCH', 'PUT'])
