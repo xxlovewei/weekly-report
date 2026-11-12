@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 from .db import get_db
 from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week, ReleaseRecord, meeting_updaters
+from .credential_crypto import EncryptedCredentials, decrypt_credentials, public_key
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
 hasher = PasswordHash.recommended()
@@ -234,8 +235,14 @@ def finish(db: Session, user_id: int, key: str | None, operation: str, payload: 
 def health():
     return {"ok": True}
 
+@app.get("/api/auth/public-key")
+def credential_public_key(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {"key": public_key()}
+
 @app.post("/api/auth/login")
-def login(data: LoginInput, response: Response, db: Session = Depends(get_db)):
+def login(encrypted: EncryptedCredentials, response: Response, db: Session = Depends(get_db)):
+    data = decrypt_credentials(encrypted, "/auth/login", LoginInput)
     # Serialize attempts across workers so concurrent failures cannot lose counts.
     user = db.scalar(select(User).where(User.username == data.username.lower()).with_for_update())
     if not user:
@@ -273,7 +280,8 @@ def logout(response: Response, auth=Depends(active_session), db: Session = Depen
     return {"ok": True}
 
 @app.post("/api/auth/password")
-def change_password(data: PasswordInput, auth=Depends(active_session), db: Session = Depends(get_db)):
+def change_password(encrypted: EncryptedCredentials, auth=Depends(active_session), db: Session = Depends(get_db)):
+    data = decrypt_credentials(encrypted, "/auth/password", PasswordInput)
     user = auth[0]
     if not hasher.verify(data.old_password, user.password_hash):
         raise HTTPException(400, "当前密码错误")
@@ -290,7 +298,8 @@ def list_users(_: User = Depends(admin), db: Session = Depends(get_db)):
     return [user_json(x) for x in db.scalars(select(User).where(User.is_deleted.is_(False)).order_by(User.id)).all()]
 
 @app.post("/api/users", status_code=201)
-def create_user(data: UserCreate, _: User = Depends(admin), db: Session = Depends(get_db)):
+def create_user(encrypted: EncryptedCredentials, _: User = Depends(admin), db: Session = Depends(get_db)):
+    data = decrypt_credentials(encrypted, "/users", UserCreate)
     username = data.username.lower()
     if db.scalar(select(User.id).where(User.username == username)):
         raise HTTPException(409, "用户名已存在")
@@ -352,7 +361,8 @@ def delete_user(user_id: int, _: User = Depends(admin), db: Session = Depends(ge
     return {"ok": True}
 
 @app.post("/api/users/{user_id}/password")
-def reset_password(user_id: int, data: ResetPassword, _: User = Depends(admin), db: Session = Depends(get_db)):
+def reset_password(user_id: int, encrypted: EncryptedCredentials, _: User = Depends(admin), db: Session = Depends(get_db)):
+    data = decrypt_credentials(encrypted, f"/users/{user_id}/password", ResetPassword)
     user = db.get(User, user_id)
     if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")

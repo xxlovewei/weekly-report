@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from importlib import import_module
 
 from tests.test_api import PASSWORD, clean_db, client
+from tests.credentials import credential_post
 import app.main as main
 from fastapi.testclient import TestClient
 from app.db import SessionLocal
@@ -14,7 +15,7 @@ from app.db import engine
 
 
 def attempt(username="alice", password="wrong-password"):
-    return TestClient(main.app).post("/api/auth/login", json={"username": username, "password": password})
+    return credential_post(TestClient(main.app), "/api/auth/login", {"username": username, "password": password})
 
 
 def test_admin_status_and_unlock():
@@ -35,7 +36,7 @@ def test_admin_status_and_unlock():
     assert alice.get("/api/auth/me").status_code == 401
     assert manager.patch(f"/api/users/{alice_id}", json={"status": "正常"}).status_code == 200
     assert attempt(password=PASSWORD).status_code == 200
-    assert manager.post("/api/users", json={"username": "new", "display_name": "新人", "password": "123456"}).json()["status"] == "正常"
+    assert credential_post(manager, "/api/users", {"username": "new", "display_name": "新人", "password": "123456"}).json()["status"] == "正常"
 
 
 def test_six_failures_lock_and_unlock_clears_history():
