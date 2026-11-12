@@ -54,6 +54,27 @@ docker compose -p zhoubao-01a13375-test -f compose.yaml -f compose.test.yaml up 
 
 API 文档在登录后的 `/api/docs`；所有受保护的写请求需要 `X-CSRF-Token`，登录和 `/api/auth/me` 返回该值。新增、复制行及跨周复制支持 `Idempotency-Key` 请求头。
 
+## 代码审查和消息中心
+
+- 管理员在“审查配置”维护纳入日报的项目。项目别名默认用 GitLab 项目名，默认跳过名称带 `/` 的分支。项目删除后历史日报仍可查看。
+- 刷新 GitLab 列表使用管理员浏览器中保存的令牌或账号密码。支持跨域的 HTTPS GitLab 可直接访问。内网 HTTP 或跨域受限的实例可在服务端用 `REVIEW_GITLAB_URLS` 设置允许中转的完整 GitLab 地址（逗号分隔）。中转只读取项目列表，登录资料经加密请求传入并在请求结束后丢弃。实例禁用密码授权时，可使用有读权限的访问令牌。
+- “审查记录”的日历按日报生成日期选择，日报内另列提交日期。问题加入点击者上海时区当天的任务列表，同一个问题只添加一次。添加后由任务当前负责人或管理员维护问题的状态和备注。跨周追加复制会把关联移到新一周，忽略的问题不进入未完成任务复制。
+- 任务转交会通知接收人。审查日报会通知有问题的已匹配提交人，无名氏问题或覆盖异常会通知管理员。管理员可在消息中心切换到“所有人员”查看状态。
+
+### Hermes 定时写入
+
+后端部署时执行 `alembic upgrade head`，并在 Compose 的 `.env` 配置独立随机值 `REVIEW_WORKER_TOKEN`。在 Hermes 的 `.env` 配置相同的 `REVIEW_WORKER_TOKEN` 以及 `REVIEW_SYSTEM_URL`（周报系统的 HTTPS 页面根地址，生产地址保留 `/zhoubao` 前缀）。本机测试可以使用回环 HTTP 地址。
+
+定时脚本用本机 `REVIEW_GITLAB_URL`、`REVIEW_GITLAB_TOKEN` 读取 GitLab（需要读取 API 和克隆仓库权限）。已有旧任务的电脑默认复用用户目录下 `code-review/daily_fetch.py` 中的 GitLab 设置，也可通过 `REVIEW_GITLAB_LEGACY_SOURCE` 指定旧配置路径。OCR 使用本机 CLI 配置，可用 `REVIEW_OCR_PATH` 指定可执行文件。浏览器登录资料与定时任务独立。
+
+将 `scripts/zhoubao_daily_review.py` 复制到 `HERMES_HOME/scripts` 后，已有任务可用 `hermes cron resume <任务 ID>` 启用。首次注册可运行：
+
+```sh
+hermes cron create "30 8 * * *" --name daily-open-code-review-zhoubao --script zhoubao_daily_review.py --no-agent --deliver local
+```
+
+脚本使用上海时区前一自然日的提交时间，按项目和 SHA 去重。待写入的日报暂存在本机 `REVIEW_WORK_DIR`（默认用户目录的 `zhoubao-review`），失败后下次优先重投。需要重新审查时，可为脚本传入 `--report-date YYYY-MM-DD --rebuild`。正面评价依据实际增加或更新的测试文件和项目文档生成，审查覆盖异常会列在日报内。
+
 登录、修改密码、新建用户及重置密码的请求体均采用加密凭据：客户端从 `/api/auth/public-key` 获取当前进程的 RSA 公钥，以随机 AES-256-GCM 密钥加密整个 JSON 表单（请求路径作为认证附加数据），再以 RSA-OAEP/SHA-256 加密 AES 密钥。接口只接受 `key`、`iv`、`data` 三个 Base64 字段，不接受明文密码字段；数据库仍使用 Argon2 哈希存储密码。服务重启后公钥会更新，客户端每次提交都会重新获取。
 
 **对外部署必须通过 HTTPS 提供网页和 API**，在 TLS 入口终止 HTTPS，并将流量转发到容器内的 Nginx。浏览器加密不能保护通过 HTTP 下发的网页免遭篡改。`compose.server.yaml` 已启用 `COOKIE_SECURE=true`，因此正式站点必须使用 HTTPS；本机 `127.0.0.1` 开发环境可继续使用 HTTP。

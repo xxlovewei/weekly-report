@@ -18,6 +18,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      REVIEW_WORKER_TOKEN: ${REVIEW_WORKER_TOKEN:-}
+      REVIEW_GITLAB_URLS: ${REVIEW_GITLAB_URLS:-}
     depends_on:
       db:
         condition: service_healthy
