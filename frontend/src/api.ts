@@ -29,3 +29,32 @@ export async function api<T>(path: string, method = 'GET', body?: unknown, key?:
   return data as T
 }
 
+function base64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+export async function credentialApi<T>(path: string, body: object): Promise<T> {
+  if (!crypto.subtle) throw new ApiError(0, '请通过 HTTPS 安全连接访问后重试。')
+  const { key } = await api<{ key: string }>('/auth/public-key')
+  let encrypted: { key: string; iv: string; data: string }
+  try {
+    const der = Uint8Array.from(atob(key), char => char.charCodeAt(0))
+    const publicKey = await crypto.subtle.importKey('spki', der, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'])
+    const aesKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt'])
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const rawKey = new Uint8Array(await crypto.subtle.exportKey('raw', aesKey))
+    const wrappedKey = new Uint8Array(await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, rawKey))
+    const data = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(path) },
+      aesKey,
+      new TextEncoder().encode(JSON.stringify(body)),
+    ))
+    encrypted = { key: base64(wrappedKey), iv: base64(iv), data: base64(data) }
+  } catch {
+    throw new ApiError(0, '密码加密失败，请刷新页面后重试。')
+  }
+  return api<T>(path, 'POST', encrypted)
+}
+

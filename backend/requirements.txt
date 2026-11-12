@@ -17,11 +17,15 @@ certifi==2026.7.22
     #   httpcore
     #   httpx
 cffi==2.1.1
-    # via argon2-cffi-bindings
+    # via
+    #   argon2-cffi-bindings
+    #   cryptography
 click==8.5.0
     # via uvicorn
 colorama==0.4.6
     # via pytest
+cryptography==46.0.3
+    # via -r requirements.in
 fastapi==0.118.0
     # via -r requirements.in
 greenlet==3.5.6
