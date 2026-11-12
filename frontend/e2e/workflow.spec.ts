@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 import { addDays, mondayOf, todayShanghai } from '../src/dates'
 
 test('管理员与普通用户完成周报流程', async ({ page, context }) => {
@@ -98,13 +98,15 @@ test('管理员与普通用户完成周报流程', async ({ page, context }) => 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
     if (width === 320) await page.screenshot({ path: 'test-results/report-mobile.png', fullPage: true })
   }
+  // 从会议列表新增，避免当天周会已存在时汇总入口变为编辑。
+  await page.getByRole('navigation').getByRole('button', { name: /会议记录/ }).click()
   await page.getByRole('button', { name: '＋ 新增会议记录' }).click()
   await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('会议类型').fill('例会')
   await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('会议内容').fill('项目同步')
   await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('是否需要跟踪完成情况').selectOption('true')
   await page.getByRole('button', { name: '＋ 添加任务' }).click()
-  await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('任务名称').fill('完成联调')
-  await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('任务状态').selectOption('未完成')
+  await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('任务描述').fill('完成联调')
+  await page.getByRole('dialog', { name: '新增会议记录' }).getByLabel('完成状态').selectOption('50%')
   await page.getByRole('dialog', { name: '新增会议记录' }).getByRole('button', { name: '保存' }).click()
   await page.getByRole('dialog', { name: '新增会议记录' }).locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
   await page.getByRole('button', { name: /会议记录/ }).first().click()
@@ -185,8 +187,8 @@ test('新用户必须改密后才能维护会议记录', async ({ page }) => {
   await dialog.getByLabel('会议内容').fill(content)
   await dialog.getByLabel('是否需要跟踪完成情况').selectOption('true')
   await dialog.getByRole('button', { name: '＋ 添加任务' }).click()
-  await dialog.getByLabel('任务名称').fill('检查结果')
-  await dialog.getByLabel('任务状态').selectOption('未完成')
+  await dialog.getByLabel('任务描述').fill('检查结果')
+  await dialog.getByLabel('完成状态').selectOption('50%')
   await dialog.getByRole('button', { name: '保存' }).click()
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('status')).toHaveText('会议记录已保存。')
@@ -196,7 +198,7 @@ test('新用户必须改密后才能维护会议记录', async ({ page }) => {
   await expect(dialog.getByRole('status')).toHaveCount(0, { timeout: 4500 })
   await dialog.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
   await expect(dialog).toHaveCount(0)
-  await page.getByLabel('任务状态').selectOption('未完成')
+  await page.getByLabel('完成状态').selectOption('50%')
   await page.getByRole('button', { name: '查询' }).click()
   const card = page.locator('.meeting-card').filter({ hasText: content })
   await expect(card).toBeVisible()

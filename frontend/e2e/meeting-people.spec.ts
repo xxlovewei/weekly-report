@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 test('会议列表显示创建人和多个更新人，并兼容历史记录与窄屏', async ({ page }) => {
   const errors: string[] = []

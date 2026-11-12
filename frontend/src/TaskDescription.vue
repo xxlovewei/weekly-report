@@ -4,7 +4,11 @@ import { DescriptionHistory } from './descriptionHistory'
 import { editNumberedText, moveNumberedText, reconcileNumberedInput } from './numberedLines'
 import type { NumberedEdit, TextSelection } from './numberedLines'
 
-const props = defineProps<{ modelValue: string; disabled?: boolean }>()
+// 所有多行文本复用相同的编号、输入法及撤销交互，按字段保留各自的长度限制。
+const props = withDefaults(defineProps<{
+  modelValue: string; disabled?: boolean; label?: string; rows?: number;
+  placeholder?: string; maxLength?: number; required?: boolean; titleClass?: string;
+}>(), { label: '任务描述', rows: 2, placeholder: '写下这项工作…', maxLength: 5000 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const text = ref(props.modelValue), error = ref('')
@@ -37,9 +41,9 @@ function display(state: TextSelection, focus = false) {
 }
 function commit(before: TextSelection, after: TextSelection, kind: string) {
   pending = null
-  if (Array.from(after.value).length > 5000) {
+  if (Array.from(after.value).length > props.maxLength) {
     display(before)
-    error.value = '任务描述最多 5000 个字符，本次操作未应用。'
+    error.value = `${props.label}最多 ${props.maxLength} 个字符，本次操作未应用。`
     return
   }
   error.value = ''
@@ -174,6 +178,8 @@ onMounted(resize)
 </script>
 
 <template>
-  <label><span>任务描述</span><textarea ref="textarea" :disabled="disabled" rows="2" :value="text" placeholder="写下这项工作…" :aria-invalid="!!error" :aria-describedby="error ? `${id}-error` : undefined" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" /></label>
+  <div class="numbered-text-field">
+  <label><span :class="titleClass">{{ label }}</span><textarea ref="textarea" :disabled="disabled" :rows="rows" :value="text" :placeholder="placeholder" :required="required" :aria-invalid="!!error" :aria-describedby="error ? `${id}-error` : undefined" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" /></label>
   <p v-if="error" :id="`${id}-error`" class="description-error" role="alert">{{ error }}</p>
+  </div>
 </template>

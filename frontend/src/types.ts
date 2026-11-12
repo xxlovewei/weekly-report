@@ -1,11 +1,13 @@
 export interface User { id: number; username: string; display_name: string; role: 'admin' | 'user'; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
 export interface Category { id: number; name: string }
-export interface Task { id: number; position: number; category_name: string | null; task_group: string; description: string; status: string | null; work_days: number[]; notes: string }
+export type TaskPriority = '高' | '中' | '低'
+export interface Task { id: number; meeting_task_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
 export interface WeekData { revision: number; tasks: Task[]; no_source?: boolean }
 export interface ReportTab { id: number; name: string; is_active: boolean; is_deleted?: boolean }
-export type TaskField = Pick<Task, 'category_name' | 'task_group' | 'description' | 'status' | 'work_days' | 'notes'>
-export interface MeetingTask { id?: number; position?: number; name: string; status: '已完成' | '未完成' | null }
+export type TaskField = Pick<Task, 'category_name' | 'task_group' | 'description' | 'status' | 'priority' | 'work_days' | 'notes'>
+export interface MeetingAssignment { user_id: number; status: string | null; person?: MeetingPerson }
+export interface MeetingTask { assignments?: MeetingAssignment[]; id?: number; position?: number; name: string; status: string | null }
 export type MeetingPerson = Pick<User, 'id' | 'username' | 'display_name'>
-export interface Meeting { id: number; meeting_date: string; meeting_type: string; content: string; needs_follow_up: boolean; creator: MeetingPerson | null; updaters: MeetingPerson[]; tasks: MeetingTask[] }
+export interface Meeting { revision?: number; id: number; meeting_date: string; meeting_type: string; content: string; needs_follow_up: boolean; creator: MeetingPerson | null; updaters: MeetingPerson[]; tasks: MeetingTask[] }
 export interface MeetingPage { items: Meeting[]; total: number; page: number; page_size: number }
 
