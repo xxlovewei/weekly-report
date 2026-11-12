@@ -80,9 +80,9 @@ def test_auth_roles_sessions_and_history():
         deleted = db.get(User, alice_id)
         assert deleted is not None and deleted.is_deleted and deleted.is_active
     assert admin.patch(f"/api/users/{alice_id}", json={"is_active": True}).status_code == 404
-    assert admin.post(f"/api/users/{alice_id}/password", json={"password": PASSWORD}).status_code == 404
-    assert TestClient(app).post("/api/auth/login", json={"username": "alice", "password": PASSWORD}).status_code == 401
-    assert admin.post("/api/users", json={"username": "next-admin", "display_name": "管理员", "password": PASSWORD, "role": "admin"}).status_code == 422
+    assert credential_post(admin, f"/api/users/{alice_id}/password", {"password": PASSWORD}).status_code == 404
+    assert credential_post(TestClient(app), "/api/auth/login", {"username": "alice", "password": PASSWORD}).status_code == 401
+    assert credential_post(admin, "/api/users", {"username": "next-admin", "display_name": "管理员", "password": PASSWORD, "role": "admin"}).status_code == 422
 
 def test_categories_snapshot_ownership_and_reset():
     alice = client("alice")

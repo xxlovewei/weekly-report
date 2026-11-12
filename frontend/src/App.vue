@@ -7,6 +7,9 @@ import { useRoute, useRouter } from 'vue-router'
 import MonthCalendar from './MonthCalendar.vue'
 import MeetingEditor from './MeetingEditor.vue'
 import ReleaseNotes from './ReleaseNotes.vue'
+import ReviewConfig from './ReviewConfig.vue'
+import ReviewRecords from './ReviewRecords.vue'
+import MessageCenter from './MessageCenter.vue'
 import TaskTable from './TaskTable.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
@@ -24,12 +27,35 @@ const navItems = [
   { name: 'reports', label: '周报汇总', icon: 'M5 3h14v18H5z M8 16v-3 M12 16V8 M16 16v-5' },
   { name: 'categories', label: '任务类型', icon: 'M3 4h7v7H3z M14 4h7v7h-7z M3 15h7v6H3z M14 15h7v6h-7z' },
   { name: 'meetings', label: '会议记录', icon: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5' },
+  { name: 'review-records', label: '审查记录', icon: 'M8 5 3 12l5 7 M16 5l5 7-5 7 M14 4l-4 16' },
+  { name: 'review-config', label: '审查配置', icon: 'M4 6h16 M4 12h16 M4 18h16 M8 4v4 M16 10v4 M10 16v4' },
   { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
 ] as const
-const visibleNavItems = computed(() => navItems.filter(item => item.name !== 'users' || user.value?.role === 'admin'))
+const adminPages = ['users', 'review-config']
+const visibleNavItems = computed(() => navItems.filter(item => !adminPages.includes(item.name) || user.value?.role === 'admin'))
 const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
+const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
+const reviewDay = computed(() => validDay(route.query.date) || reviewToday.value)
+const targetTask = computed(() => typeof route.query.task === 'string' && /^[1-9]\d*$/.test(route.query.task) ? Number(route.query.task) : null)
+function validDay(value: unknown) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
+    && new Date(value).toISOString().slice(0, 10) === value ? value : null
+}
+function selectReviewDay(value: string) {
+  reviewToday.value = todayShanghai()
+  mobileOpen.value = false
+  void router.replace({ name: 'review-records', query: { date: value } })
+}
+async function refreshUnread() {
+  const account = user.value?.id
+  if (!account || user.value?.must_change_password) { unreadMessages.value = 0; return }
+  try {
+    const { count } = await api<{ count: number }>('/notifications/unread')
+    if (user.value?.id === account) unreadMessages.value = count
+  } catch { /* 消息数刷新失败时保留上一次的值。 */ }
+}
 const week = ref<WeekData>({ revision: 0, tasks: [] })
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
 const activeTab = ref<number | null>(null), reportTasks = ref<Task[]>([])
@@ -89,14 +115,14 @@ watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCle
   if (cancelled) return
 
   stop = module.startSidebarTour({
-    menu: visibleNavItems.value,
+    menu: visibleNavItems.value.filter(item => item.name !== 'review-config' && item.name !== 'review-records'),
     showMeetingShortcut: activePage === 'reports',
     setCollapsed: collapsed => { sidebarCollapsed.value = collapsed },
     onShown: () => markGuideSeen(key),
     onClosed: close,
   })
 }, { flush: 'post' })
-const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码' }[page.value] || '周报'))
+const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码', 'review-config': '审查配置', 'review-records': '审查记录', messages: '消息中心' }[page.value] || '周报'))
 const taskFontSizeKey = 'zhoubao.task-font-size'
 function loadTaskFontSize() {
   try {
@@ -269,7 +295,7 @@ async function startCarry() {
     sourceWeek.setUTCDate(sourceWeek.getUTCDate() - 7)
     const previous = await api<WeekData>(`/weeks/${sourceWeek.toISOString().slice(0,10)}`)
     if (selectedWeek.value !== requestedWeek || page.value !== 'work') return
-    if (!previous.tasks.some(task => task.status !== '已完成')) { notice.value = '上周没有未完成任务，本周未作修改。'; return }
+    if (!previous.tasks.some(task => !['已完成', '忽略'].includes(task.status || ''))) { notice.value = '上周没有未完成任务，本周未作修改。'; return }
     if (week.value.tasks.length) openModal({ kind: 'carry' })
     else await carry('append')
   } catch (error) { showError(error) }
@@ -284,10 +310,16 @@ async function loadPage() {
   const serial = ++loadSerial
   try {
     if (page.value === 'work') {
+      const requestedWeek = validDay(route.query.week)
+      if (requestedWeek && mondayOf(requestedWeek) === requestedWeek) selectedWeek.value = requestedWeek
       week.value = { revision: 0, tasks: [] }
       const [weekData, categoryData] = await Promise.all([api<WeekData>(`/weeks/${selectedWeek.value}`), api<Category[]>('/categories')])
       if (serial !== loadSerial) return
       week.value = weekData; categories.value = categoryData
+      if (targetTask.value && weekData.tasks.some(task => task.id === targetTask.value)) {
+        await nextTick()
+        document.getElementById(`work-task-${targetTask.value}`)?.scrollIntoView({ block: 'center' })
+      }
     } else if (page.value === 'reports') {
       reportTasks.value = []
       todayWeeklyMeetingLoading.value = true
@@ -394,9 +426,10 @@ async function exportReports() {
 }
 async function selectWeek(value: string, refresh = false) {
   if (value === selectedWeek.value && !refresh) return
-  try { if (structuralPromise) await structuralPromise; await flushPending(); selectedWeek.value = value; if (refresh) calendarKey.value++; await loadPage() } catch { notice.value = '当前修改尚未保存，请先重试。' }
+  try { if (structuralPromise) await structuralPromise; await flushPending(); selectedWeek.value = value; if (refresh) calendarKey.value++; if (page.value === 'work' && route.query.week) await router.replace({ name: 'work' }); else await loadPage() } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
 async function navigate(name: string) {
+  if (name === 'review-records') reviewToday.value = todayShanghai()
   if (page.value === name) { mobileOpen.value = false; return }
   try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push(`/${name}`); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
@@ -453,7 +486,7 @@ const removeRouteGuard = router.beforeEach(async (to, from) => {
   if (!ready.value || !user.value || to.path === from.path) return
   if (to.name === 'login' && !signingOut) return user.value.must_change_password ? '/password' : '/work'
   if (user.value.must_change_password && to.name !== 'password' && !signingOut) return '/password'
-  if (to.name === 'users' && user.value.role !== 'admin') return '/work'
+  if (adminPages.includes(String(to.name)) && user.value.role !== 'admin') return '/work'
   if (hasPending()) {
     try { if (structuralPromise) await structuralPromise; await flushPending() } catch { notice.value = '当前修改尚未保存，请先重试。'; return false }
   }
@@ -468,11 +501,18 @@ onMounted(async () => {
   catch { await router.replace('/login') }
   ready.value = true
   if (user.value?.must_change_password) await router.replace('/password')
-  else if (user.value && (page.value === 'login' || (page.value === 'users' && user.value.role !== 'admin'))) await router.replace('/work')
+  else if (user.value && (page.value === 'login' || (adminPages.includes(page.value) && user.value.role !== 'admin'))) await router.replace('/work')
   if (user.value) await loadPage()
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
-watch(() => route.name, () => { if (ready.value && user.value) void loadPage() })
+watch(() => [route.name, route.query.week, route.query.task], () => { if (ready.value && user.value) void loadPage() })
+watch(() => [user.value?.id, user.value?.must_change_password, page.value], (_, __, onCleanup) => {
+  void refreshUnread()
+  if (user.value && !user.value.must_change_password) {
+    const poll = window.setInterval(refreshUnread, 30000)
+    onCleanup(() => window.clearInterval(poll))
+  }
+})
 </script>
 
 <template>
@@ -494,6 +534,7 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
           </button>
         </nav>
         <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
+        <MonthCalendar v-else-if="page === 'review-records'" :selected="reviewDay" scope="review-records" :compact="compactSidebar" @select="selectReviewDay" />
         <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
           {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
         </button>
@@ -514,15 +555,18 @@ watch(() => route.name, () => { if (ready.value && user.value) void loadPage() }
         </div>
       </div>
     </aside>
-    <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports' }"><div><span class="eyebrow">周报系统 / {{ title }}</span><h1>{{ title }}</h1><p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p></div><div v-if="page === 'work' || page === 'reports'" class="top-actions"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></div>
+    <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports' }"><div><span class="eyebrow">周报系统 / {{ title }}</span><h1>{{ title }}</h1><p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p><p v-else-if="page === 'review-records'" class="date-range">{{ reviewDay }}</p></div><div class="top-actions"><template v-if="page === 'work' || page === 'reports'"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></template><button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button><button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">日报总结</button></div>
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
       <div class="work-area"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
-      <div v-if="page === 'work'">
+      <ReviewConfig v-if="page === 'review-config' && user.role === 'admin'" :key="user.id" :account-id="user.id" />
+      <ReviewRecords v-else-if="page === 'review-records'" :day="reviewDay" :summary-request="summaryRequest" />
+      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" @change="refreshUnread" />
+      <div v-else-if="page === 'work'">
         <div class="section-head">
           <strong>任务清单 <span>{{ week.tasks.length }}</span></strong>
           <div class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
-        <TaskTable :key="selectedWeek" :tasks="week.tasks" :categories="categories" :busy="mutating" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
+        <TaskTable :key="selectedWeek" :tasks="week.tasks" :categories="categories" :busy="mutating" :target-task="targetTask" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
       </div>
       <div v-else-if="page === 'reports'"><div v-if="!tabs.length" class="empty">暂无成员记录。</div><TaskTable v-if="activeTab" :tasks="reportTasks" readonly /></div>
       <section v-else-if="page === 'categories'" class="panel"><p>为自己的任务维护类型；修改或删除后，历史任务名称保持原样。系统内置类型所有人可直接选择。</p><form class="inline-form" @submit.prevent="addCategory"><label>新任务类型<input v-model="newCategory" maxlength="100" required placeholder="例如：产品开发" /></label><button class="primary-button" type="submit">新增类型</button></form><div v-for="category in categories" :key="category.id" class="list-row"><input v-model="categoryDrafts[category.id]" :aria-label="`任务类型 ${category.name}`" maxlength="100" /><button class="mini-button" type="button" @click="renameCategory(category.id)">保存名称</button><button class="mini-button danger" type="button" @click="deleteCategory(category.id)">删除</button></div><div v-if="!categories.length" class="empty">还没有个人任务类型，可在上方新增。</div></section>

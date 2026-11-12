@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 from .db import get_db
-from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Task, User, Week, ReleaseRecord, meeting_updaters
+from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Notification, ReviewIssue, Task, User, Week, ReleaseRecord, meeting_updaters
 from .credential_crypto import EncryptedCredentials, decrypt_credentials, public_key
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -476,6 +476,8 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
     task.transferred_by = sender.display_name
     target.revision += 1
     db.flush()
+    db.add(Notification(user_id=recipient.id, kind="转交任务", task_id=task.id,
+                        title=f"{sender.display_name} 转交了任务：{task.description or task.task_group or '未命名任务'}"[:500]))
     payload = week_json(db, source)
     db.commit()
     return payload
@@ -515,6 +517,10 @@ def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, aut
         touch_weeks(db, affected)
     elif task.meeting_task_id and "status" in values:
         task.meeting_task.meeting.revision += 1
+    if "status" in values:
+        issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
+        if issue:
+            issue.status = task.status
     db.flush()
     payload = week_json(db, row); db.commit()
     return payload
@@ -539,7 +545,7 @@ def duplicate_task(week_start: str, task_id: int, revision: int, idempotency_key
     row = checked_week(db, auth[0].id, week_start, revision)
     source = own_task(db, task_id, row.id)
     db.execute(update(Task).where(Task.week_id == row.id, Task.position > source.position).values(position=Task.position + 1))
-    db.add(Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id))
+    db.add(Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=None if source.status == "忽略" else source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id))
     source.meeting_task_id = None
     db.flush()
     return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
@@ -553,7 +559,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
     start = monday(week_start)
     source_week = week_row(db, auth[0].id, start - timedelta(days=7))
     # NULL must count as unfinished in SQL's three-valued logic.
-    sources = [] if source_week is None else db.scalars(select(Task).where(Task.week_id == source_week.id, (Task.status != "已完成") | Task.status.is_(None)).order_by(Task.position, Task.id)).all()
+    sources = [] if source_week is None else db.scalars(select(Task).where(Task.week_id == source_week.id, Task.status.not_in(["已完成", "忽略"]) | Task.status.is_(None)).order_by(Task.position, Task.id)).all()
     if not sources:
         return {**week_json(db, week_row(db, auth[0].id, start)), "no_source": True}
     row = checked_week(db, auth[0].id, week_start, revision)
@@ -567,7 +573,11 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
         next_position = len(existing) + 1
     db.flush()
     for source in sources:
-        db.add(Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id))
+        copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id)
+        db.add(copied)
+        issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == source.id))
+        if issue:
+            issue.task_id = copied.id
         if source.meeting_task_id:
             source.meeting_task_id = None
             source_week.revision += 1
@@ -748,3 +758,11 @@ def release_notes(version: str, auth=Depends(active_session), db: Session = Depe
     if record is None:
         return None
     return {"version": record.version, "description": record.description, "created_at": record.created_at.isoformat()}
+
+
+# 子模块复用上面的会话权限和任务事务，定义完成后挂载。
+from .notifications import router as notifications_router
+from .reviews import router as reviews_router
+
+app.include_router(notifications_router)
+app.include_router(reviews_router)
