@@ -106,3 +106,57 @@ class ReleaseRecord(Base):
     version: Mapped[str] = mapped_column(String(40), unique=True)
     description: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReviewProject(Base):
+    __tablename__ = "review_projects"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(250))
+    alias: Mapped[str] = mapped_column(String(250))
+    url: Mapped[str] = mapped_column(String(1000), unique=True)
+    visibility: Mapped[str] = mapped_column(String(16))
+    owner: Mapped[str] = mapped_column(String(250))
+    gitlab_url: Mapped[str | None] = mapped_column(String(1000))
+    gitlab_id: Mapped[int | None] = mapped_column(Integer)
+    skip_slash_branches: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 停用配置后保留日报引用，重新添加同一项目时复用原 ID。
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ReviewRun(Base):
+    __tablename__ = "review_runs"
+    report_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    commit_date: Mapped[date] = mapped_column(Date)
+    model: Mapped[str] = mapped_column(String(400))
+    duration_seconds: Mapped[int] = mapped_column(Integer)
+    projects: Mapped[list] = mapped_column(JSON)
+
+
+class ReviewIssue(Base):
+    __tablename__ = "review_issues"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_date: Mapped[date] = mapped_column(ForeignKey("review_runs.report_date"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("review_projects.id"), index=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    author: Mapped[str] = mapped_column(String(250))
+    title: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(16))
+    details: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str | None] = mapped_column(String(16))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"), unique=True)
+    task_added: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("user_id", "event_key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    event_key: Mapped[str | None] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(500))
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    review_date: Mapped[date | None] = mapped_column(Date)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
