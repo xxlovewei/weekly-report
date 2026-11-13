@@ -5,10 +5,16 @@ import { api } from './api'
 import { taskStatuses } from './taskStatuses'
 import ReviewIssueContent from './ReviewIssueContent.vue'
 import type { ReviewIssue as Issue } from './types'
+import ReviewText from './ReviewText.vue'
 
 const props = defineProps<{ day: string; summaryRequest: number; refreshKey: number }>()
 const router = useRouter()
-interface Commit { sha: string; author: string; title: string; branches: string[]; status: string; reason: string }
+interface Commit {
+  sha: string; author: string; title: string; branches: string[]
+  status: 'complete' | 'partial' | 'failed' | 'skipped'; reason: string
+  ocr_elapsed?: string; ocr_comments?: number | null
+  ocr_items_failed?: number | null; ocr_items_selected?: number | null
+}
 interface Project { project_id: number; alias: string; commits: Commit[]; positives: string[]; error: string }
 interface ReviewDay {
   projects: Record<string, string>; issues: Issue[]
@@ -38,6 +44,25 @@ const duration = computed(() => {
   return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
 })
 const statusLabel: Record<string, string> = { complete: '已审查', partial: '部分完成', failed: '失败', skipped: '跳过' }
+const coverageProjects = computed(() => (data.value?.summary?.projects || []).filter(project => project.error || project.commits.length))
+const coverageCounts = computed(() => Object.entries(statusLabel).map(([status, label]) => ({
+  label, count: coverageProjects.value.reduce((total, project) => total + project.commits.filter(commit => commit.status === status).length, 0),
+})))
+const issueCountsByCommit = computed(() => {
+  const counts = new Map<string, number>()
+  for (const issue of data.value?.issues || []) {
+    const key = `${issue.project_id}:${issue.sha}`
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return counts
+})
+const improvements = computed(() => severities.map(level => ({
+  level,
+  issues: (data.value?.issues || []).filter(issue => issue.severity === level && (issue.suggestion || issue.suggestion_code)),
+})).filter(group => group.issues.length))
+const improvementPriority: Record<string, string> = {
+  严重: '优先处理', 高危: '优先处理', 中危: '本迭代内安排', 低危: '随改动清理', 提示: '按需处理',
+}
 let serial = 0
 watch(() => [props.day, props.refreshKey] as const, async ([day]) => {
   const current = ++serial
@@ -244,15 +269,46 @@ function toggleSeverity(level: string) {
         <h4>正面评价</h4>
         <ul v-if="project.positives.length"><li v-for="point in project.positives" :key="point">{{ point }}</li></ul>
         <p v-else>暂无可列出的正面评价</p>
-        <details v-if="project.commits.length" :open="project.commits.some(commit => commit.status !== 'complete')">
-          <summary>提交与审查覆盖</summary>
+      </section>
+      <section class="review-summary-project" aria-labelledby="review-coverage-heading">
+        <h3 id="review-coverage-heading">审查覆盖说明</h3>
+        <p v-if="!coverageProjects.length">本次日报没有待审查的提交。</p>
+        <template v-else>
+          <p>{{ coverageCounts.map(({ label, count }) => `${label} ${count} 个提交`).join(' · ') }}</p>
+          <p v-if="coverageProjects.some(project => project.error || project.commits.some(commit => commit.status !== 'complete'))">
+            建议优先补审未完整覆盖的提交，并检查读取失败的项目。
+          </p>
+          <details v-for="project in coverageProjects" :key="project.project_id"
+            :open="!!project.error || project.commits.some(commit => commit.status !== 'complete')">
+          <summary>{{ project.alias }} · {{ project.commits.length }} 个提交</summary>
+          <p v-if="project.error" class="review-error">{{ project.error }}</p>
           <ul class="review-coverage">
             <li v-for="commit in project.commits" :key="commit.sha">
-              <span class="status-tag" :class="{ completed: commit.status === 'complete', pending: commit.status === 'failed' }">{{ statusLabel[commit.status] }}</span>
-              <div><code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author || '无名氏' }} · {{ commit.title }}<p v-if="commit.reason">{{ commit.reason }}</p></div>
+              <span class="status-tag" :class="{ completed: commit.status === 'complete', pending: commit.status !== 'complete' }">{{ statusLabel[commit.status] }}</span>
+              <div>
+                <code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author || '无名氏' }}<template v-if="commit.title"> · {{ commit.title }}</template>
+                <p>{{ commit.ocr_comments ?? issueCountsByCommit.get(`${project.project_id}:${commit.sha}`) ?? 0 }} 条意见<template v-if="commit.ocr_elapsed"> · 耗时 {{ commit.ocr_elapsed }}</template></p>
+                <p v-if="commit.reason || commit.ocr_items_failed != null">{{ commit.reason }}<template v-if="commit.ocr_items_failed != null"> · {{ commit.ocr_items_selected }} 个审查项中 {{ commit.ocr_items_failed }} 个失败</template></p>
+              </div>
             </li>
           </ul>
-        </details>
+          </details>
+        </template>
+      </section>
+      <section class="review-summary-project" aria-labelledby="review-improvements-heading">
+        <h3 id="review-improvements-heading">改进建议</h3>
+        <p v-if="!improvements.length">本次日报没有记录具体修改建议。</p>
+        <div v-for="group in improvements" :key="group.level" class="review-improvement-group">
+          <h4><span class="review-severity" :data-level="group.level">{{ group.level }}</span> {{ improvementPriority[group.level] }}</h4>
+          <ul>
+            <li v-for="issue in group.issues" :key="issue.id">
+              <strong>ISSUE-{{ String(issue.id).padStart(2, '0') }} · <ReviewText :text="issue.title" /></strong>
+              <p>{{ data.projects[issue.project_id] }}</p>
+              <p v-if="issue.suggestion" class="preline"><ReviewText :text="issue.suggestion" /></p>
+              <p v-else>建议代码见该问题卡片。</p>
+            </li>
+          </ul>
+        </div>
       </section>
     </template>
     <p v-else>{{ loading ? '正在加载日报…' : error || '当天暂无审查日报' }}</p>

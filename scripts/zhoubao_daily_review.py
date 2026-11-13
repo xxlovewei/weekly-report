@@ -231,6 +231,12 @@ def collect(projects, day, report_day, cache, base, token, ocr, env, known, revi
                     models.add(model)
                 comments = raw.get("comments") or []
                 status = raw.get("status")
+                # 保留 OCR 实际覆盖和耗时，缺失的指标由日报按未记录处理。
+                metrics = raw.get("summary") or {}
+                commit.update(ocr_comments=len(comments), ocr_elapsed=(metrics.get("elapsed") or "")[:80])
+                failed_items = re.search(r"(\d+) of (\d+) selected item\(s\) failed", raw.get("message") or "")
+                if failed_items:
+                    commit.update(ocr_items_failed=int(failed_items[1]), ocr_items_selected=int(failed_items[2]))
                 if status == "complete":
                     commit["status"] = status
                 elif status == "partial" or comments:
