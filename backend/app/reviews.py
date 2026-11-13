@@ -311,8 +311,8 @@ def report_day(report_date: date, auth=Depends(active_session), db: Session = De
 
 
 class IssueEdit(Input):
-    status: str | None
-    notes: str = Field(max_length=5000)
+    status: str | None = None
+    notes: str = Field(default="", max_length=5000)
 
 
 def get_issue(db, issue_id):
@@ -329,16 +329,20 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
     task = db.get(Task, issue.task_id) if issue.task_id else None
     if task and task.week.user_id != auth[0].id and auth[0].role != "admin":
         raise HTTPException(403, "此问题已关联其他用户的任务")
-    if data.status is not None and data.status not in STATUSES | {"忽略"}:
+    changes = data.model_dump(exclude_unset=True)
+    status = changes.get("status", issue.status)
+    notes = changes.get("notes", issue.notes)
+    if status is not None and status not in STATUSES | {"忽略"}:
         raise HTTPException(422, "完成状态无效")
-    if data.status == "忽略" and issue.severity in SEVERITIES[:2] and not data.notes:
+    if status == "忽略" and issue.severity in SEVERITIES[:2] and not notes:
         raise HTTPException(422, "忽略高危或严重问题时，必须填写备注说明原因")
-    issue.status, issue.notes = data.status, data.notes
-    if task and task.status != issue.status:
-        task.status = issue.status
+    # 自动保存备注时不覆盖其他页面已更新的完成状态。
+    issue.status, issue.notes = status, notes
+    if task and "status" in changes and task.status != status:
+        task.status = status
         task.week.revision += 1
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "status": status, "notes": notes}
 
 
 @router.post("/issues/{issue_id}/task")

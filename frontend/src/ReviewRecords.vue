@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from './api'
 import { taskStatuses } from './taskStatuses'
 import ReviewText from './ReviewText.vue'
 
 const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
 const props = defineProps<{ day: string; summaryRequest: number }>()
+const router = useRouter()
 interface Issue {
   id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
   title: string; severity: string; category: string; dimension: string; sha: string; commit_message: string
@@ -21,17 +23,17 @@ interface ReviewDay {
 }
 const data = ref<ReviewDay | null>(null)
 const draft = ref<Record<number, { status: string; notes: string }>>({})
-const busy = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
+const adding = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
 const author = ref<'all' | 'mine' | 'anonymous'>('all')
 const completion = ref<'all' | 'done' | 'open'>('all')
 const severities = ['严重', '高危', '中危', '低危', '提示'] as const
-const severity = ref('')
+const severity = ref<string[]>([])
 const selected = ref<string[]>([]), allProjects = ref(true)
 const dialog = ref<HTMLDialogElement | null>(null)
 const shown = computed(() => (data.value?.issues || []).filter(issue => selected.value.includes(String(issue.project_id))
   && (author.value === 'all' || issue[author.value])
   && (completion.value === 'all' || (issue.status === '已完成') === (completion.value === 'done'))
-  && (!severity.value || issue.severity === severity.value)))
+  && (!severity.value.length || severity.value.includes(issue.severity))))
 const severityCounts = computed(() => severities.map(label => ({
   label, count: data.value?.issues.filter(issue => issue.severity === label).length || 0,
 })))
@@ -66,28 +68,103 @@ function toggleProject(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter(value => value !== id) : [...selected.value, id]
   allProjects.value = selected.value.length === Object.keys(data.value?.projects || {}).length
 }
-async function saveIssue(issue: Issue, addTask = false) {
-  busy.value = issue.id; issueError.value[issue.id] = ''
+const noteTimers = new Map<number, number>()
+const saving = new Map<number, Promise<boolean>>()
+const savingNotes = ref(new Set<number>())
+const saveDelay = 650
+const navigationError = ref('')
+
+function issuePatch(issue: Issue) {
   const values = draft.value[issue.id]
-  try {
-    if (issue.editable && (values.status !== (issue.status || '') || values.notes.trim() !== issue.notes)) {
-      const patch = { status: values.status || null, notes: values.notes.trim() }
-      await api(`/reviews/issues/${issue.id}`, 'PATCH', patch)
-      Object.assign(issue, patch)
-    }
-    if (addTask) {
-      await api(`/reviews/issues/${issue.id}/task`, 'POST')
-      issue.task_added = true
-    }
-  } catch (cause) { issueError.value[issue.id] = (cause as Error).message }
-  finally { busy.value = null }
+  const patch: Partial<Pick<Issue, 'status' | 'notes'>> = {}
+  if (values.status !== (issue.status || '')) patch.status = values.status || null
+  if (values.notes.trim() !== issue.notes) patch.notes = values.notes.trim()
+  return patch
 }
-function changeStatus(issue: Issue) {
-  if (draft.value[issue.id].status === '忽略' && ['高危', '严重'].includes(issue.severity) && !draft.value[issue.id].notes.trim()) {
-    issueError.value[issue.id] = '忽略高危或严重问题时，请先填写备注。'
-    return
+function hasChanges(issue: Issue) {
+  return Object.keys(issuePatch(issue)).length > 0
+}
+function clearNoteTimer(id: number) {
+  window.clearTimeout(noteTimers.get(id))
+  noteTimers.delete(id)
+}
+function queueNotes(issue: Issue) {
+  if (noteTimers.has(issue.id)) return
+  noteTimers.set(issue.id, window.setTimeout(() => {
+    clearNoteTimer(issue.id)
+    void saveIssue(issue)
+  }, saveDelay))
+}
+async function saveIssue(issue: Issue): Promise<boolean> {
+  const previous = saving.get(issue.id)
+  if (previous) {
+    if (!await previous) return false
+    return saveIssue(issue)
   }
-  void saveIssue(issue)
+  const patch = issuePatch(issue)
+  issueError.value[issue.id] = ''
+  if (!Object.keys(patch).length) return true
+  const values = draft.value[issue.id]
+  if (values.status === '忽略' && ['高危', '严重'].includes(issue.severity) && !values.notes.trim()) {
+    issueError.value[issue.id] = '忽略高危或严重问题时，请填写备注。'
+    return false
+  }
+  const sent = { ...values }
+  const pending = (async () => {
+    savingNotes.value.add(issue.id)
+    try {
+      const saved = await api<Pick<Issue, 'status' | 'notes'>>(`/reviews/issues/${issue.id}`, 'PATCH', patch)
+      // 请求期间可以继续输入，只同步尚未再次修改的字段。
+      if (values.status === sent.status) values.status = saved.status || ''
+      if (values.notes === sent.notes && patch.notes === undefined) values.notes = saved.notes
+      Object.assign(issue, saved)
+      return true
+    } catch (cause) {
+      issueError.value[issue.id] = `保存失败：${(cause as Error).message}`
+      return false
+    } finally {
+      savingNotes.value.delete(issue.id)
+    }
+  })()
+  saving.set(issue.id, pending)
+  try { return await pending } finally { saving.delete(issue.id) }
+}
+async function flushIssue(issue: Issue): Promise<boolean> {
+  clearNoteTimer(issue.id)
+  if (!await saveIssue(issue)) return false
+  return !hasChanges(issue) || flushIssue(issue)
+}
+async function flushReview() {
+  navigationError.value = ''
+  const issues = (data.value?.issues || []).filter(issue => saving.has(issue.id) || hasChanges(issue))
+  const saved = (await Promise.all(issues.map(flushIssue))).every(Boolean)
+  if (!saved) navigationError.value = '有审查问题尚未保存，请检查对应卡片中的提示。'
+  return saved
+}
+defineExpose({ flushReview })
+const unregister = router.beforeEach((to, from) => {
+  if (from.name === 'review-records' && (to.name !== from.name || to.query.date !== from.query.date)) return flushReview()
+})
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (saving.size || data.value?.issues.some(hasChanges)) event.preventDefault()
+}
+onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+onUnmounted(() => {
+  unregister()
+  window.removeEventListener('beforeunload', beforeUnload)
+  for (const id of noteTimers.keys()) clearNoteTimer(id)
+})
+async function addToWork(issue: Issue) {
+  adding.value = issue.id
+  try {
+    if (!await flushIssue(issue)) return
+    await api(`/reviews/issues/${issue.id}/task`, 'POST')
+    issue.task_added = true
+  } catch (cause) { issueError.value[issue.id] = (cause as Error).message }
+  finally { adding.value = null }
+}
+function toggleSeverity(level: string) {
+  severity.value = severity.value.includes(level) ? severity.value.filter(item => item !== level) : [...severity.value, level]
 }
 </script>
 
@@ -107,12 +184,13 @@ function changeStatus(issue: Issue) {
           <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
         </div>
       </div>
-      <label class="review-filter-group">严重程度
-        <select v-model="severity" aria-label="严重程度">
-          <option value="">全部</option>
-          <option v-for="level in severities" :key="level">{{ level }}</option>
-        </select>
-      </label>
+      <div class="review-filter-group" role="group" aria-label="严重程度">
+        <strong>严重程度</strong>
+        <div class="review-tags">
+          <button class="mini-button" :aria-pressed="!severity.length" @click="severity = []">全部</button>
+          <button v-for="level in severities" :key="level" class="mini-button" :aria-pressed="severity.includes(level)" @click="toggleSeverity(level)">{{ level }}</button>
+        </div>
+      </div>
     </div>
     <div class="review-filter-projects" role="group" aria-label="审查项目">
       <strong>审查项目</strong>
@@ -123,12 +201,13 @@ function changeStatus(issue: Issue) {
       </div>
     </div>
   </section>
+  <p v-if="navigationError" class="review-error" role="alert">{{ navigationError }}</p>
   <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
   <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
   <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
   <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
     <header class="review-issue-head">
-      <div>
+      <div class="review-issue-title">
         <div class="review-tags">
           <span class="review-number">ISSUE-{{ String(issue.id).padStart(2, '0') }}</span>
           <span class="review-severity" :data-level="issue.severity">{{ issue.severity }}</span>
@@ -136,7 +215,12 @@ function changeStatus(issue: Issue) {
         </div>
         <h2><ReviewText :text="issue.title" /></h2>
       </div>
-      <button class="secondary-button" :disabled="busy !== null || issue.task_added" @click="saveIssue(issue, true)">{{ issue.task_added ? '已添加到任务' : '添加到任务' }}</button>
+      <div class="review-issue-controls">
+        <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
+          <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
+        </select></label>
+        <button class="secondary-button" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
+      </div>
     </header>
     <dl class="review-metadata">
       <div><dt>修改人</dt><dd>{{ issue.author_name }}</dd></div>
@@ -158,14 +242,14 @@ function changeStatus(issue: Issue) {
       <p v-if="issue.suggestion" class="preline"><ReviewText :text="issue.suggestion" /></p>
       <ReviewCode v-if="issue.suggestion_code" :source="issue.suggestion_code" :path="issue.path" />
     </section>
-    <div class="review-issue-actions">
-      <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="busy !== null || !issue.editable" @change="changeStatus(issue)">
-        <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
-      </select></label>
-      <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="busy !== null || !issue.editable" /></label>
-      <button class="mini-button" :disabled="busy !== null || !issue.editable || (draft[issue.id].notes.trim() === issue.notes && draft[issue.id].status === (issue.status || ''))" @click="saveIssue(issue)">保存备注</button>
+    <div class="review-issue-notes">
+      <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
+      <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>
+      <div v-if="issueError[issue.id]" class="review-error" role="alert">
+        {{ issueError[issue.id] }}
+        <button v-if="issueError[issue.id].startsWith('保存失败') && hasChanges(issue)" class="mini-button" @click="flushIssue(issue)">重试</button>
+      </div>
     </div>
-    <p v-if="issueError[issue.id]" class="review-error" role="alert">{{ issueError[issue.id] }}</p>
   </article>
   <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
     <header class="review-summary-head">
