@@ -23,6 +23,9 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
             "issues": [issue, {**issue, "fingerprint": "b" * 64, "author": "unknown", "severity": "低危"}]}
     assert admin.post(f"{worker}/reports", json=data, headers=worker_headers).status_code == 200
     day = "/api/reviews/days/2026-11-12"
+    marks = "/api/calendar/marks?year=2026&scope=review-records"
+    assert alice.get(f"{marks}&month=11").json() == ["2026-11-12"]
+    assert alice.get(f"{marks}&month=10").json() == []
     daily = alice.get(day).json()
     assert daily["summary"]["model"] == "model"
     mine, unknown = daily["issues"]

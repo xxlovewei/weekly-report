@@ -12,7 +12,8 @@ const marked = ref<string[]>([])
 let request = 0
 watch(() => [displayed.value.year, displayed.value.month, props.scope, props.refreshKey, props.compact], async () => {
   const latest = ++request
-  if (props.compact || byDay.value) return
+  if (props.compact) return
+  marked.value = []
   try {
     const result = await api<string[]>(`/calendar/marks?year=${displayed.value.year}&month=${displayed.value.month}&scope=${props.scope}`)
     if (latest === request) marked.value = result
@@ -48,7 +49,11 @@ function goCurrent() {
       </div>
     </div>
     <div v-if="!compact" class="calendar-grid"><span v-for="label in ['一','二','三','四','五','六','日']" :key="label" class="calendar-label">{{ label }}</span>
-      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === dateKey(current), outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? day : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" @click="emit('select', dateKey(day))">{{ Number(day.slice(8)) }}<span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day))" class="week-check" aria-hidden="true">√</span></button>
+      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === dateKey(current), outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? day : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" @click="emit('select', dateKey(day))">
+        {{ Number(day.slice(8)) }}
+        <span v-if="byDay && marked.includes(day)" class="review-day-mark" role="img" aria-label="有审查记录" title="有审查记录" />
+        <span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day))" class="week-check" aria-hidden="true">√</span>
+      </button>
     </div>
     <p class="calendar-caption" :aria-live="compact ? 'polite' : undefined">{{ byDay ? (compact ? selected.slice(5) : selected) : compact ? `第${weekOfMonth(selected)}周` : `${selected} — ${addDays(selected, 6)}` }}</p>
   </section>
