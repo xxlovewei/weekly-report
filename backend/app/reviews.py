@@ -212,6 +212,10 @@ class CommitSummary(Input):
     branches: list[str] = Field(default_factory=list)
     status: Literal["complete", "partial", "failed", "skipped"]
     reason: str = Field(default="", max_length=2000)
+    ocr_elapsed: str = Field(default="", max_length=80)
+    ocr_comments: int | None = Field(default=None, ge=0)
+    ocr_items_failed: int | None = Field(default=None, ge=0)
+    ocr_items_selected: int | None = Field(default=None, ge=0)
 
 
 class ProjectSummary(Input):
