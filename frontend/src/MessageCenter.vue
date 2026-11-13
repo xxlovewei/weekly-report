@@ -1,25 +1,32 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { api } from './api'
+import type { LiveMessage } from './types'
 
-const props = defineProps<{ admin: boolean; jumpToMessage: (item: Message) => Promise<void> }>()
+const props = defineProps<{ admin: boolean; jumpToMessage: (item: LiveMessage) => Promise<void>; refreshKey: number }>()
 const emit = defineEmits<{ change: [] }>()
-interface Message {
-  id: number; title: string; kind: '转交任务' | '代码审查'; is_read: boolean; created_at: string
-  recipient?: string; target?: { date?: string; week?: string; task?: number }
+interface Message extends LiveMessage {
+  title: string; created_at: string; recipient?: string
 }
 const items = ref<Message[]>([]), total = ref(0), page = ref(1)
 const allUsers = ref(false), day = ref(''), status = ref(''), kind = ref('')
 const loading = ref(false), busy = ref<number | null>(null), error = ref('')
+const canNotify = window.isSecureContext && typeof Notification !== 'undefined'
+const permission = ref(canNotify ? Notification.permission : 'unsupported')
+async function enableNotifications() {
+  try { permission.value = await Notification.requestPermission() }
+  catch { permission.value = 'unsupported' }
+}
 const timestamp = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short' })
 let serial = 0
-async function load() {
+async function load(background = false) {
   const current = ++serial
   const query = new URLSearchParams({ all_users: String(allUsers.value), page: String(page.value) })
   if (day.value) query.set('day', day.value)
   if (status.value) query.set('is_read', status.value)
   if (kind.value) query.set('kind', kind.value)
-  loading.value = true; error.value = ''
+  if (!background) loading.value = true
+  error.value = ''
   try {
     const result = await api<{ items: Message[]; total: number }>(`/notifications?${query}`)
     if (current !== serial) return
@@ -29,7 +36,8 @@ async function load() {
   finally { if (current === serial) loading.value = false }
 }
 watch([allUsers, day, status, kind], () => { if (page.value === 1) void load(); else page.value = 1 })
-watch(page, load, { immediate: true })
+watch(page, () => void load(), { immediate: true })
+watch(() => props.refreshKey, () => void load(true))
 async function mark(item: Message) {
   busy.value = item.id; error.value = ''
   try {
@@ -53,6 +61,10 @@ async function jump(item: Message) {
     <label>日期<input v-model="day" type="date" /></label>
     <label>状态<select v-model="status"><option value="">全部</option><option value="false">未读</option><option value="true">已读</option></select></label>
     <label>类型<select v-model="kind"><option value="">全部</option><option>转交任务</option><option>代码审查</option></select></label>
+    <button v-if="permission === 'default'" class="secondary-button" type="button" @click="enableNotifications">开启桌面通知</button>
+    <small v-else-if="permission === 'denied'">请在浏览器站点设置中允许通知。</small>
+    <small v-else-if="permission === 'granted'">已开启桌面通知</small>
+    <small v-else>当前浏览器环境仅支持站内消息。</small>
   </section>
   <p v-if="error" class="review-error" role="alert">{{ error }}</p>
   <p v-if="loading" class="empty" role="status">正在加载消息…</p>

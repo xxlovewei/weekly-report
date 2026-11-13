@@ -1,0 +1,63 @@
+import type { LiveMessage } from './types'
+
+interface Snapshot {
+  count: number
+  messages: LiveMessage[]
+}
+
+const titles: Record<LiveMessage['kind'], string> = {
+  转交任务: '来活了📝！请及时查收📩',
+  代码审查: '来bug了⚠️！请及时查收📩',
+}
+
+export function subscribeToMessages(
+  account: number,
+  onSnapshot: (count: number) => void,
+  onClick: (message: LiveMessage) => Promise<void>,
+) {
+  const stream = new EventSource(`${import.meta.env.BASE_URL}api/notifications/stream`)
+  const displayed = new Set<Notification>()
+  let closed = false
+  const key = `zhoubao.notification.${import.meta.env.BASE_URL}.${account}`
+
+  function show(message: LiveMessage) {
+    if (closed || Notification.permission !== 'granted') return
+    try {
+      // 同账号的多个标签页只展示一次通知。
+      if (Number(localStorage.getItem(key)) >= message.id) return
+    } catch { /* 隐私模式下仍允许展示通知。 */ }
+    try {
+      const notification = new Notification(titles[message.kind], {
+        body: '点击可直接跳转查看', tag: `${key}.${message.id}`,
+      })
+      displayed.add(notification)
+      notification.onclose = () => displayed.delete(notification)
+      notification.onclick = event => {
+        event.preventDefault()
+        notification.close()
+        window.focus()
+        if (!closed) void onClick(message)
+      }
+      try { localStorage.setItem(key, String(message.id)) } catch { /* 标签页内的去重仍由事件游标处理。 */ }
+    } catch { /* 不支持网页通知的浏览器继续使用站内消息。 */ }
+  }
+
+  function stop() {
+    closed = true
+    stream.close()
+    displayed.forEach(notification => notification.close())
+    displayed.clear()
+  }
+  stream.onmessage = event => {
+    const snapshot: Snapshot = JSON.parse(event.data)
+    onSnapshot(snapshot.count)
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+    for (const message of snapshot.messages) {
+      if (message.is_read) continue
+      if (navigator.locks) void navigator.locks.request(key, () => show(message))
+      else show(message)
+    }
+  }
+  stream.addEventListener('session-ended', stop)
+  return stop
+}
