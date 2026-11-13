@@ -264,7 +264,6 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-coverage li { display: flex; flex-wrap: wrap; align-items: start; gap: 8px; padding: 8px 0; border-bottom: 1px dashed #999; }
 .review-coverage li > div { flex: 1 1 180px; min-width: 0; }
 .review-summary-project details + details { margin-top: 8px; }
-.review-improvement-group li + li { margin-top: 10px; }
 .task-row.task-target { outline: 2px solid #2781b8; outline-offset: 2px; }
 .message-row strong { display: block; margin-top: 8px; }
 @media (max-width: 520px) {
