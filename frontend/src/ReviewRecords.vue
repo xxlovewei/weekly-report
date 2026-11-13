@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { api } from './api'
 import { taskStatuses } from './taskStatuses'
+import ReviewText from './ReviewText.vue'
 
+const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
 const props = defineProps<{ day: string; summaryRequest: number }>()
 interface Issue {
   id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
@@ -22,12 +24,17 @@ const draft = ref<Record<number, { status: string; notes: string }>>({})
 const busy = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
 const author = ref<'all' | 'mine' | 'anonymous'>('all')
 const completion = ref<'all' | 'done' | 'open'>('all')
+const severities = ['严重', '高危', '中危', '低危', '提示'] as const
+const severity = ref('')
 const selected = ref<string[]>([]), allProjects = ref(true)
 const dialog = ref<HTMLDialogElement | null>(null)
 const shown = computed(() => (data.value?.issues || []).filter(issue => selected.value.includes(String(issue.project_id))
   && (author.value === 'all' || issue[author.value])
-  && (completion.value === 'all' || (issue.status === '已完成') === (completion.value === 'done'))))
-const severityCounts = computed(() => ['严重', '高危', '中危', '低危', '提示'].map(label => `${label} ${data.value?.issues.filter(issue => issue.severity === label).length || 0}`))
+  && (completion.value === 'all' || (issue.status === '已完成') === (completion.value === 'done'))
+  && (!severity.value || issue.severity === severity.value)))
+const severityCounts = computed(() => severities.map(label => ({
+  label, count: data.value?.issues.filter(issue => issue.severity === label).length || 0,
+})))
 const commitCount = computed(() => data.value?.summary?.projects.reduce((total, project) => total + project.commits.length, 0) || 0)
 const reviewedCount = computed(() => data.value?.summary?.projects.reduce((total, project) => total + project.commits.filter(commit => commit.status === 'complete').length, 0) || 0)
 const contributors = computed(() => new Set(data.value?.summary?.projects.flatMap(project => project.commits.map(commit => commit.author).filter(Boolean))).size)
@@ -86,35 +93,71 @@ function changeStatus(issue: Issue) {
 
 <template>
   <section class="panel review-panel review-filters" aria-label="筛选审查记录">
-    <div class="review-filter-row"><strong>提交人</strong><div class="review-tags">
-      <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">仅看我</button>
-      <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">仅看无名氏</button>
-    </div></div>
-    <div class="review-filter-row"><strong>审查项目</strong><div class="review-tags">
-      <button class="mini-button" @click="selectAll(true)">全选</button><button class="mini-button" @click="selectAll(false)">取消全选</button>
-      <button v-for="(alias, id) in data?.projects" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
-    </div></div>
-    <div class="review-filter-row"><strong>是否已完成</strong><div class="review-tags">
-      <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
-    </div></div>
+    <div class="review-filter-top">
+      <div class="review-filter-group" role="group" aria-label="修改人">
+        <strong>修改人</strong>
+        <div class="review-tags">
+          <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">仅看我</button>
+          <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">仅看无名氏</button>
+        </div>
+      </div>
+      <div class="review-filter-group" role="group" aria-label="完成状态">
+        <strong>完成状态</strong>
+        <div class="review-tags">
+          <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
+        </div>
+      </div>
+      <label class="review-filter-group">严重程度
+        <select v-model="severity" aria-label="严重程度">
+          <option value="">全部</option>
+          <option v-for="level in severities" :key="level">{{ level }}</option>
+        </select>
+      </label>
+    </div>
+    <div class="review-filter-projects" role="group" aria-label="审查项目">
+      <strong>审查项目</strong>
+      <div class="review-tags">
+        <button class="mini-button" @click="selectAll(true)">全选</button>
+        <button class="mini-button" @click="selectAll(false)">取消全选</button>
+        <button v-for="(alias, id) in data?.projects" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
+      </div>
+    </div>
   </section>
   <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
   <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
   <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
   <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-    <div class="review-panel-head"><div class="review-tags"><span class="review-number">ISSUE-{{ String(issue.id).padStart(2, '0') }}</span><span class="review-severity" :class="{ critical: ['严重', '高危'].includes(issue.severity) }">{{ issue.severity }}</span><span>{{ data?.projects[issue.project_id] }}</span></div>
-      <button class="secondary-button" :disabled="busy !== null || issue.task_added" @click="saveIssue(issue, true)">{{ issue.task_added ? '已添加到任务' : '添加到任务' }}</button></div>
-    <h2>{{ issue.title }}</h2>
+    <header class="review-issue-head">
+      <div>
+        <div class="review-tags">
+          <span class="review-number">ISSUE-{{ String(issue.id).padStart(2, '0') }}</span>
+          <span class="review-severity" :data-level="issue.severity">{{ issue.severity }}</span>
+          <span class="review-project-name">{{ data?.projects[issue.project_id] }}</span>
+        </div>
+        <h2><ReviewText :text="issue.title" /></h2>
+      </div>
+      <button class="secondary-button" :disabled="busy !== null || issue.task_added" @click="saveIssue(issue, true)">{{ issue.task_added ? '已添加到任务' : '添加到任务' }}</button>
+    </header>
     <dl class="review-metadata">
       <div><dt>修改人</dt><dd>{{ issue.author_name }}</dd></div>
       <div v-if="issue.category"><dt>问题类型</dt><dd>{{ issue.category }}</dd></div>
       <div v-if="issue.dimension"><dt>审查维度</dt><dd>{{ issue.dimension }}</dd></div>
-      <div><dt>提交</dt><dd><code>{{ issue.sha }}</code> {{ issue.commit_message }}</dd></div>
-      <div v-if="issue.path"><dt>涉及文件</dt><dd>{{ issue.path }}<template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></dd></div>
+      <div class="review-meta-wide"><dt>提交</dt><dd class="preline"><code>{{ issue.sha }}</code> {{ issue.commit_message }}</dd></div>
+      <div v-if="issue.path" class="review-meta-wide"><dt>涉及文件</dt><dd><code>{{ issue.path }}</code><template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></dd></div>
     </dl>
-    <template v-if="issue.existing_code"><h3>相关代码</h3><pre><code>{{ issue.existing_code }}</code></pre></template>
-    <h3>风险说明</h3><p class="preline">{{ issue.risk }}</p>
-    <template v-if="issue.suggestion || issue.suggestion_code"><h3>修改建议</h3><p class="preline" v-if="issue.suggestion">{{ issue.suggestion }}</p><pre v-if="issue.suggestion_code"><code>{{ issue.suggestion_code }}</code></pre></template>
+    <section class="review-detail">
+      <h3>风险说明</h3>
+      <p class="preline"><ReviewText :text="issue.risk" /></p>
+    </section>
+    <section v-if="issue.existing_code" class="review-detail">
+      <h3>相关代码</h3>
+      <ReviewCode :source="issue.existing_code" :path="issue.path" />
+    </section>
+    <section v-if="issue.suggestion || issue.suggestion_code" class="review-detail">
+      <h3>修改建议</h3>
+      <p v-if="issue.suggestion" class="preline"><ReviewText :text="issue.suggestion" /></p>
+      <ReviewCode v-if="issue.suggestion_code" :source="issue.suggestion_code" :path="issue.path" />
+    </section>
     <div class="review-issue-actions">
       <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="busy !== null || !issue.editable" @change="changeStatus(issue)">
         <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
@@ -125,20 +168,39 @@ function changeStatus(issue: Issue) {
     <p v-if="issueError[issue.id]" class="review-error" role="alert">{{ issueError[issue.id] }}</p>
   </article>
   <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
-    <div class="review-panel-head"><h2 id="review-summary-title">日报总结 · {{ day }}</h2><button class="mini-button" @click="dialog?.close()">关闭</button></div>
+    <header class="review-summary-head">
+      <div><h2 id="review-summary-title">日报总结</h2><time :datetime="day">{{ day }}</time></div>
+      <button class="mini-button" @click="dialog?.close()">关闭</button>
+    </header>
     <template v-if="data?.summary">
-      <p><strong>审查模型</strong> {{ data.summary.model }}　<strong>审查时长</strong> {{ duration }}</p>
-      <p>提交日期 {{ data.summary.commit_date }} · {{ data.summary.projects.length }} 个项目 · {{ contributors }} 位修改人 · {{ commitCount }} 个提交 · 完整审查 {{ reviewedCount }}/{{ commitCount }}</p>
-      <p>共 {{ data.issues.length }} 个问题 · {{ severityCounts.join(' · ') }}</p>
+      <dl class="review-summary-run">
+        <div><dt>审查模型</dt><dd><code>{{ data.summary.model }}</code></dd></div>
+        <div><dt>审查时长</dt><dd>{{ duration }}</dd></div>
+        <div><dt>提交日期</dt><dd>{{ data.summary.commit_date }}</dd></div>
+      </dl>
+      <dl class="review-summary-stats">
+        <div><dt>审查项目</dt><dd>{{ data.summary.projects.length }}</dd></div>
+        <div><dt>修改人</dt><dd>{{ contributors }}</dd></div>
+        <div><dt>完整审查 / 提交</dt><dd>{{ reviewedCount }} / {{ commitCount }}</dd></div>
+        <div><dt>问题总数</dt><dd>{{ data.issues.length }}</dd></div>
+      </dl>
+      <div class="review-tags review-summary-severities" aria-label="问题严重程度分布">
+        <span v-for="{ label, count } in severityCounts" :key="label" class="review-severity" :data-level="label">{{ label }} {{ count }}</span>
+      </div>
       <section v-for="project in data.summary.projects" :key="project.project_id" class="review-summary-project">
-        <h3>{{ project.alias }} · {{ project.commits.length }} 个提交</h3>
+        <header><h3>{{ project.alias }}</h3><span>{{ project.commits.length }} 个提交</span></header>
         <p v-if="project.error" class="review-error">{{ project.error }}</p>
-        <strong>正面评价</strong>
+        <h4>正面评价</h4>
         <ul v-if="project.positives.length"><li v-for="point in project.positives" :key="point">{{ point }}</li></ul>
         <p v-else>暂无可列出的正面评价</p>
         <details v-if="project.commits.length" :open="project.commits.some(commit => commit.status !== 'complete')">
           <summary>提交与审查覆盖</summary>
-          <ul><li v-for="commit in project.commits" :key="commit.sha"><code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author || '无名氏' }} · {{ commit.title }} · {{ statusLabel[commit.status] }}<template v-if="commit.reason"> · {{ commit.reason }}</template></li></ul>
+          <ul class="review-coverage">
+            <li v-for="commit in project.commits" :key="commit.sha">
+              <span class="status-tag" :class="{ completed: commit.status === 'complete', pending: commit.status === 'failed' }">{{ statusLabel[commit.status] }}</span>
+              <div><code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author || '无名氏' }} · {{ commit.title }}<p v-if="commit.reason">{{ commit.reason }}</p></div>
+            </li>
+          </ul>
         </details>
       </section>
     </template>
