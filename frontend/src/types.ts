@@ -1,8 +1,15 @@
 export interface User { id: number; username: string; display_name: string; role: 'admin' | 'user'; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
 export interface Category { id: number; name: string }
 export type TaskPriority = '高' | '中' | '低'
-export interface Task { id: number; meeting_task_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
+export interface Task { id: number; meeting_task_id?: number | null; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
 export interface WeekData { revision: number; tasks: Task[]; no_source?: boolean }
+export interface ReviewIssue {
+  id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
+  title: string; severity: string; category: string; dimension: string; sha: string; commit_message: string
+  path: string; start_line: number | null; end_line: number | null; existing_code: string
+  risk: string; suggestion: string; suggestion_code: string; status: string | null; notes: string
+  task_added: boolean; editable: boolean
+}
 export interface ReportTab { id: number; name: string; is_active: boolean; is_deleted?: boolean }
 export type TaskField = Pick<Task, 'category_name' | 'task_group' | 'description' | 'status' | 'priority' | 'work_days' | 'notes'>
 export interface MeetingAssignment { user_id: number; status: string | null; person?: MeetingPerson }

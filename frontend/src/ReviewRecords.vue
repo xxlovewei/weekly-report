@@ -1,20 +1,13 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from './api'
 import { taskStatuses } from './taskStatuses'
-import ReviewText from './ReviewText.vue'
+import ReviewIssueContent from './ReviewIssueContent.vue'
+import type { ReviewIssue as Issue } from './types'
 
-const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
 const props = defineProps<{ day: string; summaryRequest: number; refreshKey: number }>()
 const router = useRouter()
-interface Issue {
-  id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
-  title: string; severity: string; category: string; dimension: string; sha: string; commit_message: string
-  path: string; start_line: number | null; end_line: number | null; existing_code: string
-  risk: string; suggestion: string; suggestion_code: string; status: string | null; notes: string
-  task_added: boolean; editable: boolean
-}
 interface Commit { sha: string; author: string; title: string; branches: string[]; status: string; reason: string }
 interface Project { project_id: number; alias: string; commits: Commit[]; positives: string[]; error: string }
 interface ReviewDay {
@@ -206,42 +199,16 @@ function toggleSeverity(level: string) {
   <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
   <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
   <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-    <header class="review-issue-head">
-      <div class="review-issue-title">
-        <div class="review-tags">
-          <span class="review-number">ISSUE-{{ String(issue.id).padStart(2, '0') }}</span>
-          <span class="review-severity" :data-level="issue.severity">{{ issue.severity }}</span>
-          <span class="review-project-name">{{ data?.projects[issue.project_id] }}</span>
+    <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]">
+      <template #controls>
+        <div class="review-issue-controls">
+          <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
+            <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
+          </select></label>
+          <button class="secondary-button" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
         </div>
-        <h2><ReviewText :text="issue.title" /></h2>
-      </div>
-      <div class="review-issue-controls">
-        <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
-          <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
-        </select></label>
-        <button class="secondary-button" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
-      </div>
-    </header>
-    <dl class="review-metadata">
-      <div><dt>修改人</dt><dd>{{ issue.author_name }}</dd></div>
-      <div v-if="issue.category"><dt>问题类型</dt><dd>{{ issue.category }}</dd></div>
-      <div v-if="issue.dimension"><dt>审查维度</dt><dd>{{ issue.dimension }}</dd></div>
-      <div class="review-meta-wide"><dt>提交</dt><dd class="preline"><code>{{ issue.sha }}</code> {{ issue.commit_message }}</dd></div>
-      <div v-if="issue.path" class="review-meta-wide"><dt>涉及文件</dt><dd><code>{{ issue.path }}</code><template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></dd></div>
-    </dl>
-    <section class="review-detail">
-      <h3>风险说明</h3>
-      <p class="preline"><ReviewText :text="issue.risk" /></p>
-    </section>
-    <section v-if="issue.existing_code" class="review-detail">
-      <h3>相关代码</h3>
-      <ReviewCode :source="issue.existing_code" :path="issue.path" />
-    </section>
-    <section v-if="issue.suggestion || issue.suggestion_code" class="review-detail">
-      <h3>修改建议</h3>
-      <p v-if="issue.suggestion" class="preline"><ReviewText :text="issue.suggestion" /></p>
-      <ReviewCode v-if="issue.suggestion_code" :source="issue.suggestion_code" :path="issue.path" />
-    </section>
+      </template>
+    </ReviewIssueContent>
     <div class="review-issue-notes">
       <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
       <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>

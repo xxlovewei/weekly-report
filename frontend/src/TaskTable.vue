@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { taskStatuses as statuses, progressStyle } from './taskStatuses'
 import TaskDescription from './TaskDescription.vue'
 import TaskActions from './TaskActions.vue'
+import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import type { Category, Task, TaskField } from './types'
 const props = defineProps<{ tasks: Task[]; categories?: Category[]; readonly?: boolean; busy?: boolean; targetTask?: number | null }>()
 const emit = defineEmits<{ edit: [id: number, patch: Partial<TaskField>]; duplicate: [id: number]; remove: [id: number]; reorder: [ids: number[]]; transfer: [id: number, userId: number] }>()
@@ -10,6 +11,7 @@ const actions = ref<InstanceType<typeof TaskActions> | null>(null)
 const draggedId = ref<number | null>(null)
 const dropTarget = ref<{ id: number; after: boolean } | null>(null)
 const selectedId = ref<number | null>(null)
+const openedIssue = ref<number | null>(null)
 let keyboardHandle: HTMLButtonElement | null = null
 watch(() => props.busy, busy => {
   if (!busy && keyboardHandle) { keyboardHandle.focus(); keyboardHandle = null }
@@ -80,6 +82,10 @@ function openActions(event: MouseEvent | KeyboardEvent, id: number) {
       <div class="task-leading" :class="{ 'priority-high': task.priority === '高', 'priority-medium': task.priority === '中' }">
         <button v-if="!readonly" type="button" class="task-drag-handle" :disabled="busy" :draggable="!busy" :aria-pressed="selectedId === task.id" :aria-label="`${selectedId === task.id ? '取消选中' : '选中'}任务 ${task.position}，使用上下方向键调整顺序`" title="点击选中或取消选中；选中后按上下方向键调整顺序，也可拖动" @click="toggleSelection(task.id)" @dragstart="startDrag($event, task)" @dragend="resetDrag" @keydown="moveWithKeyboard($event, task.id)"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v14M2 9h14M6 5l3-3 3 3M6 13l3 3 3-3M5 6 2 9l3 3M13 6l3 3-3 3" /></svg></button>
         <span class="task-index" :aria-label="task.priority ? `任务 ${task.position}，优先级${task.priority}` : undefined">{{ String(task.position).padStart(2, '0') }}</span>
+        <button v-if="!readonly && task.review_issue_id" class="task-review-info" type="button" aria-haspopup="dialog"
+          title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = task.review_issue_id">
+          <span aria-hidden="true">i</span>
+        </button>
         <span v-if="task.transferred_by" class="task-transfer-mark" role="img" :aria-label="`由${task.transferred_by}转交的任务`" :title="`由${task.transferred_by}转交的任务`">💡</span>
       </div>
       <div class="task-fields">
@@ -94,4 +100,5 @@ function openActions(event: MouseEvent | KeyboardEvent, id: number) {
     </article>
   </div>
   <TaskActions v-if="!readonly" ref="actions" :tasks="tasks" :busy="busy" @move="reorder" @priority="(id, priority) => emit('edit', id, { priority })" @transfer="(id, userId) => emit('transfer', id, userId)" />
+  <ReviewIssueDialog v-if="openedIssue !== null" :issue-id="openedIssue" @close="openedIssue = null" />
 </template>
