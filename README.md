@@ -76,6 +76,8 @@ hermes cron create "30 8 * * *" --name daily-open-code-review-zhoubao --script z
 
 脚本使用上海时区前一自然日的提交时间，按项目和 SHA 去重。待写入的日报暂存在本机 `REVIEW_WORK_DIR`（默认用户目录的 `zhoubao-review`），失败后下次优先重投。需要重新审查时，可为脚本传入 `--report-date YYYY-MM-DD --rebuild`。正面评价依据实际增加或更新的测试文件和项目文档生成，审查覆盖异常会列在日报内。
 
+若同时保留旧 HTML 日报，采集和漏审检查分别使用同目录的 `zhoubao_legacy_review_scope.py fetch` 和 `zhoubao_legacy_review_scope.py check-missed`。两者都通过周报任务接口读取启用的项目及各项目的分支过滤设置。调用时可沿用 `REVIEW_SYSTEM_URL` 和 `REVIEW_WORKER_TOKEN`，或用 `--system-url` 和 `--config` 指定部署地址及包含任务令牌的本地文件。
+
 登录、修改密码、新建用户及重置密码的请求体均采用加密凭据：客户端从 `/api/auth/public-key` 获取当前进程的 RSA 公钥，以随机 AES-256-GCM 密钥加密整个 JSON 表单（请求路径作为认证附加数据），再以 RSA-OAEP/SHA-256 加密 AES 密钥。接口只接受 `key`、`iv`、`data` 三个 Base64 字段，不接受明文密码字段；数据库仍使用 Argon2 哈希存储密码。服务重启后公钥会更新，客户端每次提交都会重新获取。
 
 **对外部署必须通过 HTTPS 提供网页和 API**，在 TLS 入口终止 HTTPS，并将流量转发到容器内的 Nginx。浏览器加密不能保护通过 HTTP 下发的网页免遭篡改。`compose.server.yaml` 已启用 `COOKIE_SECURE=true`，因此正式站点必须使用 HTTPS；本机 `127.0.0.1` 开发环境可继续使用 HTTP。
