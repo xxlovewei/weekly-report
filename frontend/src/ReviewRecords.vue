@@ -6,7 +6,7 @@ import { taskStatuses } from './taskStatuses'
 import ReviewText from './ReviewText.vue'
 
 const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
-const props = defineProps<{ day: string; summaryRequest: number }>()
+const props = defineProps<{ day: string; summaryRequest: number; refreshKey: number }>()
 const router = useRouter()
 interface Issue {
   id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
@@ -46,7 +46,7 @@ const duration = computed(() => {
 })
 const statusLabel: Record<string, string> = { complete: '已审查', partial: '部分完成', failed: '失败', skipped: '跳过' }
 let serial = 0
-watch(() => props.day, async day => {
+watch(() => [props.day, props.refreshKey] as const, async ([day]) => {
   const current = ++serial
   loading.value = true; error.value = ''; issueError.value = {}; data.value = null
   try {

@@ -3,7 +3,7 @@ import { taskStatuses, progressStyle } from './taskStatuses'
 import { version } from '../package.json'
 const brandLogo = `${import.meta.env.BASE_URL}logo.png`
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router'
 import MonthCalendar from './MonthCalendar.vue'
 import MeetingEditor from './MeetingEditor.vue'
 import ReleaseNotes from './ReleaseNotes.vue'
@@ -14,7 +14,8 @@ import TaskTable from './TaskTable.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
-import type { Category, Meeting, MeetingPage, ReportTab, Task, TaskField, User, WeekData } from './types'
+import { subscribeToMessages } from './notificationStream'
+import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, WeekData } from './types'
 
 const route = useRoute(), router = useRouter()
 const user = ref<User | null>(null), ready = ref(false), mobileOpen = ref(false)
@@ -37,6 +38,8 @@ const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
+const messagesRefresh = ref(0), reviewRefresh = ref(0)
+let unreadVersion = 0
 const reviewRecords = ref<InstanceType<typeof ReviewRecords> | null>(null)
 const reviewDay = computed(() => validDay(route.query.date) || reviewToday.value)
 const targetTask = computed(() => typeof route.query.task === 'string' && /^[1-9]\d*$/.test(route.query.task) ? Number(route.query.task) : null)
@@ -51,20 +54,37 @@ function selectReviewDay(value: string) {
 }
 async function refreshUnread() {
   const account = user.value?.id
+  const version = ++unreadVersion
   if (!account || user.value?.must_change_password) { unreadMessages.value = 0; return }
   try {
     const { count } = await api<{ count: number }>('/notifications/unread')
-    if (user.value?.id === account) unreadMessages.value = count
+    if (user.value?.id === account && version === unreadVersion) unreadMessages.value = count
   } catch { /* 消息数刷新失败时保留上一次的值。 */ }
 }
-async function jumpToMessage(item: { id: number; is_read: boolean; target?: { date?: string; week?: string; task?: number } }) {
+async function jumpToMessage(item: LiveMessage) {
+  const account = user.value?.id
+  if (!account) return
   const target = item.target
-  if (!target?.date && !target?.week) return
-  const destination = target.date
-    ? { name: 'review-records', query: { date: target.date } }
-    : { name: 'work', query: { week: target.week, task: target.task } }
-  const failure = await router.push(destination)
-  if (failure || item.is_read) return
+  const destination = item.kind === '代码审查'
+    ? { name: 'review-records', query: { date: target?.date || todayShanghai() } }
+    : { name: 'work', query: { week: target?.week || mondayOf(todayShanghai()), task: target?.task } }
+  try {
+    if (page.value === 'work' && hasPending()) {
+      if (structuralPromise) await structuralPromise
+      await flushPending()
+    }
+    const sameReviewDay = page.value === 'review-records' && reviewDay.value === destination.query.date
+    if (sameReviewDay && reviewRecords.value && !await reviewRecords.value.flushReview()) return
+    const failure = await router.push(destination)
+    const sameLocation = isNavigationFailure(failure, NavigationFailureType.duplicated)
+    if (failure && !sameLocation) return
+    if (sameReviewDay) reviewRefresh.value++
+    if (sameLocation && destination.name === 'work') await loadPage()
+  } catch (error) {
+    showError(error)
+    return
+  }
+  if (item.is_read || user.value?.id !== account) return
   // 跳转后消息组件会卸载，已读请求和徽标刷新由应用继续处理。
   try {
     await api(`/notifications/${item.id}`, 'PATCH', { is_read: true })
@@ -502,7 +522,7 @@ async function resetPassword(id: number) {
 }
 
 const removeRouteGuard = router.beforeEach(async (to, from) => {
-  if (!ready.value || !user.value || to.path === from.path) return
+  if (!ready.value || !user.value || to.fullPath === from.fullPath) return
   if (to.name === 'login' && !signingOut) return user.value.must_change_password ? '/password' : '/work'
   if (user.value.must_change_password && to.name !== 'password' && !signingOut) return '/password'
   if (adminPages.includes(String(to.name)) && user.value.role !== 'admin') return '/work'
@@ -525,12 +545,17 @@ onMounted(async () => {
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
 watch(() => [route.name, route.query.week, route.query.task], () => { if (ready.value && user.value) void loadPage() })
-watch(() => [user.value?.id, user.value?.must_change_password, page.value], (_, __, onCleanup) => {
+watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
+  unreadMessages.value = 0
   void refreshUnread()
-  if (user.value && !user.value.must_change_password) {
-    const poll = window.setInterval(refreshUnread, 30000)
-    onCleanup(() => window.clearInterval(poll))
-  }
+  if (!account) return
+  const stop = subscribeToMessages(account, count => {
+    if (user.value?.id !== account) return
+    unreadVersion++
+    unreadMessages.value = count
+    messagesRefresh.value++
+  }, jumpToMessage)
+  onCleanup(stop)
 })
 </script>
 
@@ -579,8 +604,8 @@ watch(() => [user.value?.id, user.value?.must_change_password, page.value], (_, 
       <div class="work-area"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && user.role === 'admin'" :key="user.id" :account-id="user.id" />
-      <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" />
-      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" :jump-to-message="jumpToMessage" @change="refreshUnread" />
+      <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
+      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
       <div v-else-if="page === 'work'">
         <div class="section-head">
           <strong>任务清单 <span>{{ week.tasks.length }}</span></strong>
