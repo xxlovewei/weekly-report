@@ -10,8 +10,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -24,6 +26,13 @@ CATEGORIES = {
     "testability": ("测试", "可测试性"), "maintainability": ("可维护性", "代码质量"),
     "style": ("代码风格", "代码质量"), "bug": ("缺陷", "代码质量"),
 }
+REVIEW_BACKGROUND = """这是中文代码审查日报。每条审查意见的 content 必须用简体中文，依次包含三个独立段落：
+问题描述：用一句话概括具体缺陷。
+风险说明：说明触发条件和影响。
+修改建议：说明改哪个位置、怎么改、为什么，并用中文说明建议代码的作用。
+标识符、文件路径和代码保持原文。示例代码仅放在 suggestion_code，修改建议的中文说明仍须填写。
+"""
+REVIEW_FIELDS = re.compile(r"(?m)^\s*(?:#{1,6}\s*)?\*{0,2}(问题描述|风险说明|修改建议)\*{0,2}[：:]\s*\*{0,2}\s*")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -124,14 +133,34 @@ def positive_signals(repo, sha, author, env):
             for label, count in counts.items()]
 
 
+@contextmanager
+def review_environment(env):
+    # OCR 的语言设置随配置文件生效，任务使用临时副本以免影响其他 OCR 调用。
+    with tempfile.TemporaryDirectory(prefix="zhoubao-ocr-") as folder:
+        target = Path(folder) / ".opencodereview"
+        target.mkdir()
+        source = Path.home() / ".opencodereview"
+        config = source / "config.json"
+        settings = json.loads(config.read_text(encoding="utf-8-sig")) if config.is_file() else {}
+        settings["language"] = "简体中文"
+        (target / "config.json").write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
+        if (source / "rule.json").is_file():
+            shutil.copyfile(source / "rule.json", target / "rule.json")
+        background = Path(folder) / "review-context.md"
+        background.write_text(REVIEW_BACKGROUND, encoding="utf-8")
+        home_key = "USERPROFILE" if os.name == "nt" else "HOME"
+        yield {**env, home_key: folder, "OCR_NO_UPDATE": "1"}, background
+
+
 def finding(project_id, day, commit, comment, occurrence):
     content = (comment.get("content") or "").strip()
-    risk = content or "OCR 未返回风险说明"
-    title = re.split(r"[。！？\n]|(?<=[.!?])\s", risk, maxsplit=1)[0].strip(" #*")
+    parts = REVIEW_FIELDS.split(content)
+    fields = {key: value.strip() for key, value in zip(parts[1::2], parts[2::2])}
+    risk = fields.get("风险说明") or (parts[0].strip() if len(parts) > 1 else content) or fields.get("问题描述") or "OCR 未返回风险说明"
+    title = fields.get("问题描述") or re.split(r"[。！？\n]|(?<=[.!?])\s", risk, maxsplit=1)[0].strip(" #*")
     category = comment.get("category") or ""
     category_label, dimension = CATEGORIES.get(category, (category, "代码质量"))
-    suggestion_match = re.search(r"(?:修改建议[：:]|建议[：:]|\b(?:suggestion|recommendation|fix):\s*)(.+)", content, re.IGNORECASE | re.DOTALL)
-    suggestion = suggestion_match.group(1).strip() if suggestion_match else ""
+    suggestion = fields.get("修改建议", "")
     path = comment.get("path") or ""
     anchor = (path, comment.get("start_line"), comment.get("end_line"), category)
     occurrence[anchor] += 1
@@ -147,20 +176,21 @@ def finding(project_id, day, commit, comment, occurrence):
     }
 
 
-def review_commit(ocr, repo, sha, output, env, timeout):
+def review_commit(ocr, repo, sha, output, env, review_env, background, timeout):
     output.unlink(missing_ok=True)
     process(["git", "checkout", "--quiet", "--detach", "--force", sha], repo, env, min(90, timeout))
     try:
         process([ocr, "review", "--repo", str(repo), "--commit", sha, "--format", "json", "--audience", "agent",
+                 "--background-file", str(background),
                  "--effort", "low", "--max-tokens", "40000", "--timeout", "6", "--output", str(output)],
-                repo, env, timeout)
+                repo, review_env, timeout)
     except subprocess.CalledProcessError:
         if not output.is_file():
             raise
     return json.loads(output.read_text(encoding="utf-8-sig"))
 
 
-def collect(projects, day, report_day, cache, base, token, ocr, env, known):
+def collect(projects, day, report_day, cache, base, token, ocr, env, known, review_env, background):
     started = time.monotonic()
     deadline = started + int(os.environ.get("REVIEW_BUDGET_SECONDS", "2700"))
     summaries, issues, models = [], [], set()
@@ -195,7 +225,7 @@ def collect(projects, day, report_day, cache, base, token, ocr, env, known):
                 if remaining < 30:
                     commit.update(status="skipped", reason="超过日报审查时长预算")
                     continue
-                raw = review_commit(ocr, repo, sha, cache / "ocr-result.json", env, min(remaining, 450))
+                raw = review_commit(ocr, repo, sha, cache / "ocr-result.json", env, review_env, background, min(remaining, 450))
                 model = (raw.get("llm") or {}).get("model")
                 if model:
                     models.add(model)
@@ -258,7 +288,9 @@ def main():
     env = {k: v for k, v in os.environ.items() if not k.startswith(("REVIEW_", "GIT_CONFIG_"))}
     env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
     known = {name.lower(): name for name in config["usernames"]}
-    report = collect(projects, args.report_date - timedelta(days=1), args.report_date, cache, gitlab, token, ocr, env, known)
+    with review_environment(env) as (review_env, background):
+        report = collect(projects, args.report_date - timedelta(days=1), args.report_date, cache, gitlab, token, ocr,
+                         env, known, review_env, background)
     pending = cache / f"{args.report_date}.pending.json"
     temp = pending.with_suffix(".tmp")
     temp.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
