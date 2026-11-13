@@ -111,11 +111,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-panel h2, .review-dialog h2 { margin: 0 0 12px; font-size: 1.12rem; }
 .review-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .review-panel-head h2 { margin: 0; }
-.review-form, .review-issue-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-.review-form label, .review-transfer label, .review-issue-actions label { display: grid; gap: 5px; }
+.review-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.review-form label, .review-transfer label { display: grid; gap: 5px; }
 .review-form label { flex: 1 1 150px; }
 .review-form label:first-child { flex-grow: 2; }
-.review-form input, .review-form select, .review-transfer input, .review-transfer select, .review-issue-actions textarea { width: 100%; }
+.review-form input, .review-form select, .review-transfer input, .review-transfer select { width: 100%; }
 .review-transfer { margin-top: 18px; display: grid; gap: 12px; justify-items: start; }
 .review-transfer-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; width: 100%; }
 .review-transfer-actions { display: grid; gap: 8px; align-content: center; }
@@ -134,12 +134,13 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-filter-top, .review-filter-group, .review-filter-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .review-filter-top { gap: 12px 24px; }
 .review-filter-group, .review-filter-projects { font-size: 13px; font-weight: 900; }
-.review-filter-group select { width: auto; min-width: 88px; padding: 5px 7px; font-size: 12px; }
 .review-filter-projects { border-top: 2px solid #000; padding-top: 12px; }
 .review-filter-projects .review-tags { flex: 1 1 240px; min-width: 0; }
 .review-issue { gap: 16px; max-width: none; overflow-wrap: anywhere; }
 .review-issue-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.review-issue-head > div { flex: 1 1 320px; min-width: 0; }
+.review-issue-title { flex: 1 1 300px; min-width: 0; }
+.review-issue-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-left: auto; }
+.review-issue-controls select { min-width: 90px; }
 .review-issue h2 { margin: 10px 0 0; font-size: 1.25rem; line-height: 1.4; }
 .review-project-name { font-size: 12px; font-weight: 700; }
 .review-number, .review-severity { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
@@ -165,8 +166,8 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-code pre { overflow: auto; max-height: 350px; margin: 0; padding: 10px; font-size: 13px; line-height: 1.55; }
 .review-code pre:focus-visible { outline: 3px solid #ff006e; outline-offset: -3px; }
 .review-code pre code.hljs { display: inline; padding: 0; background: transparent; }
-.review-issue-actions { border-top: 2px solid #000; padding-top: 12px; }
-.review-issue-actions label:nth-child(2) { flex: 1 1 210px; }
+.review-issue-notes { display: grid; gap: 5px; border-top: 2px solid #000; padding-top: 12px; }
+.review-issue-notes small:empty { display: none; }
 .summary-dialog { width: min(820px, calc(100% - 40px)); border: 4px solid #000; border-radius: 0; box-shadow: 8px 8px 0 #ff006e; overflow-wrap: anywhere; }
 .review-summary-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid #000; }
 .review-summary-head h2 { margin: 0 0 4px; font-size: 24px; }

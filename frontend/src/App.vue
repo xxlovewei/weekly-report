@@ -37,6 +37,7 @@ const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
+const reviewRecords = ref<InstanceType<typeof ReviewRecords> | null>(null)
 const reviewDay = computed(() => validDay(route.query.date) || reviewToday.value)
 const targetTask = computed(() => typeof route.query.task === 'string' && /^[1-9]\d*$/.test(route.query.task) ? Number(route.query.task) : null)
 function validDay(value: unknown) {
@@ -443,7 +444,7 @@ async function login(event: Event) {
   } catch (error) { showError(error) }
 }
 async function logout() {
-  try { if (structuralPromise) await structuralPromise; await flushPending(); await api('/auth/logout', 'POST'); signingOut = true; await router.replace('/login'); user.value = null; setCsrf('') } catch (error) { showError(error) } finally { signingOut = false }
+  try { if (structuralPromise) await structuralPromise; await flushPending(); if (reviewRecords.value && !await reviewRecords.value.flushReview()) return; await api('/auth/logout', 'POST'); signingOut = true; await router.replace('/login'); user.value = null; setCsrf('') } catch (error) { showError(error) } finally { signingOut = false }
 }
 async function showLoginAfterRevocation() {
   signingOut = true
@@ -559,7 +560,7 @@ watch(() => [user.value?.id, user.value?.must_change_password, page.value], (_, 
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
       <div class="work-area"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <ReviewConfig v-if="page === 'review-config' && user.role === 'admin'" :key="user.id" :account-id="user.id" />
-      <ReviewRecords v-else-if="page === 'review-records'" :day="reviewDay" :summary-request="summaryRequest" />
+      <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" />
       <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" @change="refreshUnread" />
       <div v-else-if="page === 'work'">
         <div class="section-head">
