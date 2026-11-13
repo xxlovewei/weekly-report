@@ -127,32 +127,73 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-checkbox input { width: auto; }
 .review-dialog { width: min(500px, calc(100% - 32px)); max-height: 85vh; border: 1px solid #cbd8e2; border-radius: 14px; padding: 20px; color: inherit; }
 .review-dialog::backdrop { background: rgb(14 28 43 / 55%); }
-.summary-dialog { width: min(820px, calc(100% - 32px)); overflow-wrap: anywhere; }
-.review-summary-project { border-top: 1px solid #dce5ec; margin-top: 14px; padding-top: 6px; }
-.review-filter-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px; align-items: baseline; }
-.review-filter-row + .review-filter-row { margin-top: 12px; }
 .review-tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.review-tags .mini-button[aria-pressed="true"] { background: #dceefb; border-color: #85b9e2; color: #17496f; }
-.project-tag { max-width: 100%; overflow-wrap: anywhere; }
-.review-issue { overflow-wrap: anywhere; }
-.review-issue h2 { margin-top: 12px; }
-.review-issue h3 { font-size: 0.95rem; margin: 14px 0 4px; }
-.review-issue p { margin: 4px 0 12px; }
-.review-number, .review-severity, .unread-count { display: inline-block; border-radius: 999px; padding: 3px 9px; background: #e9f2f8; color: #19486b; font-size: 0.83rem; }
-.review-severity { background: #fff0d8; color: #6c440a; }
-.review-severity.critical, .unread-count { background: #ffe7e8; color: #9a2833; }
-.unread-count { margin-left: 6px; }
+.review-tags .mini-button[aria-pressed="true"] { background: #ccff00; }
+.project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.review-filters { gap: 14px; max-width: none; }
+.review-filter-top, .review-filter-group, .review-filter-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.review-filter-top { gap: 12px 24px; }
+.review-filter-group, .review-filter-projects { font-size: 13px; font-weight: 900; }
+.review-filter-group select { width: auto; min-width: 88px; padding: 5px 7px; font-size: 12px; }
+.review-filter-projects { border-top: 2px solid #000; padding-top: 12px; }
+.review-filter-projects .review-tags { flex: 1 1 240px; min-width: 0; }
+.review-issue { gap: 16px; max-width: none; overflow-wrap: anywhere; }
+.review-issue-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.review-issue-head > div { flex: 1 1 320px; min-width: 0; }
+.review-issue h2 { margin: 10px 0 0; font-size: 1.25rem; line-height: 1.4; }
+.review-project-name { font-size: 12px; font-weight: 700; }
+.review-number, .review-severity { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
+.review-number { background: #00d9ff; }
+.review-severity { background: #f1f1f1; }
+.review-severity[data-level="严重"], .review-severity[data-level="高危"] { background: #ff8585; }
+.review-severity[data-level="中危"] { background: #ff9500; }
+.review-severity[data-level="低危"] { background: #ffff00; }
+.unread-count { display: inline-block; border-radius: 999px; padding: 3px 9px; background: #ffe7e8; color: #9a2833; font-size: 0.83rem; margin-left: 6px; }
 .unread-label, .review-error { color: #a12232; }
-.review-metadata { display: grid; gap: 5px; }
-.review-metadata > div { display: grid; grid-template-columns: 75px minmax(0, 1fr); gap: 8px; }
-.review-metadata dd { margin: 0; }
-.review-issue pre { padding: 10px; background: #f2f6f8; border-radius: 7px; overflow: auto; max-height: 350px; }
-.review-issue-actions { margin-top: 16px; }
+.review-metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; margin: 0; padding: 12px; border: 1px solid #000; background: #f7f7f7; }
+.review-meta-wide { grid-column: 1 / -1; }
+.review-metadata dt, .review-summary-run dt, .review-summary-stats dt { font-size: 12px; font-weight: 900; }
+.review-metadata dd, .review-summary-run dd, .review-summary-stats dd { margin: 4px 0 0; }
+.review-metadata dd { font-size: 13px; }
+.review-detail { min-width: 0; }
+.review-detail h3 { margin: 0 0 6px; font-size: 15px; }
+.review-detail p { font-size: 14px; line-height: 1.65; }
+.review-detail p + .review-code { margin-top: 10px; }
+.review-issue :not(pre) > code, .summary-dialog code { font-size: .92em; background: #f1f1f1; padding: 1px 3px; box-decoration-break: clone; }
+.review-code { border: 1px solid #000; min-width: 0; }
+.review-code-language { background: #f1f1f1; border-bottom: 1px solid #000; padding: 5px 10px; font-size: 11px; font-weight: 900; }
+.review-code pre { overflow: auto; max-height: 350px; margin: 0; padding: 10px; font-size: 13px; line-height: 1.55; }
+.review-code pre:focus-visible { outline: 3px solid #ff006e; outline-offset: -3px; }
+.review-code pre code.hljs { display: inline; padding: 0; background: transparent; }
+.review-issue-actions { border-top: 2px solid #000; padding-top: 12px; }
 .review-issue-actions label:nth-child(2) { flex: 1 1 210px; }
+.summary-dialog { width: min(820px, calc(100% - 40px)); border: 4px solid #000; border-radius: 0; box-shadow: 8px 8px 0 #ff006e; overflow-wrap: anywhere; }
+.review-summary-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid #000; }
+.review-summary-head h2 { margin: 0 0 4px; font-size: 24px; }
+.review-summary-head time, .summary-dialog > p { font-size: 13px; }
+.summary-dialog > p { margin: 14px 0 0; }
+.review-summary-run, .review-summary-stats { display: grid; gap: 8px; margin: 14px 0; font-size: 14px; }
+.review-summary-run { grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr)); }
+.review-summary-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.review-summary-run > div, .review-summary-stats > div { border: 1px solid #000; padding: 8px; }
+.review-summary-stats > div { background: #ccff00; }
+.review-summary-stats dd { font-size: 20px; font-weight: 900; }
+.review-summary-project { border-top: 2px solid #000; margin-top: 16px; padding-top: 12px; font-size: 13px; line-height: 1.55; }
+.review-summary-project header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.review-summary-project header span { padding: 2px 6px; border: 1px solid #000; background: #00d9ff; font-weight: 900; }
+.review-summary-project h3, .review-summary-project h4 { margin: 0; }
+.review-summary-project h4 { margin-top: 8px; }
+.review-summary-project p, .review-summary-project ul { margin: 4px 0 8px; }
+.review-summary-project summary { cursor: pointer; font-weight: 900; }
+.review-coverage { list-style: none; padding: 0; }
+.review-coverage li { display: flex; flex-wrap: wrap; align-items: start; gap: 8px; padding: 8px 0; border-bottom: 1px dashed #999; }
+.review-coverage li > div { flex: 1 1 180px; min-width: 0; }
 .task-row.task-target { outline: 2px solid #2781b8; outline-offset: 2px; }
 .message-row strong { display: block; margin-top: 8px; }
 @media (max-width: 520px) {
-  .review-filter-row { grid-template-columns: 1fr; }
+  .review-summary-run, .review-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-summary-run > div:first-child { grid-column: 1 / -1; }
+  .review-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-transfer-grid { grid-template-columns: 1fr; }
   .review-transfer-actions { display: flex; }
 }
