@@ -245,7 +245,7 @@ function toggleSeverity(level: string) {
   </article>
   <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
     <header class="review-summary-head">
-      <div><h2 id="review-summary-title">日报总结</h2><time :datetime="day">{{ day }}</time></div>
+      <div><h2 id="review-summary-title">审查总结</h2><time :datetime="day">{{ day }}</time></div>
       <button class="mini-button" @click="dialog?.close()">关闭</button>
     </header>
     <template v-if="data?.summary">

@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 from .db import get_db
-from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Notification, ReviewIssue, Task, User, Week, ReleaseRecord, meeting_updaters
+from .models import Category, Idempotency, LoginSession, Meeting, MeetingTask, Notification, ReviewIssue, ReviewRun, Task, User, Week, ReleaseRecord, meeting_updaters
 from .credential_crypto import EncryptedCredentials, decrypt_credentials, public_key
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -609,10 +609,17 @@ def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db
     return week_json(db, row)
 
 @app.get("/api/calendar/marks")
-def calendar_marks(year: int, month: int, scope: Literal["work", "reports"], auth=Depends(active_session), db: Session = Depends(get_db)):
+def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "review-records"], auth=Depends(active_session), db: Session = Depends(get_db)):
     if year < 1900 or year > 2100 or month < 1 or month > 12:
         raise HTTPException(422, "月份无效")
     first = date(year, month, 1)
+    if scope == "review-records":
+        # 日报按生成日期标记，只返回当前月的日期。
+        next_month = (first + timedelta(days=32)).replace(day=1)
+        days = db.scalars(select(ReviewRun.report_date).where(
+            ReviewRun.report_date >= first, ReviewRun.report_date < next_month,
+        ).order_by(ReviewRun.report_date))
+        return [day.isoformat() for day in days]
     start = first - timedelta(days=first.weekday())
     end = start + timedelta(days=42)
     query = select(Week.start_date).join(Task).where(Week.start_date >= start, Week.start_date < end)
