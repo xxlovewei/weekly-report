@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { api } from './api'
 
-defineProps<{ admin: boolean }>()
+const props = defineProps<{ admin: boolean; jumpToMessage: (item: Message) => Promise<void> }>()
 const emit = defineEmits<{ change: [] }>()
-const router = useRouter()
 interface Message {
   id: number; title: string; kind: '转交任务' | '代码审查'; is_read: boolean; created_at: string
   recipient?: string; target?: { date?: string; week?: string; task?: number }
@@ -41,9 +39,11 @@ async function mark(item: Message) {
   } catch (cause) { error.value = (cause as Error).message }
   finally { busy.value = null }
 }
-function jump(item: Message) {
-  if (item.target?.date) void router.push({ name: 'review-records', query: { date: item.target.date } })
-  else if (item.target?.week) void router.push({ name: 'work', query: { week: item.target.week, task: item.target.task } })
+async function jump(item: Message) {
+  busy.value = item.id; error.value = ''
+  try { await props.jumpToMessage(item) }
+  catch (cause) { error.value = (cause as Error).message }
+  finally { busy.value = null }
 }
 </script>
 
@@ -63,7 +63,7 @@ function jump(item: Message) {
         <div class="review-tags"><span>{{ item.kind }}</span><span :class="{ 'unread-label': !item.is_read }">{{ item.is_read ? '已读' : '未读' }}</span><span v-if="allUsers">接收人 {{ item.recipient }}</span><time :datetime="item.created_at">{{ timestamp.format(new Date(item.created_at)) }}</time></div>
         <strong>{{ item.title }}</strong>
       </div>
-      <div v-if="!allUsers" class="top-actions"><button v-if="item.target" class="mini-button" @click="jump(item)">跳转</button><button class="mini-button" :disabled="busy !== null" @click="mark(item)">{{ item.is_read ? '标为未读' : '标为已读' }}</button></div>
+      <div v-if="!allUsers" class="top-actions"><button v-if="item.target" class="mini-button" :disabled="busy !== null" @click="jump(item)">跳转</button><button class="mini-button" :disabled="busy !== null" @click="mark(item)">{{ item.is_read ? '标为未读' : '标为已读' }}</button></div>
     </article>
     <div class="meeting-pagination"><span>共 {{ total }} 条 · 第 {{ page }} 页</span><button class="mini-button" :disabled="page === 1" @click="page--">上一页</button><button class="mini-button" :disabled="page * 20 >= total" @click="page++">下一页</button></div>
   </template>
