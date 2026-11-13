@@ -251,10 +251,15 @@ def ingest_report(data: DailyReport, db: Session = Depends(get_db)):
     db.flush()
     for issue in data.issues:
         details = issue.model_dump(exclude={"project_id", "fingerprint", "author", "title", "severity"})
-        db.execute(insert(ReviewIssue).values(
+        statement = insert(ReviewIssue).values(
             report_date=run.report_date, project_id=issue.project_id, fingerprint=issue.fingerprint,
             author=issue.author, title=issue.title, severity=issue.severity, details=details,
-        ).on_conflict_do_nothing(index_elements=["fingerprint"]))
+        )
+        # 重跑可更新审查正文。严重程度保留，以免改变已有忽略状态的备注要求。
+        db.execute(statement.on_conflict_do_update(
+            index_elements=["fingerprint"], where=ReviewIssue.report_date == run.report_date,
+            set_={"title": statement.excluded.title, "details": statement.excluded.details},
+        ))
     authors = {name.lower() for name in db.scalars(select(ReviewIssue.author).where(ReviewIssue.report_date == run.report_date))}
     users = db.scalars(select(User).where(User.is_active.is_(True), User.is_deleted.is_(False))).all()
     known = {user.username.lower() for user in users}

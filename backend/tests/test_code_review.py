@@ -42,10 +42,12 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     task_path = f"{week}/tasks/{task['id']}"
     assert mutate(alice, "PATCH", task_path, weekly["revision"], {"status": "已完成"}).status_code == 409
     assert mutate(alice, "PATCH", task_path, weekly["revision"] + 1, {"status": "已完成"}).status_code == 200
+    data["issues"][0].update(title="检查缺少的空值判断", risk="缺少判空时会抛异常", suggestion="调用前先判断参数是否为空。")
     assert admin.post(f"{worker}/reports", json=data, headers=worker_headers).status_code == 200
     updated = alice.get(day).json()["issues"]
     assert len(updated) == 2 and updated[0]["id"] == mine["id"] and updated[0]["status"] == "已完成"
     assert updated[0]["notes"] == "误报" and updated[0]["task_added"]
+    assert updated[0]["title"] == "检查缺少的空值判断" and updated[0]["suggestion"] == "调用前先判断参数是否为空。"
     alice_messages = alice.get("/api/notifications").json()["items"]
     assert len(alice_messages) == 1 and alice_messages[0]["target"] == {"date": "2026-11-12"}
     assert admin.delete(f"{projects}/{project_id}").status_code == 200
