@@ -38,6 +38,8 @@ const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
+const showUnreadReminder = ref(false)
+const unreadReminderInterval = 5 * 60 * 1000
 const messagesRefresh = ref(0), reviewRefresh = ref(0)
 let unreadVersion = 0
 const reviewRecords = ref<InstanceType<typeof ReviewRecords> | null>(null)
@@ -58,8 +60,14 @@ async function refreshUnread() {
   if (!account || user.value?.must_change_password) { unreadMessages.value = 0; return }
   try {
     const { count } = await api<{ count: number }>('/notifications/unread')
-    if (user.value?.id === account && version === unreadVersion) unreadMessages.value = count
+    if (user.value?.id !== account || user.value.must_change_password) return
+    if (version === unreadVersion) unreadMessages.value = count
+    return unreadMessages.value
   } catch { /* 消息数刷新失败时保留上一次的值。 */ }
+}
+async function openUnreadReminder() {
+  await navigate('messages')
+  if (page.value === 'messages') showUnreadReminder.value = false
 }
 async function jumpToMessage(item: LiveMessage) {
   const account = user.value?.id
@@ -545,7 +553,9 @@ onMounted(async () => {
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
 watch(() => [route.name, route.query.week, route.query.task], () => { if (ready.value && user.value) void loadPage() })
+watch(unreadMessages, count => { if (!count) showUnreadReminder.value = false })
 watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
+  showUnreadReminder.value = false
   unreadMessages.value = 0
   void refreshUnread()
   if (!account) return
@@ -555,7 +565,22 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     unreadMessages.value = count
     messagesRefresh.value++
   }, jumpToMessage)
-  onCleanup(stop)
+  let active = true
+  let checking = false
+  // 每五分钟查询一次未读数，账号切换后丢弃上一次检查的结果。
+  const timer = window.setInterval(async () => {
+    if (checking) return
+    checking = true
+    try {
+      const count = await refreshUnread()
+      if (active && count !== undefined) showUnreadReminder.value = count > 0
+    } finally { checking = false }
+  }, unreadReminderInterval)
+  onCleanup(() => {
+    active = false
+    window.clearInterval(timer)
+    stop()
+  })
 })
 </script>
 
@@ -625,6 +650,17 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div v-if="reportExportOpen" class="modal-scrim" @click.self="reportExportOpen = false" @keydown.esc="reportExportOpen = false"><form class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="report-export-title" @submit.prevent="exportReports"><span class="eyebrow">周报汇总</span><h2 id="report-export-title">导出 Excel</h2><p>选择起止周，每位成员将单独生成一个工作表。</p><div class="export-weeks"><label>起始周<input ref="reportExportStartInput" v-model="reportExportStart" type="week" required /></label><label>结束周<input v-model="reportExportEnd" type="week" required /></label></div><p v-if="reportExportError" class="message error" role="alert">{{ reportExportError }}</p><div class="modal-actions"><button class="secondary-button" type="button" :disabled="reportExporting" @click="reportExportOpen = false">取消</button><button class="primary-button" type="submit" :disabled="reportExporting">{{ reportExporting ? '生成中…' : '确定并导出' }}</button></div></form></div>
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="modal.kind === 'delete' ? '确认删除任务' : '复制上周任务'"><span class="eyebrow">操作确认</span><h2>{{ modal.kind === 'delete' ? '删除这项任务？' : '本周已有任务' }}</h2><p>{{ modal.kind === 'delete' ? '删除后，该任务将从本周移除。' : '请选择覆盖本周任务，或将上周未完成任务追加到末尾。' }}</p><div class="modal-actions"><template v-if="modal.kind === 'delete'"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete((modal as { taskId: number }).taskId)">确认删除</button></template><template v-else><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="secondary-button" type="button" @click="carry('append')">新增</button><button class="primary-button" type="button" @click="carry('overwrite')">覆盖</button></template></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
+    <div class="unread-reminder-region" aria-live="polite" aria-atomic="true">
+      <Transition name="unread-reminder">
+        <div v-if="showUnreadReminder && unreadMessages > 0" class="unread-reminder">
+          <button class="unread-reminder-link" type="button" @click="openUnreadReminder">
+            <strong>你有 {{ unreadMessages }} 条未读消息</strong>
+            <span>前往消息中心 →</span>
+          </button>
+          <button class="unread-reminder-close" type="button" aria-label="关闭未读消息提醒" @click="showUnreadReminder = false">×</button>
+        </div>
+      </Transition>
+    </div>
   </div>
 </template>
 
