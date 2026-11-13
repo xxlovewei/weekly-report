@@ -322,6 +322,18 @@ def get_issue(db, issue_id):
     return row
 
 
+@router.get("/issues/{issue_id}")
+def review_issue_detail(issue_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
+    issue = get_issue(db, issue_id)
+    names = {username.lower(): name for username, name in db.execute(
+        select(User.username, User.display_name).where(func.lower(User.username) == issue.author.lower())
+    )}
+    project = db.get(ReviewProject, issue.project_id)
+    task = db.get(Task, issue.task_id) if issue.task_id else None
+    # 与审查记录使用同一份问题数据，读取接口不修改任务或问题。
+    return {**issue_json(issue, names, auth[0], task.week.user_id if task else None), "project_alias": project.alias}
+
+
 @router.patch("/issues/{issue_id}")
 def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db: Session = Depends(get_db)):
     lock_task_changes(db)
@@ -355,7 +367,7 @@ def create_issue_task(issue_id: int, auth=Depends(active_session), db: Session =
     week = week_row(db, auth[0].id, today - timedelta(days=today.weekday()), create=True)
     position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
     task = Task(week_id=week.id, position=position + 1, category_name="开发相关", task_group="修改代码审查问题",
-                description=issue.title, status=issue.status, work_days=[today.isoweekday()], notes="")
+                description=issue.title, status=issue.status, work_days=[], notes="")
     db.add(task)
     db.flush()
     issue.task_id, issue.task_added = task.id, True

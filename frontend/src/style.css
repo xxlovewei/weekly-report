@@ -209,6 +209,29 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-code pre code.hljs { display: inline; padding: 0; background: transparent; }
 .review-issue-notes { display: grid; gap: 5px; border-top: 2px solid #000; padding-top: 12px; }
 .review-issue-notes small:empty { display: none; }
+.task-review-info {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.task-review-info span {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #000;
+  border-radius: 50%;
+  background: #00d9ff;
+  font: 900 12px/16px Arial, sans-serif;
+}
+.task-review-info:hover span { background: #ffff00; }
+.linked-review-issue { display: grid; gap: 16px; padding-top: 14px; }
+.linked-review-status { margin: 0; font-size: 12px; }
+.linked-review-status dt { margin-bottom: 4px; font-weight: 900; }
+.linked-review-status dd { margin: 0; }
+.linked-review-issue .review-detail p { margin: 0; }
 .summary-dialog { width: min(820px, calc(100% - 40px)); border: 4px solid #000; border-radius: 0; box-shadow: 8px 8px 0 #ff006e; overflow-wrap: anywhere; }
 .review-summary-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid #000; }
 .review-summary-head h2 { margin: 0 0 4px; font-size: 24px; }

@@ -35,7 +35,7 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     weekly = alice.get(week).json()
     task, = weekly["tasks"]
     assert (task["category_name"], task["task_group"], task["description"]) == ("开发相关", "修改代码审查问题", "检查空值")
-    assert len(task["work_days"]) == 1
+    assert task["work_days"] == [] and task["review_issue_id"] == mine["id"]
     assert alice.patch(issue_path, json={"status": "忽略", "notes": "  "}).status_code == 422
     assert alice.patch(issue_path, json={"status": "忽略", "notes": "误报"}).status_code == 200
     assert alice.get(week).json()["tasks"][0]["status"] == "忽略"
@@ -49,6 +49,8 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     updated = alice.get(day).json()["issues"]
     assert len(updated) == 2 and updated[0]["id"] == mine["id"] and updated[0]["status"] == "已完成"
     assert updated[0]["notes"] == "追加备注" and updated[0]["task_added"]
+    detail = alice.get(issue_path).json()
+    assert detail == {**updated[0], "project_alias": project["alias"]}
     assert updated[0]["title"] == "检查缺少的空值判断" and updated[0]["suggestion"] == "调用前先判断参数是否为空。"
     alice_messages = alice.get("/api/notifications").json()["items"]
     assert len(alice_messages) == 1 and alice_messages[0]["target"] == {"date": "2026-11-12"}

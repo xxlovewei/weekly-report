@@ -195,8 +195,11 @@ def week_row(db: Session, user_id: int, start: date, create=False):
 def week_json(db: Session, row: Week | None):
     if not row:
         return {"revision": 0, "tasks": []}
-    tasks = db.scalars(select(Task).where(Task.week_id == row.id).order_by(Task.position, Task.id)).all()
-    return {"revision": row.revision, "tasks": [task_json(t) for t in tasks]}
+    tasks = db.execute(select(Task, ReviewIssue.id).outerjoin(ReviewIssue, ReviewIssue.task_id == Task.id)
+                       .where(Task.week_id == row.id).order_by(Task.position, Task.id))
+    return {"revision": row.revision, "tasks": [
+        {**task_json(task), "review_issue_id": issue_id} for task, issue_id in tasks
+    ]}
 
 def bump(db: Session, row: Week, expected: int):
     result = db.execute(update(Week).where(Week.id == row.id, Week.revision == expected).values(revision=Week.revision + 1))
