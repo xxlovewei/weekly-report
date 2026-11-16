@@ -170,6 +170,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-card-toggle:hover { background: #ffff00; }
 .review-card-toggle:focus-visible { outline-offset: -4px; }
 .review-card-head .status-tag { font-size: 12px; }
+.review-card-title { min-width: 0; font-size: 14px; font-weight: 400; }
 .review-card-status { display: flex; align-items: center; gap: 6px; }
 .review-card-status select { width: auto; min-width: 90px; padding: 4px 6px; }
 .review-issue-add { margin-left: auto; }
@@ -246,6 +247,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 }
 .review-metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; margin: 0; padding: 12px; border: 1px solid #000; background: #f7f7f7; }
 .review-meta-wide { grid-column: 1 / -1; }
+.review-metadata.review-metadata-row { grid-template-columns: 80px 80px repeat(2, minmax(0, 1fr)); column-gap: clamp(4px, 1vw, 14px); }
+.review-metadata-row > div { min-width: 0; overflow-wrap: anywhere; }
+.review-metadata-row .review-meta-wide { grid-column: auto; }
 .review-metadata dt, .review-summary-run dt, .review-summary-stats dt { font-size: 12px; font-weight: 900; }
 .review-metadata dd, .review-summary-run dd, .review-summary-stats dd { margin: 4px 0 0; }
 .review-metadata dd { font-size: 13px; }
