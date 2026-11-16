@@ -46,7 +46,7 @@ test('审查配置可切换常用，审查记录默认折叠非常用项目', as
   await filters.getByRole('button', { name: '展开全部' }).click()
   await expect(projectB).toBeVisible()
   await projectB.click()
-  await filters.getByRole('button', { name: '收起非常用' }).click()
+  await filters.getByRole('button', { name: '收起', exact: true }).click()
   await expect(projectB).toBeHidden()
   await filters.getByRole('button', { name: '展开全部' }).click()
   await expect(projectB).toHaveAttribute('aria-pressed', 'false')

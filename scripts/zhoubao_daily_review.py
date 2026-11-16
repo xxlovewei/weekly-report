@@ -26,13 +26,14 @@ CATEGORIES = {
     "testability": ("测试", "可测试性"), "maintainability": ("可维护性", "代码质量"),
     "style": ("代码风格", "代码质量"), "bug": ("缺陷", "代码质量"),
 }
-REVIEW_BACKGROUND = """这是中文代码审查日报。每条审查意见的 content 必须用简体中文，依次包含三个独立段落：
-问题描述：用一句话概括具体缺陷。
-风险说明：说明触发条件和影响。
+TITLE_MAX_LENGTH = 150
+REVIEW_BACKGROUND = f"""这是中文代码审查日报。每条审查意见的 content 必须用简体中文，依次包含三个独立段落：
+问题标题：用一句完整的话概括具体缺陷，建议 20–60 个字，含空格和标点最多 {TITLE_MAX_LENGTH} 个字符。标题里只写问题本身，不附带风险、修复步骤、代码或长路径，不以省略号结尾。
+风险说明：详细说明缺陷的触发条件和影响，必要时列出复现条件。
 修改建议：说明改哪个位置、怎么改、为什么，并用中文说明建议代码的作用。
 标识符、文件路径和代码保持原文。示例代码仅放在 suggestion_code，修改建议的中文说明仍须填写。
 """
-REVIEW_FIELDS = re.compile(r"(?m)^\s*(?:#{1,6}\s*)?\*{0,2}(问题描述|风险说明|修改建议)\*{0,2}[：:]\s*\*{0,2}\s*")
+REVIEW_FIELDS = re.compile(r"(?m)^[ \t]*(?:#{1,6}[ \t]*)?\*{0,2}(问题标题|问题描述|风险说明|修改建议)\*{0,2}[：:][ \t]*\*{0,2}[ \t]*")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -152,26 +153,45 @@ def review_environment(env):
         yield {**env, home_key: folder, "OCR_NO_UPDATE": "1"}, background
 
 
+def finding_title(summary, risk, category, path):
+    # 优先采用完整的首句；两段都没有合适的短句时，用文件及问题类型作简短标题。
+    for value in (summary, risk):
+        text = " ".join(value.split())
+        sentence = re.split(r"(?<=[。！？])|(?<=[.!?])\s+", text, maxsplit=1)[0].strip(" #*")
+        if 0 < len(sentence) <= TITLE_MAX_LENGTH and not sentence.endswith(("…", "...", "，", "、", "：", "；", ",", ":", ";")):
+            return sentence
+    label = CATEGORIES.get(category, ("代码", ""))[0]
+    name = path.rsplit("/", 1)[-1]
+    fallback = f"{name} 的{label}问题" if name else f"{label}审查问题"
+    return fallback if len(fallback) <= TITLE_MAX_LENGTH else f"{label}审查问题"
+
+
 def finding(project_id, day, commit, comment, occurrence):
     content = (comment.get("content") or "").strip()
     parts = REVIEW_FIELDS.split(content)
     fields = {key: value.strip() for key, value in zip(parts[1::2], parts[2::2])}
-    risk = fields.get("风险说明") or (parts[0].strip() if len(parts) > 1 else content) or fields.get("问题描述") or "OCR 未返回风险说明"
-    title = fields.get("问题描述") or re.split(r"[。！？\n]|(?<=[.!?])\s", risk, maxsplit=1)[0].strip(" #*")
+    description = fields.get("问题描述", "")
+    summary = fields.get("问题标题") or description
+    risk = fields.get("风险说明") or parts[0].strip() or description or summary
     category = comment.get("category") or ""
     category_label, dimension = CATEGORIES.get(category, (category, "代码质量"))
     suggestion = fields.get("修改建议", "")
     path = comment.get("path") or ""
+    title = finding_title(summary, risk, category, path)
+    # 兼容旧格式的长描述，避免缩短标题时丢掉正文。
+    long_description = description or summary
+    if len(long_description) > TITLE_MAX_LENGTH and long_description not in risk:
+        risk = f"{risk}\n\n{long_description}"
     anchor = (path, comment.get("start_line"), comment.get("end_line"), category)
     occurrence[anchor] += 1
     key = json.dumps([str(day), project_id, commit["sha"], anchor, occurrence[anchor]], ensure_ascii=False)
     return {
         "project_id": project_id, "fingerprint": hashlib.sha256(key.encode()).hexdigest(),
-        "author": commit["author"], "title": title[:240] or "OCR 审查意见",
+        "author": commit["author"], "title": title,
         "severity": SEVERITIES.get(comment.get("severity"), "提示"), "category": category_label[:250],
         "dimension": dimension, "sha": commit["sha"], "commit_message": commit["message"],
         "path": path[:4000], "start_line": comment.get("start_line"), "end_line": comment.get("end_line"),
-        "existing_code": (comment.get("existing_code") or "")[:30000], "risk": risk[:30000], "suggestion": suggestion[:30000],
+        "existing_code": (comment.get("existing_code") or "")[:30000], "risk": (risk or "OCR 未返回风险说明")[:30000], "suggestion": suggestion[:30000],
         "suggestion_code": (comment.get("suggestion_code") or "")[:30000],
     }
 

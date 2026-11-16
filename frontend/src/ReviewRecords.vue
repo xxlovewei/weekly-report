@@ -25,20 +25,52 @@ const draft = ref<Record<number, { status: string; notes: string }>>({})
 const adding = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
 const filtersExpanded = ref(true)
 const filtersId = useId()
-const author = ref<'all' | 'mine' | 'anonymous'>('all')
-const completion = ref<'all' | 'done' | 'open'>('all')
+const issueListId = useId()
+const expandedIssues = ref(new Set<number>())
+const authorLabels = { all: '全部', mine: '仅看我', anonymous: '仅看无名氏' }
+const completionLabels = { all: '全部', done: '已完成', open: '未完成' }
+const author = ref<keyof typeof authorLabels>('all')
+const completion = ref<keyof typeof completionLabels>('all')
 const severities = ['严重', '高危', '中危', '低危', '提示'] as const
+const severityOrder = new Map<string, number>(severities.map((level, index) => [level, index]))
 const severity = ref<string[]>([])
 const selected = ref<string[]>([]), allProjects = ref(true)
 // 展开状态只控制筛选按钮的显示，不改变已经选中的项目。
 const projectsExpanded = ref(false)
+const projectIds = computed(() => Object.keys(data.value?.projects || {}))
 const commonProjectIds = computed(() => new Set(data.value?.common_project_ids))
-const hasOtherProjects = computed(() => Object.keys(data.value?.projects || {}).some(id => !commonProjectIds.value.has(Number(id))))
+const hasOtherProjects = computed(() => projectIds.value.some(id => !commonProjectIds.value.has(Number(id))))
+const filterSummary = computed(() => {
+  const levels = severities.filter(level => severity.value.includes(level))
+  const projects = selected.value.map(id => data.value?.projects[id]).filter(Boolean)
+  return [
+    ['修改人', authorLabels[author.value]],
+    ['完成状态', completionLabels[completion.value]],
+    ['严重程度', levels.join('、') || '全部'],
+    ['审查项目', allProjects.value ? '全部' : (projects.join('、') || '未选择')],
+  ]
+})
 const dialog = ref<HTMLDialogElement | null>(null)
+// 已完成的问题放在最后，同一状态组按严重程度和问题编号排序。
+function compareIssues(a: Issue, b: Issue) {
+  const completionOrder = Number(a.status === '已完成') - Number(b.status === '已完成')
+  const severityA = severityOrder.get(a.severity) ?? severities.length
+  const severityB = severityOrder.get(b.severity) ?? severities.length
+  return completionOrder || severityA - severityB || a.id - b.id
+}
 const shown = computed(() => (data.value?.issues || []).filter(issue => selected.value.includes(String(issue.project_id))
   && (author.value === 'all' || issue[author.value])
   && (completion.value === 'all' || (issue.status === '已完成') === (completion.value === 'done'))
-  && (!severity.value.length || severity.value.includes(issue.severity))))
+  && (!severity.value.length || severity.value.includes(issue.severity))).sort(compareIssues))
+const listExpanded = computed(() => shown.value.length > 0 && shown.value.every(issue => expandedIssues.value.has(issue.id)))
+function toggleList() {
+  // 也更新被筛选掉的卡片，切换筛选条件后仍保持批量操作的结果。
+  expandedIssues.value = new Set(listExpanded.value ? [] : data.value?.issues.map(issue => issue.id))
+}
+function toggleIssue(id: number) {
+  if (expandedIssues.value.has(id)) expandedIssues.value.delete(id)
+  else expandedIssues.value.add(id)
+}
 const severityCounts = computed(() => severities.map(label => ({
   label, count: data.value?.issues.filter(issue => issue.severity === label).length || 0,
 })))
@@ -66,12 +98,14 @@ let serial = 0
 watch(() => [props.day, props.refreshKey] as const, async ([day]) => {
   const current = ++serial
   loading.value = true; error.value = ''; issueError.value = {}; data.value = null
+  expandedIssues.value.clear()
   try {
     const result = await api<ReviewDay>(`/reviews/days/${day}`)
     if (current !== serial) return
     data.value = result
-    const ids = Object.keys(result.projects)
+    const ids = projectIds.value
     selected.value = allProjects.value ? ids : selected.value.filter(id => ids.includes(id))
+    if (ids.length) allProjects.value = selected.value.length === ids.length
     draft.value = Object.fromEntries(result.issues.map(issue => [issue.id, { status: issue.status || '', notes: issue.notes }]))
   } catch (cause) { if (current === serial) error.value = (cause as Error).message }
   finally { if (current === serial) loading.value = false }
@@ -79,11 +113,11 @@ watch(() => [props.day, props.refreshKey] as const, async ([day]) => {
 watch(() => props.summaryRequest, () => { if (!dialog.value?.open) dialog.value?.showModal() })
 function selectAll(value: boolean) {
   allProjects.value = value
-  selected.value = value ? Object.keys(data.value?.projects || {}) : []
+  selected.value = value ? projectIds.value : []
 }
 function toggleProject(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter(value => value !== id) : [...selected.value, id]
-  allProjects.value = selected.value.length === Object.keys(data.value?.projects || {}).length
+  allProjects.value = selected.value.length === projectIds.value.length
 }
 const noteTimers = new Map<number, number>()
 const saving = new Map<number, Promise<boolean>>()
@@ -187,23 +221,26 @@ function toggleSeverity(level: string) {
 
 <template>
   <section class="panel review-panel review-filters" aria-label="筛选审查记录">
-    <header class="review-panel-head">
-      <h2>筛选条件</h2>
+    <header class="review-filter-head">
       <button class="mini-button" type="button" :aria-expanded="filtersExpanded" :aria-controls="filtersId" @click="filtersExpanded = !filtersExpanded">{{ filtersExpanded ? '收起筛选' : '展开筛选' }}</button>
+      <button class="mini-button" type="button" :aria-expanded="listExpanded" :aria-controls="issueListId" :disabled="!shown.length" @click="toggleList">{{ listExpanded ? '收起列表' : '展开列表' }}</button>
+      <div v-if="!filtersExpanded" class="review-filter-summary" role="group" aria-label="当前筛选条件" tabindex="0">
+        <span v-for="([label, value]) in filterSummary" :key="label">{{ label }}：{{ value }}</span>
+      </div>
     </header>
     <div v-show="filtersExpanded" :id="filtersId" class="review-filter-body">
       <div class="review-filter-top">
         <div class="review-filter-group" role="group" aria-label="修改人">
           <strong>修改人</strong>
           <div class="review-tags">
-            <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">仅看我</button>
-            <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">仅看无名氏</button>
+            <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">{{ authorLabels.mine }}</button>
+            <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">{{ authorLabels.anonymous }}</button>
           </div>
         </div>
         <div class="review-filter-group" role="group" aria-label="完成状态">
           <strong>完成状态</strong>
           <div class="review-tags">
-            <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
+            <button v-for="(label, value) in completionLabels" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
           </div>
         </div>
         <div class="review-filter-group" role="group" aria-label="严重程度">
@@ -217,21 +254,20 @@ function toggleSeverity(level: string) {
       <div class="review-filter-projects" role="group" aria-label="审查项目">
         <strong>审查项目</strong>
         <div class="review-tags">
-          <button class="mini-button" @click="selectAll(true)">全选</button>
-          <button class="mini-button" @click="selectAll(false)">取消全选</button>
-          <button v-if="hasOtherProjects" class="mini-button" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起非常用' : '展开全部' }}</button>
+          <button class="mini-button review-project-action" type="button" :disabled="!projectIds.length" @click="selectAll(!allProjects)">{{ allProjects ? '取消全选' : '全选' }}</button>
+          <button v-if="hasOtherProjects" class="mini-button review-project-action" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起' : '展开全部' }}</button>
           <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
         </div>
       </div>
     </div>
   </section>
-  <section class="review-results" aria-label="审查问题列表">
+  <section :id="issueListId" class="review-results" aria-label="审查问题列表">
     <p v-if="navigationError" class="review-error" role="alert">{{ navigationError }}</p>
     <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
     <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
     <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
     <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-      <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" collapsible>
+      <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" :expanded="expandedIssues.has(issue.id)" collapsible @toggle="toggleIssue(issue.id)">
         <template #controls>
           <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
             <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
