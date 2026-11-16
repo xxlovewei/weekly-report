@@ -6,14 +6,16 @@ def test_common_review_projects_are_shared_and_only_admin_can_change_them():
     admin, alice = client("admin"), client("alice")
     projects = "/api/reviews/projects"
     payload = {"name": "Demo", "url": "https://git.example.com/team/demo"}
-    project = admin.post(projects, json=payload).json()
+    project = admin.post(projects, json={**payload, "visibility": "internal", "owner": "legacy-team"}).json()
     assert project["is_common"] is False
     path = f"{projects}/{project['id']}"
     day = "/api/reviews/days/2026-11-12"
     assert alice.get(day).json()["common_project_ids"] == []
     assert alice.patch(path, json={"is_common": True}).status_code == 403
     assert admin.patch(path, json={"is_common": True}).json()["is_common"] is True
-    assert admin.put(path, json={**payload, "alias": "新别名"}).json()["is_common"] is True
+    edited = admin.put(path, json={**payload, "alias": "新别名"}).json()
+    assert edited["is_common"] is True
+    assert (edited["visibility"], edited["owner"]) == ("internal", "legacy-team")
     assert alice.get(day).json()["common_project_ids"] == [project["id"]]
     assert admin.patch(path, json={"is_common": False}).json()["is_common"] is False
     assert alice.get(day).json()["common_project_ids"] == []

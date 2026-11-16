@@ -154,11 +154,20 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-issue { gap: 16px; max-width: none; overflow-wrap: anywhere; }
 .review-issue-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .review-issue-title { flex: 1 1 300px; min-width: 0; }
-.review-issue-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-left: auto; }
-.review-issue-controls select { min-width: 90px; }
+.review-card-head { justify-content: flex-start; align-items: center; gap: 8px; }
+.review-card-head .review-issue-title { flex: 0 1 auto; }
+.review-card-head .review-issue-title:only-child { flex: 1 1 auto; }
+.review-card-toggle { width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+.review-card-toggle:hover { background: #f1f1f1; }
+.review-card-toggle .status-tag { font-size: 12px; }
+.review-card-status { display: flex; align-items: center; gap: 6px; }
+.review-card-status select { width: auto; min-width: 90px; padding: 4px 6px; }
+.review-issue-add { margin-left: auto; }
+.review-issue-body { display: grid; gap: 16px; min-width: 0; }
 .review-issue h2 { margin: 10px 0 0; font-size: 1.25rem; line-height: 1.4; }
 .review-project-name { font-size: 12px; font-weight: 700; }
-.review-number, .review-severity { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
+.review-number, .review-severity, .review-author-tag { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
+.review-author-tag { background: #e6f4ff; }
 .review-number { background: #00d9ff; }
 .review-severity { background: #f1f1f1; }
 .review-severity[data-level="严重"], .review-severity[data-level="高危"] { background: #ff8585; }
