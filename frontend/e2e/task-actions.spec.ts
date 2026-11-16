@@ -1,19 +1,14 @@
 import type { APIRequestContext } from '@playwright/test'
-import { test, expect, skipGuides } from './fixtures'
+import { test, expect, signIn, skipGuides } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 import type { WeekData } from '../src/types'
 
-async function login(request: APIRequestContext, username: string) {
-  const response = await request.post('/api/auth/login', { data: { username, password: 'e2e-password-123' } })
-  await expect(response).toBeOK()
-  const session = await response.json()
-  return { headers: { 'X-CSRF-Token': session.csrf_token as string }, user: session.user }
-}
-
 test('任务右键排序、优先级及转交', async ({ page, browser, baseURL }) => {
+  const alice = await signIn(page, 'alice')
   const bobContext = await browser.newContext({ baseURL })
-  const alice = await login(page.request, 'alice')
-  const bob = await login(bobContext.request, 'bob')
+  const recipientPage = await bobContext.newPage()
+  await skipGuides(recipientPage)
+  const bob = await signIn(recipientPage, 'bob')
   const weekPath = `/api/weeks/${mondayOf(todayShanghai())}`
   const fixtureIds: number[] = []
   const names = ['甲', '乙', '丙'].map(name => `任务操作验证 ${Date.now()} ${name}`)
@@ -93,9 +88,7 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
     await page.reload()
     await assertOrder([...baseline, a, b])
 
-    const recipientPage = await bobContext.newPage()
-    await skipGuides(recipientPage)
-    await recipientPage.goto('/work')
+    await recipientPage.reload()
     const received = recipientPage.locator('.task-row').last()
     await expect(received.getByRole('textbox', { name: '任务大类' })).toHaveValue(c)
     await expect(received.locator('.task-leading')).toHaveClass(/priority-high/)

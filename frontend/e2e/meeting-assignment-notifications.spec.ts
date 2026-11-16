@@ -1,23 +1,8 @@
-import type { Page } from '@playwright/test'
-import { test, expect, skipGuides } from './fixtures'
+import { test, expect, signIn, skipGuides } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 
-async function signIn(page: Page, username: 'alice' | 'bob') {
-  await page.goto('/login')
-  await page.getByLabel('用户名').fill(username)
-  const password = username === 'alice' ? process.env.E2E_ALICE_PASSWORD : process.env.E2E_BOB_PASSWORD
-  await page.getByLabel('密码', { exact: true }).fill(password || 'e2e-password-123')
-  const signedIn = page.waitForResponse(response => response.url().endsWith('/api/auth/login'))
-  await page.getByRole('button', { name: '进入工作台 →', exact: true }).click()
-  const response = await signedIn
-  expect(response.status()).toBe(200)
-  const { csrf_token } = await response.json()
-  await expect(page).toHaveURL(/\/work$/)
-  return { 'X-CSRF-Token': csrf_token as string }
-}
-
 test('新增和编辑会议指派都会通知新增人员，消息和工作任务可跳转', async ({ page, browser, baseURL }) => {
-  const headers = await signIn(page, 'alice')
+  const { headers } = await signIn(page, 'alice')
   const receiver = await browser.newContext({ baseURL })
   const bob = await receiver.newPage()
   await skipGuides(bob)
