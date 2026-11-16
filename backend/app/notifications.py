@@ -53,7 +53,7 @@ def stream_snapshot(request, user_id, cursor):
                           .outerjoin(Week, Week.id == Task.week_id)
                           .where(Notification.user_id == user_id, Notification.id > cursor)
                           .order_by(Notification.id).limit(100)).all()
-        messages = [{"id": row.id, "kind": row.kind, "is_read": row.is_read,
+        messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
                      "target": notification_target(row, week, owner_id, user_id)} for row, week, owner_id in rows]
         return {"count": count_unread(db, user_id), "messages": messages,
                 "cursor": messages[-1]["id"] if messages else cursor}

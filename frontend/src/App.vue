@@ -14,7 +14,7 @@ import TaskTable from './TaskTable.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
-import { subscribeToMessages } from './notificationStream'
+import { desktopNotificationPermission, subscribeToMessages } from './notificationStream'
 import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, WeekData } from './types'
 
 const route = useRoute(), router = useRouter()
@@ -39,6 +39,9 @@ const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
 const showUnreadReminder = ref(false)
+const notificationPermission = ref<ReturnType<typeof desktopNotificationPermission>>(desktopNotificationPermission())
+const showPermissionReminder = ref(false), requestingPermission = ref(false)
+const liveMessages = ref<LiveMessage[]>([])
 const unreadReminderInterval = 5 * 60 * 1000
 const messagesRefresh = ref(0), reviewRefresh = ref(0)
 let unreadVersion = 0
@@ -69,6 +72,25 @@ async function refreshUnread() {
 async function openUnreadReminder() {
   await navigate('messages')
   if (page.value === 'messages') showUnreadReminder.value = false
+}
+function checkNotificationPermission() {
+  notificationPermission.value = desktopNotificationPermission()
+  if (notificationPermission.value === 'granted') showPermissionReminder.value = false
+}
+async function enableNotifications() {
+  checkNotificationPermission()
+  if (notificationPermission.value !== 'default' || requestingPermission.value) return
+  requestingPermission.value = true
+  try { notificationPermission.value = await Notification.requestPermission() }
+  catch { checkNotificationPermission() }
+  finally { requestingPermission.value = false }
+}
+function dismissLiveMessage(id: number) {
+  liveMessages.value = liveMessages.value.filter(message => message.id !== id)
+}
+async function openLiveMessage(message: LiveMessage) {
+  dismissLiveMessage(message.id)
+  await jumpToMessage(message)
 }
 async function jumpToMessage(item: LiveMessage) {
   const account = user.value?.id
@@ -557,15 +579,23 @@ watch(() => [route.name, route.query.week, route.query.task], () => { if (ready.
 watch(unreadMessages, count => { if (!count) showUnreadReminder.value = false })
 watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
   showUnreadReminder.value = false
+  showPermissionReminder.value = false
+  liveMessages.value = []
   unreadMessages.value = 0
   void refreshUnread()
   if (!account) return
+  checkNotificationPermission()
+  showPermissionReminder.value = notificationPermission.value !== 'granted'
+  window.addEventListener('focus', checkNotificationPermission)
   const stop = subscribeToMessages(account, count => {
     if (user.value?.id !== account) return
     unreadVersion++
     unreadMessages.value = count
     messagesRefresh.value++
-  }, jumpToMessage)
+  }, message => {
+    // 合并多个即时提醒时保留最新三条，其余可在消息中心查看。
+    liveMessages.value = [...liveMessages.value.slice(-2), message]
+  }, message => openLiveMessage(message))
   let active = true
   let checking = false
   // 每五分钟查询一次未读数，账号切换后丢弃上一次检查的结果。
@@ -580,6 +610,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   onCleanup(() => {
     active = false
     window.clearInterval(timer)
+    window.removeEventListener('focus', checkNotificationPermission)
     stop()
   })
 })
@@ -631,7 +662,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && user.role === 'admin'" :key="user.id" :account-id="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
-      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
+      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" :permission="notificationPermission" :requesting-permission="requestingPermission" @change="refreshUnread" @enable-notifications="enableNotifications" />
       <div v-else-if="page === 'work'">
         <div class="section-head">
           <strong>任务清单 <span>{{ week.tasks.length }}</span></strong>
@@ -651,7 +682,24 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div v-if="reportExportOpen" class="modal-scrim" @click.self="reportExportOpen = false" @keydown.esc="reportExportOpen = false"><form class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="report-export-title" @submit.prevent="exportReports"><span class="eyebrow">周报汇总</span><h2 id="report-export-title">导出 Excel</h2><p>选择起止周，每位成员将单独生成一个工作表。</p><div class="export-weeks"><label>起始周<input ref="reportExportStartInput" v-model="reportExportStart" type="week" required /></label><label>结束周<input v-model="reportExportEnd" type="week" required /></label></div><p v-if="reportExportError" class="message error" role="alert">{{ reportExportError }}</p><div class="modal-actions"><button class="secondary-button" type="button" :disabled="reportExporting" @click="reportExportOpen = false">取消</button><button class="primary-button" type="submit" :disabled="reportExporting">{{ reportExporting ? '生成中…' : '确定并导出' }}</button></div></form></div>
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="modal.kind === 'delete' ? '确认删除任务' : '复制上周任务'"><span class="eyebrow">操作确认</span><h2>{{ modal.kind === 'delete' ? '删除这项任务？' : '本周已有任务' }}</h2><p>{{ modal.kind === 'delete' ? '删除后，该任务将从本周移除。' : '请选择覆盖本周任务，或将上周未完成任务追加到末尾。' }}</p><div class="modal-actions"><template v-if="modal.kind === 'delete'"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete((modal as { taskId: number }).taskId)">确认删除</button></template><template v-else><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="secondary-button" type="button" @click="carry('append')">新增</button><button class="primary-button" type="button" @click="carry('overwrite')">覆盖</button></template></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
-    <div class="unread-reminder-region" aria-live="polite" aria-atomic="true">
+    <div class="unread-reminder-region" aria-live="polite">
+      <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
+        <strong>开启桌面通知</strong>
+        <p v-if="notificationPermission === 'default'">收到新消息时，可在操作系统中同步提醒。</p>
+        <p v-else-if="notificationPermission === 'denied'">通知已被浏览器阻止。请在地址栏的站点设置中允许通知。</p>
+        <p v-else>当前浏览器或访问地址无法使用桌面通知。新消息会在网页内提醒。</p>
+        <div class="notification-permission-actions">
+          <button v-if="notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button>
+          <button class="mini-button" type="button" @click="showPermissionReminder = false">稍后再说</button>
+        </div>
+      </div>
+      <div v-for="message in liveMessages" :key="message.id" class="unread-reminder live-message-reminder">
+        <button class="unread-reminder-link" type="button" @click="openLiveMessage(message)">
+          <span>{{ message.kind }} · 新消息</span>
+          <strong>{{ message.title || '点击查看新消息' }}</strong>
+        </button>
+        <button class="unread-reminder-close" type="button" aria-label="关闭新消息提醒" @click="dismissLiveMessage(message.id)">×</button>
+      </div>
       <Transition name="unread-reminder">
         <div v-if="showUnreadReminder && unreadMessages > 0" class="unread-reminder">
           <button class="unread-reminder-link" type="button" @click="openUnreadReminder">

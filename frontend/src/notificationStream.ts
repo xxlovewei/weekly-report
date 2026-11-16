@@ -10,25 +10,32 @@ const titles: Record<LiveMessage['kind'], string> = {
   代码审查: '来bug了⚠️！请及时查收📩',
 }
 
+export function desktopNotificationPermission(): NotificationPermission | 'unsupported' {
+  return window.isSecureContext && typeof Notification !== 'undefined'
+    ? Notification.permission : 'unsupported'
+}
+
 export function subscribeToMessages(
   account: number,
   onSnapshot: (count: number) => void,
+  onNewMessage: (message: LiveMessage) => void,
   onClick: (message: LiveMessage) => Promise<void>,
 ) {
   const stream = new EventSource(`${import.meta.env.BASE_URL}api/notifications/stream`)
   const displayed = new Set<Notification>()
   let closed = false
+  let lastMessageId = 0
   const key = `zhoubao.notification.${import.meta.env.BASE_URL}.${account}`
 
   function show(message: LiveMessage) {
-    if (closed || Notification.permission !== 'granted') return
+    if (closed || desktopNotificationPermission() !== 'granted') return
     try {
       // 同账号的多个标签页只展示一次通知。
       if (Number(localStorage.getItem(key)) >= message.id) return
     } catch { /* 隐私模式下仍允许展示通知。 */ }
     try {
       const notification = new Notification(titles[message.kind], {
-        body: '点击可直接跳转查看', tag: `${key}.${message.id}`,
+        body: message.title || '点击可直接跳转查看', tag: `${key}.${message.id}`,
       })
       displayed.add(notification)
       notification.onclose = () => displayed.delete(notification)
@@ -49,12 +56,17 @@ export function subscribeToMessages(
     displayed.clear()
   }
   stream.onmessage = event => {
+    if (closed) return
     const snapshot: Snapshot = JSON.parse(event.data)
     onSnapshot(snapshot.count)
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
     for (const message of snapshot.messages) {
+      // SSE 按消息编号递增发送，同一标签页只展示一次。
+      if (message.id <= lastMessageId) continue
+      lastMessageId = message.id
       if (message.is_read) continue
-      if (navigator.locks) void navigator.locks.request(key, () => show(message))
+      onNewMessage(message)
+      if (desktopNotificationPermission() !== 'granted') continue
+      if (navigator.locks) void navigator.locks.request(key, () => show(message)).catch(() => show(message))
       else show(message)
     }
   }
