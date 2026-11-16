@@ -8,7 +8,7 @@ interface ProjectInput {
   name: string; alias: string; url: string; visibility: Visibility; owner: string
   gitlab_url: string | null; gitlab_id: number | null; skip_slash_branches: boolean
 }
-type Project = ProjectInput & { id: number }
+type Project = ProjectInput & { id: number; is_common: boolean }
 interface GitLabProject {
   id: number; name: string; web_url: string; visibility: Visibility
   path_with_namespace: string; owner?: { username: string }; namespace?: { full_path: string }
@@ -110,7 +110,7 @@ function saveSelection() {
 }
 function openProject(project?: Project) {
   editing.value = project || null
-  const { id: _id, ...values } = project || { ...blankProject(), id: 0 }
+  const { id: _id, is_common: _isCommon, ...values } = project || { ...blankProject(), id: 0, is_common: false }
   Object.assign(draft, values)
   editor.value?.showModal()
 }
@@ -120,6 +120,12 @@ function saveProject() {
     await api(id ? `/reviews/projects/${id}` : '/reviews/projects', id ? 'PUT' : 'POST', draft)
     projects.value = await api<Project[]>('/reviews/projects')
     syncSelection(); editor.value?.close(); feedback.value = '已保存审查项目'
+  })
+}
+function toggleCommon(project: Project) {
+  void perform(async () => {
+    const saved = await api<Project>(`/reviews/projects/${project.id}`, 'PATCH', { is_common: !project.is_common })
+    project.is_common = saved.is_common
   })
 }
 function removeProject(project: Project) {
@@ -163,7 +169,11 @@ function removeProject(project: Project) {
     <div class="review-panel-head"><h2>审查项目</h2><button class="primary-button" type="button" :disabled="busy" @click="openProject()">＋ 手动新增</button></div>
     <div v-for="project in projects" :key="project.id" class="review-project">
       <div><strong>{{ project.alias }}</strong><p>{{ project.name }} · {{ visibility[project.visibility] }}<template v-if="project.owner"> · {{ project.owner }}</template></p><a :href="project.url" target="_blank" rel="noopener noreferrer">{{ project.url }}</a><p>分支范围：{{ project.skip_slash_branches ? '只审查名称不含 / 的分支' : '所有分支' }}</p></div>
-      <div class="top-actions"><button class="mini-button" type="button" :disabled="busy" @click="openProject(project)">编辑</button><button class="mini-button danger" type="button" :disabled="busy" @click="removeProject(project)">删除</button></div>
+      <div class="top-actions">
+        <button class="mini-button" type="button" :disabled="busy" @click="toggleCommon(project)">{{ project.is_common ? '取消常用' : '设为常用' }}</button>
+        <button class="mini-button" type="button" :disabled="busy" @click="openProject(project)">编辑</button>
+        <button class="mini-button danger" type="button" :disabled="busy" @click="removeProject(project)">删除</button>
+      </div>
     </div>
     <p v-if="!projects.length" class="empty">暂无审查项目</p>
   </section>
