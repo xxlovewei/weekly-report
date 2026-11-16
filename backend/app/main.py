@@ -769,6 +769,13 @@ def delete_meeting(meeting_id: int, auth=Depends(active_session), db: Session = 
     return {"ok": True}
 
 
+@app.get("/api/releases")
+def release_notes_history(auth=Depends(active_session), db: Session = Depends(get_db)):
+    # 一次读取版本和说明，弹框切换历史版本时无需再次请求。
+    rows = db.execute(select(ReleaseRecord.version, ReleaseRecord.description))
+    return [{"version": version, "description": description} for version, description in rows]
+
+
 @app.get("/api/releases/{version}")
 def release_notes(version: str, auth=Depends(active_session), db: Session = Depends(get_db)):
     record = db.scalar(select(ReleaseRecord).where(ReleaseRecord.version == version))
