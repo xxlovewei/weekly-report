@@ -64,7 +64,7 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
     def authenticate():
         with SessionLocal() as db:
             user, _ = active_session(request, db)
-            return user.id, user.role == "admin"
+            return user.id, user.has_role("admin")
 
     user_id, admin = await run_in_threadpool(authenticate)
     cursor = int(last_event_id) if last_event_id.isascii() and last_event_id.isdigit() and len(last_event_id) < 16 else None
@@ -112,7 +112,7 @@ def list_notifications(
     auth=Depends(active_session), db: Session = Depends(get_db),
 ):
     user = auth[0]
-    if all_users and user.role != "admin":
+    if all_users and not user.has_role("admin"):
         raise HTTPException(403, "仅管理员可查看所有人员的消息")
     filters = []
     if not all_users:
