@@ -145,7 +145,12 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .review-tags .mini-button[aria-pressed="true"] { background: #ccff00; }
 .project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.review-filters { gap: 14px; max-width: none; }
+/* 将筛选卡片留在列表滚动区外，筛选项较多时在卡片内部滚动。 */
+.shell .review-work-area { display: flex; flex-direction: column; overflow: hidden; padding-right: 6px; }
+.review-filters { display: flex; flex: none; flex-direction: column; gap: 12px; max-width: none; max-height: max(54px, 55%); padding: 12px 16px; }
+.review-filters .review-panel-head { flex: none; }
+.review-filter-body { display: grid; align-content: start; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px; margin: -6px; }
+.review-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 0 0; margin-right: -6px; }
 .review-filter-top, .review-filter-group, .review-filter-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .review-filter-top { gap: 12px 24px; }
 .review-filter-group, .review-filter-projects { font-size: 13px; font-weight: 900; }
