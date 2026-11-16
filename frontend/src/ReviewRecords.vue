@@ -222,24 +222,22 @@ function toggleSeverity(level: string) {
   <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
   <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
   <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-    <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]">
+    <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" collapsible>
       <template #controls>
-        <div class="review-issue-controls">
-          <label>完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
-            <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
-          </select></label>
-          <button class="secondary-button" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
-        </div>
+        <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
+          <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
+        </select></label>
+        <button class="secondary-button review-issue-add" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
       </template>
-    </ReviewIssueContent>
-    <div class="review-issue-notes">
-      <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
-      <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>
-      <div v-if="issueError[issue.id]" class="review-error" role="alert">
-        {{ issueError[issue.id] }}
-        <button v-if="issueError[issue.id].startsWith('保存失败') && hasChanges(issue)" class="mini-button" @click="flushIssue(issue)">重试</button>
+      <div class="review-issue-notes">
+        <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
+        <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>
+        <div v-if="issueError[issue.id]" class="review-error" role="alert">
+          {{ issueError[issue.id] }}
+          <button v-if="issueError[issue.id].startsWith('保存失败') && hasChanges(issue)" class="mini-button" @click="flushIssue(issue)">重试</button>
+        </div>
       </div>
-    </div>
+    </ReviewIssueContent>
   </article>
   <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
     <header class="review-summary-head">

@@ -122,8 +122,13 @@ def save_project(db, data, project_id=None):
     row = current or matching
     if project_id is None and row and row.active:
         return row
+    fields = data.model_dump()
+    if row is not None:
+        # 配置表单省略旧字段时保留原值，仍接受旧客户端显式提交的字段。
+        for field in {"visibility", "owner"} - data.model_fields_set:
+            del fields[field]
     row = row or ReviewProject()
-    for field, value in data.model_dump().items():
+    for field, value in fields.items():
         setattr(row, field, value)
     row.alias = data.alias or data.name
     row.active = True
