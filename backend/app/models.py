@@ -1,20 +1,33 @@
 from datetime import date, datetime
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.ext.hybrid import hybrid_method
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("roles IN ('{user}', '{admin}', '{admin,user}')", name="ck_users_roles"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
-    role: Mapped[str] = mapped_column(String(16), default="user")
+    roles: Mapped[list[str]] = mapped_column(ARRAY(String(16)), server_default="{user}")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(16), default="正常", server_default="正常")
     failed_login_times: Mapped[list[float]] = mapped_column(JSON, default=list, server_default="[]")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    @hybrid_method
+    def has_role(self, role: str) -> bool:
+        return role in self.roles
+
+    @has_role.expression
+    def has_role(cls, role: str):
+        return cls.roles.contains([role])
 
 class LoginSession(Base):
     __tablename__ = "login_sessions"
