@@ -609,17 +609,24 @@ def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db
     return week_json(db, row)
 
 @app.get("/api/calendar/marks")
-def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "review-records"], auth=Depends(active_session), db: Session = Depends(get_db)):
+def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "review-records"],
+                   include_issue_counts: bool = False, auth=Depends(active_session), db: Session = Depends(get_db)):
     if year < 1900 or year > 2100 or month < 1 or month > 12:
         raise HTTPException(422, "月份无效")
     first = date(year, month, 1)
     if scope == "review-records":
         # 日报按生成日期标记，只返回当前月的日期。
         next_month = (first + timedelta(days=32)).replace(day=1)
-        days = db.scalars(select(ReviewRun.report_date).where(
+        days = select(ReviewRun.report_date).where(
             ReviewRun.report_date >= first, ReviewRun.report_date < next_month,
-        ).order_by(ReviewRun.report_date))
-        return [day.isoformat() for day in days]
+        ).order_by(ReviewRun.report_date)
+        if include_issue_counts:
+            # 保留零问题的日报，按问题 ID 计数以区分零条和多条记录。
+            rows = db.execute(days.add_columns(func.count(ReviewIssue.id)).outerjoin(
+                ReviewIssue, ReviewIssue.report_date == ReviewRun.report_date,
+            ).group_by(ReviewRun.report_date))
+            return [{"date": day.isoformat(), "issue_count": count} for day, count in rows]
+        return [day.isoformat() for day in db.scalars(days)]
     start = first - timedelta(days=first.weekday())
     end = start + timedelta(days=42)
     query = select(Week.start_date).join(Task).where(Week.start_date >= start, Week.start_date < end)
