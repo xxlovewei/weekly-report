@@ -27,15 +27,19 @@ export function subscribeToMessages(
   let lastMessageId = 0
   const key = `zhoubao.notification.${import.meta.env.BASE_URL}.${account}`
 
-  function show(message: LiveMessage) {
+  function show(message: LiveMessage, unreadCount?: number) {
     if (closed || desktopNotificationPermission() !== 'granted') return
+    if (unreadCount === undefined) {
+      try {
+        // 同账号的多个标签页只展示一次即时通知。
+        if (Number(localStorage.getItem(key)) >= message.id) return
+      } catch { /* 隐私模式下仍允许展示通知。 */ }
+    }
     try {
-      // 同账号的多个标签页只展示一次通知。
-      if (Number(localStorage.getItem(key)) >= message.id) return
-    } catch { /* 隐私模式下仍允许展示通知。 */ }
-    try {
-      const notification = new Notification(titles[message.kind], {
-        body: message.title || '点击可直接跳转查看', tag: `${key}.${message.id}`,
+      const notification = new Notification(unreadCount === undefined ? titles[message.kind] : `你有 ${unreadCount} 条未读消息`, {
+        body: message.title || '点击可直接跳转查看',
+        // 定时提醒使用固定标签，未读消息跨轮询仍可再次提醒。
+        tag: unreadCount === undefined ? `${key}.${message.id}` : `${key}.unread`,
       })
       displayed.add(notification)
       notification.onclose = () => displayed.delete(notification)
@@ -45,8 +49,10 @@ export function subscribeToMessages(
         window.focus()
         if (!closed) void onClick(message)
       }
-      try { localStorage.setItem(key, String(message.id)) } catch { /* 标签页内的去重仍由事件游标处理。 */ }
-    } catch { /* 不支持网页通知的浏览器继续使用站内消息。 */ }
+      if (unreadCount === undefined) {
+        try { localStorage.setItem(key, String(message.id)) } catch { /* 标签页内的去重仍由事件游标处理。 */ }
+      }
+    } catch { /* 系统通知失败时继续接收消息流。 */ }
   }
 
   function stop() {
@@ -64,12 +70,14 @@ export function subscribeToMessages(
       if (message.id <= lastMessageId) continue
       lastMessageId = message.id
       if (message.is_read) continue
-      onNewMessage(message)
-      if (desktopNotificationPermission() !== 'granted') continue
+      if (desktopNotificationPermission() !== 'granted') {
+        onNewMessage(message)
+        continue
+      }
       if (navigator.locks) void navigator.locks.request(key, () => show(message)).catch(() => show(message))
       else show(message)
     }
   }
   stream.addEventListener('session-ended', stop)
-  return stop
+  return { stop, remindUnread: show }
 }

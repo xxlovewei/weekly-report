@@ -7,7 +7,7 @@ const menuDescriptions = {
   reports: '查看所选周的成员周报。此页还提供新增或修改当天周会记录的快捷入口。',
   categories: '查看和维护填写周报时使用的任务类型。',
   meetings: '查看、新增和编辑会议记录，并跟踪关联任务的完成情况。',
-  users: '管理员可在这里管理用户账号、账号状态和密码重置。',
+  users: '管理员可在这里管理用户角色、账号状态和密码重置。',
 }
 
 interface SidebarTourOptions {

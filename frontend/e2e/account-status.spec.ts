@@ -1,7 +1,8 @@
 import { test, expect } from './fixtures'
-import { generateKeyPairSync } from 'node:crypto'
+import { createDecipheriv, generateKeyPairSync, privateDecrypt } from 'node:crypto'
 
 test('管理员保存锁定状态并可解锁，新用户默认正常', async ({ page }) => {
+  await page.addLocatorHandler(page.getByRole('button', { name: '稍后再说', exact: true }), button => button.click())
   const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', is_active: true, status: '正常', must_change_password: false }
   let alice = { ...admin, id: 2, username: 'alice', display_name: '小王', role: 'user' }
   const errors: string[] = []
@@ -47,42 +48,64 @@ test('登录显示账号锁定提示', async ({ page }) => {
   await expect(page).toHaveURL(/\/login$/)
 })
 
-test('只能创建普通用户，管理员角色和删除受限，删除后列表隐藏用户', async ({ page }) => {
-  const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', is_active: true, status: '正常', must_change_password: false }
-  const alice = { ...admin, id: 2, username: 'alice', display_name: '小王', role: 'user' }
+test('新增和编辑支持多个角色，移除管理员角色后可删除用户', async ({ page }) => {
+  await page.addLocatorHandler(page.getByRole('button', { name: '稍后再说', exact: true }), button => button.click())
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+  const admin = { id: 1, username: 'admin', display_name: '管理员', role: 'admin', roles: ['admin'], is_active: true, status: '正常', must_change_password: false }
+  const alice = { ...admin, id: 2, username: 'alice', display_name: '小王', roles: ['admin', 'user'] }
   let users = [admin, alice]
-  let createdRole: string | undefined
-  let created = false
-  let deleted = false
+  let createdRoles: string[] | undefined
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user: admin, csrf_token: 'test' } })
+    if (path.endsWith('/auth/public-key')) return route.fulfill({ json: { key } })
     if (path.endsWith('/users') && route.request().method() === 'POST') {
-      created = true
-      createdRole = route.request().postDataJSON().role
-      return route.fulfill({ status: 201, json: { ...alice, id: 3, username: 'new' } })
+      const encrypted = route.request().postDataJSON()
+      const aesKey = privateDecrypt({ key: privateKey, oaepHash: 'sha256' }, Buffer.from(encrypted.key, 'base64'))
+      const data = Buffer.from(encrypted.data, 'base64')
+      const decipher = createDecipheriv('aes-256-gcm', aesKey, Buffer.from(encrypted.iv, 'base64'))
+      decipher.setAAD(Buffer.from('/users'))
+      decipher.setAuthTag(data.subarray(-16))
+      const payload: { username: string; roles: string[] } = JSON.parse(Buffer.concat([
+        decipher.update(data.subarray(0, -16)), decipher.final(),
+      ]).toString())
+      createdRoles = payload.roles
+      const newcomer = { ...alice, id: 3, username: payload.username, roles: payload.roles }
+      users = [...users, newcomer]
+      return route.fulfill({ status: 201, json: newcomer })
+    }
+    if (path.endsWith('/users/2') && route.request().method() === 'PATCH') {
+      const update = route.request().postDataJSON()
+      const updated = { ...alice, ...update, role: 'user' }
+      users = users.map(item => item.id === 2 ? updated : item)
+      return route.fulfill({ json: updated })
     }
     if (path.endsWith('/users/2') && route.request().method() === 'DELETE') {
-      deleted = true
-      users = [admin]
+      users = users.filter(item => item.id !== 2)
       return route.fulfill({ json: { ok: true } })
     }
     return route.fulfill({ json: path.endsWith('/users') ? users : [] })
   })
   await page.goto('/users')
   const create = page.locator('.user-create')
-  await expect(create.locator('label').filter({ hasText: '角色' })).toContainText('普通用户')
-  const adminRow = page.locator('.user-row').filter({ hasText: 'admin' })
-  await expect(adminRow.locator('label').filter({ hasText: '角色' })).toContainText('管理员')
-  await expect(adminRow.getByRole('button', { name: '删除用户' })).toHaveCount(0)
+  await expect(create.getByRole('checkbox', { name: '普通用户' })).toBeChecked()
+  await create.getByRole('checkbox', { name: '管理员' }).check()
   await create.getByLabel('用户名').fill('new')
   await create.getByLabel('显示姓名').fill('新人')
   await create.getByLabel('初始密码').fill('123456')
   await create.getByRole('button', { name: '创建用户' }).click()
-  await expect.poll(() => created).toBe(true)
-  expect(createdRole).toBeUndefined()
+  const newcomer = page.locator('.user-row').filter({ hasText: 'new' })
+  await expect(newcomer.getByRole('checkbox', { name: '普通用户' })).toBeChecked()
+  await expect(newcomer.getByRole('checkbox', { name: '管理员' })).toBeChecked()
+  expect(createdRoles).toEqual(['user', 'admin'])
+  await expect(create.getByRole('checkbox', { name: '管理员' })).not.toBeChecked()
+
+  const aliceRow = page.locator('.user-row').filter({ hasText: 'alice' })
+  await expect(aliceRow.getByRole('button', { name: '删除用户' })).toHaveCount(0)
+  await aliceRow.getByRole('checkbox', { name: '管理员' }).uncheck()
+  await aliceRow.getByRole('button', { name: '保存资料' }).click()
   page.once('dialog', dialog => dialog.accept())
-  await page.locator('.user-row').filter({ hasText: 'alice' }).getByRole('button', { name: '删除用户' }).click()
-  await expect(page.locator('.user-row').filter({ hasText: 'alice' })).toHaveCount(0)
-  expect(deleted).toBe(true)
+  await aliceRow.getByRole('button', { name: '删除用户' }).click()
+  await expect(aliceRow).toHaveCount(0)
 })

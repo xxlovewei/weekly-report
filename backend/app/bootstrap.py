@@ -13,7 +13,7 @@ def main():
     with SessionLocal() as db:
         if db.scalar(select(User.id).where(User.username == username)):
             raise SystemExit("用户名已存在")
-        db.add(User(username=username, display_name=display_name, password_hash=PasswordHash.recommended().hash(password), role="admin"))
+        db.add(User(username=username, display_name=display_name, password_hash=PasswordHash.recommended().hash(password), roles=["admin"]))
         db.commit()
     print("管理员创建成功")
 
