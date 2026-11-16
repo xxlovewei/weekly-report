@@ -8,16 +8,19 @@ const displayed = ref({ year: Number(props.selected.slice(0, 4)), month: Number(
 const current = ref(todayShanghai())
 const byDay = computed(() => props.scope === 'review-records')
 const dateKey = (day: string) => byDay.value ? day : mondayOf(day)
-const marked = ref<string[]>([])
+// 周历只需要日期，审查月历用问题数区分已审查的日期。
+type CalendarMark = string | { date: string; issue_count: number }
+const marked = ref(new Map<string, number | null>())
 let request = 0
 watch(() => [displayed.value.year, displayed.value.month, props.scope, props.refreshKey, props.compact], async () => {
   const latest = ++request
   if (props.compact) return
-  marked.value = []
+  marked.value = new Map()
   try {
-    const result = await api<string[]>(`/calendar/marks?year=${displayed.value.year}&month=${displayed.value.month}&scope=${props.scope}`)
-    if (latest === request) marked.value = result
-  } catch { if (latest === request) marked.value = [] }
+    const counts = byDay.value ? '&include_issue_counts=true' : ''
+    const result = await api<CalendarMark[]>(`/calendar/marks?year=${displayed.value.year}&month=${displayed.value.month}&scope=${props.scope}${counts}`)
+    if (latest === request) marked.value = new Map(result.map(mark => typeof mark === 'string' ? [mark, null] : [mark.date, mark.issue_count]))
+  } catch { if (latest === request) marked.value = new Map() }
 }, { immediate: true })
 watch(() => [props.selected, props.compact] as const, ([value, compact]) => {
   const start = displayed.value.year * 12 + displayed.value.month
@@ -26,6 +29,10 @@ watch(() => [props.selected, props.compact] as const, ([value, compact]) => {
   if (start !== next && (byDay.value || compact || Math.abs(start - next) > 1)) displayed.value = { year: Number(value.slice(0, 4)), month: Number(value.slice(5, 7)) }
 })
 const days = computed(() => monthGrid(displayed.value.year, displayed.value.month))
+function reviewMarkLabel(day: string) {
+  const count = marked.value.get(day)
+  return count === undefined ? undefined : count === null ? '有审查记录' : `已审查，${count} 条问题`
+}
 function shift(offset: number) {
   const date = new Date(Date.UTC(displayed.value.year, displayed.value.month - 1 + offset, 1))
   displayed.value = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
@@ -49,10 +56,10 @@ function goCurrent() {
       </div>
     </div>
     <div v-if="!compact" class="calendar-grid"><span v-for="label in ['一','二','三','四','五','六','日']" :key="label" class="calendar-label">{{ label }}</span>
-      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === dateKey(current), outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? day : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" @click="emit('select', dateKey(day))">
+      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === dateKey(current), outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? [day, reviewMarkLabel(day)].filter(Boolean).join('，') : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" :title="byDay ? reviewMarkLabel(day) : undefined" @click="emit('select', dateKey(day))">
         {{ Number(day.slice(8)) }}
-        <span v-if="byDay && marked.includes(day)" class="review-day-mark" role="img" aria-label="有审查记录" title="有审查记录" />
-        <span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.includes(mondayOf(day))" class="week-check" aria-hidden="true">√</span>
+        <span v-if="byDay && marked.has(day)" class="review-day-mark" :class="{ 'review-day-mark-empty': marked.get(day) === 0 }" aria-hidden="true" />
+        <span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day))" class="week-check" aria-hidden="true">√</span>
       </button>
     </div>
     <p class="calendar-caption" :aria-live="compact ? 'polite' : undefined">{{ byDay ? (compact ? selected.slice(5) : selected) : compact ? `第${weekOfMonth(selected)}周` : `${selected} — ${addDays(selected, 6)}` }}</p>

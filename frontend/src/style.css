@@ -118,6 +118,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   transform: translateX(-50%);
   background: #d4005d;
 }
+/* 加深零问题标记的边缘，让下划线在悬停时仍清晰可见。 */
+.review-day-mark-empty {
+  background: #ffcc00;
+  box-shadow: 0 0 0 1px #755a00;
+}
 .review-panel h2, .review-dialog h2 { margin: 0 0 12px; font-size: 1.12rem; }
 .review-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .review-panel-head h2 { margin: 0; }
