@@ -206,10 +206,15 @@ def week_row(db: Session, user_id: int, start: date, create=False):
 def week_json(db: Session, row: Week | None):
     if not row:
         return {"revision": 0, "tasks": []}
-    tasks = db.execute(select(Task, ReviewIssue.id).outerjoin(ReviewIssue, ReviewIssue.task_id == Task.id)
+    tasks = db.execute(select(Task, ReviewIssue.id, Meeting.id, Meeting.meeting_date)
+                       .outerjoin(ReviewIssue, ReviewIssue.task_id == Task.id)
+                       .outerjoin(MeetingTask, MeetingTask.id == Task.meeting_task_id)
+                       .outerjoin(Meeting, Meeting.id == MeetingTask.meeting_id)
                        .where(Task.week_id == row.id).order_by(Task.position, Task.id))
     return {"revision": row.revision, "tasks": [
-        {**task_json(task), "review_issue_id": issue_id} for task, issue_id in tasks
+        {**task_json(task), "review_issue_id": issue_id, "meeting_id": meeting_id,
+         "meeting_date": meeting_date.isoformat() if meeting_date else None}
+        for task, issue_id, meeting_id, meeting_date in tasks
     ]}
 
 def bump(db: Session, row: Week, expected: int):
@@ -567,6 +572,12 @@ def remove_task(week_start: str, task_id: int, revision: int, auth=Depends(activ
     db.flush(); payload = week_json(db, row); db.commit()
     return payload
 
+def move_meeting_notification(db: Session, source_id: int, target_id: int):
+    # 会议关联迁移到新任务行后，原指派通知也定位到新行。
+    db.execute(update(Notification).where(Notification.kind == "会议指派", Notification.task_id == source_id)
+               .values(task_id=target_id))
+
+
 @app.post("/api/weeks/{week_start}/tasks/{task_id}/duplicate")
 def duplicate_task(week_start: str, task_id: int, revision: int, idempotency_key: str | None = Header(default=None), auth=Depends(active_session), db: Session = Depends(get_db)):
     operation = f"duplicate:{week_start}:{task_id}"
@@ -575,9 +586,12 @@ def duplicate_task(week_start: str, task_id: int, revision: int, idempotency_key
     row = checked_week(db, auth[0].id, week_start, revision)
     source = own_task(db, task_id, row.id)
     db.execute(update(Task).where(Task.week_id == row.id, Task.position > source.position).values(position=Task.position + 1))
-    db.add(Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=None if source.status == "忽略" else source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id))
+    copied = Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=None if source.status == "忽略" else source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id)
+    db.add(copied)
     source.meeting_task_id = None
     db.flush()
+    if copied.meeting_task_id:
+        move_meeting_notification(db, source.id, copied.id)
     return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
 
 @app.post("/api/weeks/{week_start}/carry-over")
@@ -602,6 +616,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
     else:
         next_position = len(existing) + 1
     db.flush()
+    meeting_copies = []
     for source in sources:
         copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id)
         db.add(copied)
@@ -611,8 +626,11 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
         if source.meeting_task_id:
             source.meeting_task_id = None
             source_week.revision += 1
+            meeting_copies.append((source.id, copied))
         next_position += 1
     db.flush()
+    for source_id, copied in meeting_copies:
+        move_meeting_notification(db, source_id, copied.id)
     return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
 
 @app.get("/api/reports/{week_start}")
@@ -700,6 +718,7 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
     existing = {task.id: task for task in row.tasks}
     seen = set()
     affected = set()
+    new_assignments = []
     today = datetime.now(timezone(timedelta(hours=8))).date()
     start = today - timedelta(days=today.weekday())
     for position, item in enumerate(data.tasks, 1):
@@ -726,6 +745,7 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
                 week = week_row(db, user.id, start, create=True)
                 linked = Task(week_id=week.id, meeting_task=task, position=(db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0) + 1, work_days=[], notes="")
                 db.add(linked)
+                new_assignments.append((user.id, linked))
             linked.description, linked.status = item.name, assignment.status
             affected.add(linked.week_id)
         for user_id, linked in linked_by_user.items():
@@ -737,6 +757,10 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
             delete_linked_tasks(db, task, affected)
             db.delete(task)
     touch_weeks(db, affected)
+    # 新周任务和指派通知一起提交，修改已有指派时不会重复发消息。
+    db.add_all(Notification(user_id=user_id, kind="会议指派", task_id=linked.id,
+                            title=f"{row.meeting_date}会议指派：{linked.description or '未命名任务'}"[:500])
+               for user_id, linked in new_assignments)
     db.commit()
     db.expire_all()
     return meeting_json(row)
