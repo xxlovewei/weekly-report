@@ -2,6 +2,25 @@ from .test_api import clean_db, client, mutate
 from .test_meeting_assignments import current_week
 
 
+def test_common_review_projects_are_shared_and_only_admin_can_change_them():
+    admin, alice = client("admin"), client("alice")
+    projects = "/api/reviews/projects"
+    payload = {"name": "Demo", "url": "https://git.example.com/team/demo"}
+    project = admin.post(projects, json={**payload, "visibility": "internal", "owner": "legacy-team"}).json()
+    assert project["is_common"] is False
+    path = f"{projects}/{project['id']}"
+    day = "/api/reviews/days/2026-11-12"
+    assert alice.get(day).json()["common_project_ids"] == []
+    assert alice.patch(path, json={"is_common": True}).status_code == 403
+    assert admin.patch(path, json={"is_common": True}).json()["is_common"] is True
+    edited = admin.put(path, json={**payload, "alias": "新别名"}).json()
+    assert edited["is_common"] is True
+    assert (edited["visibility"], edited["owner"]) == ("internal", "legacy-team")
+    assert alice.get(day).json()["common_project_ids"] == [project["id"]]
+    assert admin.patch(path, json={"is_common": False}).json()["is_common"] is False
+    assert alice.get(day).json()["common_project_ids"] == []
+
+
 def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monkeypatch):
     admin, alice, bob = client("admin"), client("alice"), client("bob")
     projects = "/api/reviews/projects"
@@ -63,9 +82,13 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     assert updated[0]["title"] == "检查缺少的空值判断" and updated[0]["suggestion"] == "调用前先判断参数是否为空。"
     alice_messages = alice.get("/api/notifications").json()["items"]
     assert len(alice_messages) == 1 and alice_messages[0]["target"] == {"date": "2026-11-12"}
+    assert admin.patch(f"{projects}/{project_id}", json={"is_common": True}).status_code == 200
+    assert alice.get(day).json()["common_project_ids"] == [project_id]
     assert admin.delete(f"{projects}/{project_id}").status_code == 200
     assert admin.get(projects).json() == []
-    assert alice.get(day).json()["projects"] == {str(project_id): "Demo"}
+    historical = alice.get(day).json()
+    assert historical["projects"] == {str(project_id): "Demo"}
+    assert historical["common_project_ids"] == []
 
 
 def test_transfer_notification_access_filters_and_read_state():
