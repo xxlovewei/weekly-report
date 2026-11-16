@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from './api'
 import { taskStatuses } from './taskStatuses'
@@ -23,6 +23,8 @@ interface ReviewDay {
 const data = ref<ReviewDay | null>(null)
 const draft = ref<Record<number, { status: string; notes: string }>>({})
 const adding = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
+const filtersExpanded = ref(true)
+const filtersId = useId()
 const author = ref<'all' | 'mine' | 'anonymous'>('all')
 const completion = ref<'all' | 'done' | 'open'>('all')
 const severities = ['严重', '高危', '中危', '低危', '提示'] as const
@@ -185,60 +187,68 @@ function toggleSeverity(level: string) {
 
 <template>
   <section class="panel review-panel review-filters" aria-label="筛选审查记录">
-    <div class="review-filter-top">
-      <div class="review-filter-group" role="group" aria-label="修改人">
-        <strong>修改人</strong>
-        <div class="review-tags">
-          <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">仅看我</button>
-          <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">仅看无名氏</button>
+    <header class="review-panel-head">
+      <h2>筛选条件</h2>
+      <button class="mini-button" type="button" :aria-expanded="filtersExpanded" :aria-controls="filtersId" @click="filtersExpanded = !filtersExpanded">{{ filtersExpanded ? '收起筛选' : '展开筛选' }}</button>
+    </header>
+    <div v-show="filtersExpanded" :id="filtersId" class="review-filter-body">
+      <div class="review-filter-top">
+        <div class="review-filter-group" role="group" aria-label="修改人">
+          <strong>修改人</strong>
+          <div class="review-tags">
+            <button class="mini-button" :aria-pressed="author === 'mine'" @click="author = author === 'mine' ? 'all' : 'mine'">仅看我</button>
+            <button class="mini-button" :aria-pressed="author === 'anonymous'" @click="author = author === 'anonymous' ? 'all' : 'anonymous'">仅看无名氏</button>
+          </div>
+        </div>
+        <div class="review-filter-group" role="group" aria-label="完成状态">
+          <strong>完成状态</strong>
+          <div class="review-tags">
+            <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
+          </div>
+        </div>
+        <div class="review-filter-group" role="group" aria-label="严重程度">
+          <strong>严重程度</strong>
+          <div class="review-tags">
+            <button class="mini-button" :aria-pressed="!severity.length" @click="severity = []">全部</button>
+            <button v-for="level in severities" :key="level" class="mini-button" :aria-pressed="severity.includes(level)" @click="toggleSeverity(level)">{{ level }}</button>
+          </div>
         </div>
       </div>
-      <div class="review-filter-group" role="group" aria-label="完成状态">
-        <strong>完成状态</strong>
+      <div class="review-filter-projects" role="group" aria-label="审查项目">
+        <strong>审查项目</strong>
         <div class="review-tags">
-          <button v-for="([value, label]) in [['all', '全部'], ['done', '已完成'], ['open', '未完成']] as const" :key="value" class="mini-button" :aria-pressed="completion === value" @click="completion = value">{{ label }}</button>
+          <button class="mini-button" @click="selectAll(true)">全选</button>
+          <button class="mini-button" @click="selectAll(false)">取消全选</button>
+          <button v-if="hasOtherProjects" class="mini-button" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起非常用' : '展开全部' }}</button>
+          <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
         </div>
-      </div>
-      <div class="review-filter-group" role="group" aria-label="严重程度">
-        <strong>严重程度</strong>
-        <div class="review-tags">
-          <button class="mini-button" :aria-pressed="!severity.length" @click="severity = []">全部</button>
-          <button v-for="level in severities" :key="level" class="mini-button" :aria-pressed="severity.includes(level)" @click="toggleSeverity(level)">{{ level }}</button>
-        </div>
-      </div>
-    </div>
-    <div class="review-filter-projects" role="group" aria-label="审查项目">
-      <strong>审查项目</strong>
-      <div class="review-tags">
-        <button class="mini-button" @click="selectAll(true)">全选</button>
-        <button class="mini-button" @click="selectAll(false)">取消全选</button>
-        <button v-if="hasOtherProjects" class="mini-button" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起非常用' : '展开全部' }}</button>
-        <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
       </div>
     </div>
   </section>
-  <p v-if="navigationError" class="review-error" role="alert">{{ navigationError }}</p>
-  <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
-  <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
-  <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
-  <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-    <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" collapsible>
-      <template #controls>
-        <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
-          <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
-        </select></label>
-        <button class="secondary-button review-issue-add" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
-      </template>
-      <div class="review-issue-notes">
-        <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
-        <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>
-        <div v-if="issueError[issue.id]" class="review-error" role="alert">
-          {{ issueError[issue.id] }}
-          <button v-if="issueError[issue.id].startsWith('保存失败') && hasChanges(issue)" class="mini-button" @click="flushIssue(issue)">重试</button>
+  <section class="review-results" aria-label="审查问题列表">
+    <p v-if="navigationError" class="review-error" role="alert">{{ navigationError }}</p>
+    <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
+    <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
+    <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
+    <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
+      <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" collapsible>
+        <template #controls>
+          <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
+            <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
+          </select></label>
+          <button class="secondary-button review-issue-add" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
+        </template>
+        <div class="review-issue-notes">
+          <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
+          <small v-if="issue.editable" role="status">{{ savingNotes.has(issue.id) ? '正在保存…' : !issueError[issue.id] && hasChanges(issue) ? '等待自动保存…' : issueError[issue.id] ? '' : '备注自动保存' }}</small>
+          <div v-if="issueError[issue.id]" class="review-error" role="alert">
+            {{ issueError[issue.id] }}
+            <button v-if="issueError[issue.id].startsWith('保存失败') && hasChanges(issue)" class="mini-button" @click="flushIssue(issue)">重试</button>
+          </div>
         </div>
-      </div>
-    </ReviewIssueContent>
-  </article>
+      </ReviewIssueContent>
+    </article>
+  </section>
   <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
     <header class="review-summary-head">
       <div><h2 id="review-summary-title">审查总结</h2><time :datetime="day">{{ day }}</time></div>
