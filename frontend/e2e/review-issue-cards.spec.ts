@@ -90,6 +90,48 @@ test('筛选栏可批量展开或收起问题，详情的四项元数据共用�
   await expect(cards.getByRole('heading', { name: '风险说明' })).toHaveCount(0)
 })
 
+test('审查记录的说明和代码等宽并排，内容分别滚动', async ({ page }) => {
+  const text = '风险及处理方式'.repeat(250)
+  const code = `const value = '${'x'.repeat(200)}'\n`.repeat(24)
+  await openReview(page, 2, 1, [
+    { path: 'src/review.ts', risk: text, existing_code: code, suggestion: text, suggestion_code: code },
+    { risk: '短说明', suggestion_code: 'return true' },
+  ])
+  await page.getByRole('button', { name: '展开列表', exact: true }).click()
+  const cards = page.locator('.review-issue')
+  const longCard = cards.first()
+  const shortCard = cards.nth(1)
+  await expect(longCard.locator('.review-code pre')).toHaveCount(2)
+  await expect(shortCard.getByRole('heading', { name: '修改建议的代码', exact: true })).toBeVisible()
+
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 })
+    for (const [textLabel, codeLabel] of [['风险说明', '相关代码'], ['修改建议', '修改建议的代码']]) {
+      const textSection = longCard.locator('section').filter({ has: page.getByRole('heading', { name: textLabel, exact: true }) })
+      const codeSection = longCard.locator('section').filter({ has: page.getByRole('heading', { name: codeLabel, exact: true }) })
+      const textBox = (await textSection.boundingBox())!
+      const codeBox = (await codeSection.boundingBox())!
+      expect(textBox.y).toBe(codeBox.y)
+      expect(textBox.x).toBeLessThan(codeBox.x)
+      expect(textBox.width).toBeCloseTo(codeBox.width, 1)
+      expect((await codeSection.locator('.review-code').boundingBox())!.height).toBe(300)
+
+      const description = await textSection.locator('p').evaluate(el => ({
+        height: el.clientHeight, vertical: el.scrollHeight > el.clientHeight, horizontal: el.scrollWidth > el.clientWidth,
+      }))
+      expect(description).toEqual({ height: 300, vertical: true, horizontal: false })
+      const codeScroll = await codeSection.locator('pre').evaluate(el => {
+        el.scrollLeft = 100
+        el.scrollTop = 100
+        return { x: el.scrollLeft, y: el.scrollTop, whiteSpace: getComputedStyle(el).whiteSpace }
+      })
+      expect(codeScroll).toEqual({ x: 100, y: 100, whiteSpace: 'pre' })
+    }
+    expect((await shortCard.getByText('短说明', { exact: true }).boundingBox())!.height).toBeLessThan(300)
+    expect((await shortCard.locator('.review-code').boundingBox())!.height).toBeLessThan(300)
+  }
+})
+
 test('筛选收起时显示文本摘要，项目操作按钮共用样式', async ({ page }) => {
   await openReview(page, 1, 2)
   const card = page.getByRole('region', { name: '筛选审查记录' })

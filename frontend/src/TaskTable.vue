@@ -86,6 +86,10 @@ function openActions(event: MouseEvent | KeyboardEvent, id: number) {
           title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = task.review_issue_id">
           <span aria-hidden="true">i</span>
         </button>
+        <RouterLink v-if="!readonly && task.meeting_id && task.meeting_date" class="task-transfer-mark task-meeting-link"
+          :to="{ name: 'meetings', query: { meeting: task.meeting_id } }"
+          :title="`${task.meeting_date}会议指派，点击可跳转会议记录`"
+          :aria-label="`${task.meeting_date}会议指派，点击可跳转会议记录`"><span aria-hidden="true">💡</span></RouterLink>
         <span v-if="task.transferred_by" class="task-transfer-mark" role="img" :aria-label="`由${task.transferred_by}转交的任务`" :title="`由${task.transferred_by}转交的任务`">💡</span>
       </div>
       <div class="task-fields">
