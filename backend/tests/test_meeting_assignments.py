@@ -23,6 +23,58 @@ def editable(meeting):
             for k, v in meeting.items() if k in {"revision", "meeting_date", "meeting_type", "content", "needs_follow_up", "tasks"}}
 
 
+def test_new_assignees_receive_one_notification_with_their_work_target():
+    alice, bob = client("alice"), client("bob")
+    people = {p["username"]: p["id"] for p in alice.get("/api/meeting-assignees").json()}
+    assignment_filter = {"kind": "会议指派", "is_read": False}
+    week = f"/api/weeks/{current_week()}"
+    date = "2020-01-01"
+    created = alice.post("/api/meetings", json={
+        "meeting_date": date, "meeting_type": "周会", "content": "指派通知", "needs_follow_up": True,
+        "tasks": [{"name": "跟进联调", "assignments": [{"user_id": people["alice"]}]}],
+    })
+    assert created.status_code == 201, created.text
+    meeting = created.json()
+    path = f"/api/meetings/{meeting['id']}"
+    assert alice.get("/api/notifications/unread").json() == {"count": 1}
+    assert bob.get("/api/notifications/unread").json() == {"count": 0}
+
+    payload = editable(meeting)
+    payload["tasks"][0]["assignments"].extend([{"user_id": people["bob"]}, {"user_id": 1}])
+    assert alice.put(path, json=payload).status_code == 422
+    assert bob.get(week).json()["tasks"] == []
+    assert bob.get("/api/notifications/unread").json() == {"count": 0}
+    payload["tasks"][0]["assignments"].pop()
+    saved = alice.put(path, json=payload)
+    assert saved.status_code == 200, saved.text
+    updated = editable(saved.json())
+    updated["tasks"][0]["assignments"][0]["status"] = "50%"
+    assert alice.put(path, json=updated).status_code == 200
+
+    for assignee in (alice, bob):
+        task, = assignee.get(week).json()["tasks"]
+        assert task["meeting_id"] == meeting["id"]
+        assert task["meeting_date"] == date
+        response = assignee.get("/api/notifications", params=assignment_filter)
+        assert response.status_code == 200, response.text
+        message, = response.json()["items"]
+        assert message["kind"] == "会议指派" and "跟进联调" in message["title"]
+        assert message["target"] == {"week": str(current_week()), "task": task["id"]}
+
+    bob_week = bob.get(week).json()
+    copied = mutate(bob, "POST", f"{week}/tasks/{bob_week['tasks'][0]['id']}/duplicate", bob_week["revision"]).json()
+    old, current = copied["tasks"]
+    assert old["meeting_id"] is None and current["meeting_id"] == meeting["id"]
+    message, = bob.get("/api/notifications", params=assignment_filter).json()["items"]
+    assert message["target"]["task"] == current["id"]
+
+    next_week = current_week() + timedelta(days=7)
+    carried = mutate(bob, "POST", f"/api/weeks/{next_week}/carry-over", 0, {"mode": "append"}).json()
+    linked, = (task for task in carried["tasks"] if task["meeting_id"])
+    message, = bob.get("/api/notifications", params=assignment_filter).json()["items"]
+    assert message["target"] == {"week": str(next_week), "task": linked["id"]}
+
+
 def test_assignment_sync_copy_delete_and_conflicts():
     alice, bob, meeting = setup_assignment()
     path = f"/api/meetings/{meeting['id']}"

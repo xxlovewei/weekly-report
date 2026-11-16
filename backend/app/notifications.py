@@ -108,7 +108,7 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
 @router.get("")
 def list_notifications(
     all_users: bool = False, day: date | None = None, is_read: bool | None = None,
-    kind: Literal["转交任务", "代码审查"] | None = None, page: int = Query(1, ge=1, le=1000000),
+    kind: Literal["转交任务", "会议指派", "代码审查"] | None = None, page: int = Query(1, ge=1, le=1000000),
     auth=Depends(active_session), db: Session = Depends(get_db),
 ):
     user = auth[0]

@@ -7,6 +7,7 @@ interface Snapshot {
 
 const titles: Record<LiveMessage['kind'], string> = {
   转交任务: '来活了📝！请及时查收📩',
+  会议指派: '收到会议指派📋',
   代码审查: '来bug了⚠️！请及时查收📩',
 }
 

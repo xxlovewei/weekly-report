@@ -55,6 +55,7 @@ let unreadVersion = 0
 const reviewRecords = ref<InstanceType<typeof ReviewRecords> | null>(null)
 const reviewDay = computed(() => validDay(route.query.date) || reviewToday.value)
 const targetTask = computed(() => typeof route.query.task === 'string' && /^[1-9]\d*$/.test(route.query.task) ? Number(route.query.task) : null)
+const targetMeeting = computed(() => typeof route.query.meeting === 'string' && /^[1-9]\d*$/.test(route.query.meeting) ? Number(route.query.meeting) : null)
 function validDay(value: unknown) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
     && new Date(value).toISOString().slice(0, 10) === value ? value : null
@@ -142,6 +143,8 @@ const activeTab = ref<number | null>(null), reportTasks = ref<Task[]>([])
 const draggedReportTabId = ref<number | null>(null)
 const calendarKey = ref(0)
 const meetings = ref<MeetingPage>({ items: [], total: 0, page: 1, page_size: 10 })
+const visibleMeetings = computed(() => targetMeeting.value
+  ? meetings.value.items.filter(item => item.id === targetMeeting.value) : meetings.value.items)
 const meetingPage = ref(1), meetingOpen = ref(false), meetingDraft = ref<Meeting | null>(null)
 const todayWeeklyMeeting = ref<Meeting | null>(null), todayWeeklyMeetingLoading = ref(false)
 const meetingActionLabel = computed(() => todayWeeklyMeeting.value ? '修改会议记录' : '新增会议记录')
@@ -430,12 +433,22 @@ async function loadPage() {
   finally { if (serial === loadSerial) todayWeeklyMeetingLoading.value = false }
 }
 async function loadMeetings() {
+  const meetingId = targetMeeting.value
+  if (meetingId) {
+    // 按会议 ID 读取定位记录，避免当前筛选条件和分页隐藏来源会议。
+    const item = await api<Meeting>(`/meetings/${meetingId}`)
+    if (page.value === 'meetings' && targetMeeting.value === meetingId) {
+      meetings.value = { items: [item], total: 1, page: 1, page_size: 10 }
+    }
+    return
+  }
   const params = new URLSearchParams({ page: String(meetingPage.value), page_size: '10' })
   if (meetingFilter.date_from) params.set('date_from', meetingFilter.date_from)
   if (meetingFilter.date_to) params.set('date_to', meetingFilter.date_to)
   if (meetingFilter.content.trim()) params.set('content', meetingFilter.content.trim())
   if (meetingFilter.status) params.set('status', meetingFilter.status)
-  meetings.value = await api<MeetingPage>(`/meetings?${params}`)
+  const result = await api<MeetingPage>(`/meetings?${params}`)
+  if (page.value === 'meetings' && !targetMeeting.value) meetings.value = result
 }
 async function findTodayWeeklyMeeting() {
   const today = todayShanghai(), pageSize = 50
@@ -446,7 +459,13 @@ async function findTodayWeeklyMeeting() {
     if (meeting || page * pageSize >= result.total) return meeting || null
   }
 }
-async function searchMeetings() { meetingPage.value = 1; try { await loadMeetings() } catch (error) { showError(error) } }
+async function searchMeetings() {
+  meetingPage.value = 1
+  try {
+    if (targetMeeting.value) await router.replace({ name: 'meetings' })
+    else await loadMeetings()
+  } catch (error) { showError(error) }
+}
 async function turnMeetingPage(offset: number) { meetingPage.value += offset; try { await loadMeetings() } catch (error) { meetingPage.value -= offset; showError(error) } }
 async function openMeeting(meeting: Meeting | null = null) {
   // 打开编辑器时读取最新修订号，避免列表缓存覆盖人员刚更新的进度。
@@ -463,7 +482,11 @@ async function meetingSaved() {
 }
 async function removeMeeting(meeting: Meeting) {
   if (!window.confirm(`删除 ${meeting.meeting_date} 的会议记录？当前关联的周任务也将删除。`)) return
-  try { await api(`/meetings/${meeting.id}`, 'DELETE'); await loadMeetings() } catch (error) { showError(error) }
+  try {
+    await api(`/meetings/${meeting.id}`, 'DELETE')
+    if (targetMeeting.value === meeting.id) await searchMeetings()
+    else await loadMeetings()
+  } catch (error) { showError(error) }
 }
 async function chooseTab(id: number) {
   activeTab.value = id; reportTasks.value = []
@@ -510,7 +533,7 @@ async function selectWeek(value: string, refresh = false) {
 }
 async function navigate(name: string) {
   if (name === 'review-records') reviewToday.value = todayShanghai()
-  if (page.value === name) { mobileOpen.value = false; return }
+  if (page.value === name && !(name === 'meetings' && targetMeeting.value)) { mobileOpen.value = false; return }
   try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push(`/${name}`); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
 async function login(event: Event) {
@@ -601,7 +624,7 @@ onMounted(async () => {
   if (user.value) await loadPage()
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
-watch(() => [route.name, route.query.week, route.query.task], () => { if (ready.value && user.value) void loadPage() })
+watch(() => [route.name, route.query.week, route.query.task, route.query.meeting], () => { if (ready.value && user.value) void loadPage() })
 watch(unreadMessages, count => { if (!count) showUnreadReminder.value = false })
 watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
   showUnreadReminder.value = false
@@ -724,9 +747,11 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       </div>
       <div v-else-if="page === 'reports'"><div v-if="!tabs.length" class="empty">暂无成员记录。</div><TaskTable v-if="activeTab" :tasks="reportTasks" readonly /></div>
       <section v-else-if="page === 'categories'" class="panel"><p>为自己的任务维护类型；修改或删除后，历史任务名称保持原样。系统内置类型所有人可直接选择。</p><form class="inline-form" @submit.prevent="addCategory"><label>新任务类型<input v-model="newCategory" maxlength="100" required placeholder="例如：产品开发" /></label><button class="primary-button" type="submit">新增类型</button></form><div v-for="category in categories" :key="category.id" class="list-row"><input v-model="categoryDrafts[category.id]" :aria-label="`任务类型 ${category.name}`" maxlength="100" /><button class="mini-button" type="button" @click="renameCategory(category.id)">保存名称</button><button class="mini-button danger" type="button" @click="deleteCategory(category.id)">删除</button></div><div v-if="!categories.length" class="empty">还没有个人任务类型，可在上方新增。</div></section>
-      <section v-else-if="page === 'meetings'" class="meetings-page"><form class="meeting-filters panel" @submit.prevent="searchMeetings"><label>开始日期<input v-model="meetingFilter.date_from" type="date" /></label><label>结束日期<input v-model="meetingFilter.date_to" type="date" /></label><label>会议内容<input v-model="meetingFilter.content" placeholder="模糊搜索" /></label><label>完成状态<select v-model="meetingFilter.status"><option value="">全部</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option><option value="未开始">未开始</option></select></label><button class="secondary-button" type="submit">查询</button><button class="primary-button" type="button" @click="openMeeting()">＋ 新增会议记录</button></form><div class="meeting-list"><article v-for="item in meetings.items" :key="item.id" class="meeting-card"><div class="meeting-card-head"><div><strong>{{ item.meeting_date }}</strong><span>{{ item.meeting_type }}</span><small class="meeting-person">创建人：{{ item.creator?.display_name || '未知' }}</small><small class="meeting-person">更新人：{{ item.updaters.map(person => person.display_name).join('、') || '暂无' }}</small></div><div class="top-actions"><button class="mini-button" type="button" @click="openMeeting(item)">编辑</button><button class="mini-button danger" type="button" @click="removeMeeting(item)">删除</button></div></div><p class="preline">{{ item.content }}</p><div v-if="item.needs_follow_up" class="meeting-tasks"><strong>跟踪任务</strong><div v-for="task in item.tasks" :key="task.id" class="meeting-task-line"><span class="preline">{{ task.position }}. {{ task.name }}</span>
+      <section v-else-if="page === 'meetings'" class="meetings-page">
+        <div v-if="targetMeeting" class="section-head"><button class="secondary-button" type="button" @click="searchMeetings">返回会议列表</button></div>
+        <form v-else class="meeting-filters panel" @submit.prevent="searchMeetings"><label>开始日期<input v-model="meetingFilter.date_from" type="date" /></label><label>结束日期<input v-model="meetingFilter.date_to" type="date" /></label><label>会议内容<input v-model="meetingFilter.content" placeholder="模糊搜索" /></label><label>完成状态<select v-model="meetingFilter.status"><option value="">全部</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option><option value="未开始">未开始</option></select></label><button class="secondary-button" type="submit">查询</button><button class="primary-button" type="button" @click="openMeeting()">＋ 新增会议记录</button></form><div class="meeting-list"><article v-for="item in visibleMeetings" :key="item.id" class="meeting-card"><div class="meeting-card-head"><div><strong>{{ item.meeting_date }}</strong><span>{{ item.meeting_type }}</span><small class="meeting-person">创建人：{{ item.creator?.display_name || '未知' }}</small><small class="meeting-person">更新人：{{ item.updaters.map(person => person.display_name).join('、') || '暂无' }}</small></div><div class="top-actions"><button class="mini-button" type="button" @click="openMeeting(item)">编辑</button><button class="mini-button danger" type="button" @click="removeMeeting(item)">删除</button></div></div><p class="preline">{{ item.content }}</p><div v-if="item.needs_follow_up" class="meeting-tasks"><strong>跟踪任务</strong><div v-for="task in item.tasks" :key="task.id" class="meeting-task-line"><span class="preline">{{ task.position }}. {{ task.name }}</span>
             <span v-if="!task.assignments?.length" class="status-tag" :class="{ completed: task.status === '已完成', pending: !task.status }" :style="progressStyle(task.status)">{{ task.status || '未开始' }}</span>
-            <span v-for="assignment in task.assignments" :key="assignment.user_id" class="meeting-person-progress"><span class="meeting-assignee-name">{{ assignment.person?.display_name }}</span><span>:</span><span class="status-tag" :class="{ completed: assignment.status === '已完成', pending: !assignment.status }" :style="progressStyle(assignment.status)">{{ assignment.status || '未开始' }}</span></span></div><p v-if="!item.tasks.length">暂无关联任务</p></div></article><div v-if="!meetings.items.length" class="empty">没有符合条件的会议记录。</div></div><div class="meeting-pagination"><span>共 {{ meetings.total }} 条 · 第 {{ meetings.page }} 页</span><button class="mini-button" type="button" :disabled="meetingPage <= 1" @click="turnMeetingPage(-1)">上一页</button><button class="mini-button" type="button" :disabled="meetingPage * meetings.page_size >= meetings.total" @click="turnMeetingPage(1)">下一页</button></div></section>
+            <span v-for="assignment in task.assignments" :key="assignment.user_id" class="meeting-person-progress"><span class="meeting-assignee-name">{{ assignment.person?.display_name }}</span><span>:</span><span class="status-tag" :class="{ completed: assignment.status === '已完成', pending: !assignment.status }" :style="progressStyle(assignment.status)">{{ assignment.status || '未开始' }}</span></span></div><p v-if="!item.tasks.length">暂无关联任务</p></div></article><div v-if="!visibleMeetings.length" class="empty">没有符合条件的会议记录。</div></div><div v-if="!targetMeeting" class="meeting-pagination"><span>共 {{ meetings.total }} 条 · 第 {{ meetings.page }} 页</span><button class="mini-button" type="button" :disabled="meetingPage <= 1" @click="turnMeetingPage(-1)">上一页</button><button class="mini-button" type="button" :disabled="meetingPage * meetings.page_size >= meetings.total" @click="turnMeetingPage(1)">下一页</button></div></section>
       <section v-else-if="page === 'users' && isAdmin" class="panel">
         <h2>新增用户</h2>
         <form class="user-create" @submit.prevent="createUser">
