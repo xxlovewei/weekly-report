@@ -3,18 +3,15 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api, credentialApi } from './api'
 
 const props = defineProps<{ accountId: number }>()
-type Visibility = 'private' | 'internal' | 'public'
 interface ProjectInput {
-  name: string; alias: string; url: string; visibility: Visibility; owner: string
+  name: string; alias: string; url: string
   gitlab_url: string | null; gitlab_id: number | null; skip_slash_branches: boolean
 }
-type Project = ProjectInput & { id: number }
+type Project = ProjectInput & { id: number; is_common: boolean }
 interface GitLabProject {
-  id: number; name: string; web_url: string; visibility: Visibility
-  path_with_namespace: string; owner?: { username: string }; namespace?: { full_path: string }
+  id: number; name: string; web_url: string; path_with_namespace: string
 }
-const visibility = { private: '私有', internal: '内部', public: '公开' }
-const blankProject = (): ProjectInput => ({ name: '', alias: '', url: '', visibility: 'private', owner: '', gitlab_url: null, gitlab_id: null, skip_slash_branches: true })
+const blankProject = (): ProjectInput => ({ name: '', alias: '', url: '', gitlab_url: null, gitlab_id: null, skip_slash_branches: true })
 const projects = ref<Project[]>([]), discovered = ref<GitLabProject[]>([]), selected = ref<number[]>([])
 const left = ref<number[]>([]), right = ref<number[]>([]), search = ref(''), discoveredBase = ref('')
 const editing = ref<Project | null>(null), editor = ref<HTMLDialogElement | null>(null)
@@ -100,8 +97,7 @@ function saveSelection() {
       if (!selected.value.includes(item.id)) {
         if (saved) removed_ids.push(saved.id)
       } else if (!saved) {
-        added.push({ ...blankProject(), name: item.name, url: item.web_url, visibility: item.visibility,
-          owner: item.owner?.username || item.namespace?.full_path || '', gitlab_url: discoveredBase.value, gitlab_id: item.id })
+        added.push({ ...blankProject(), name: item.name, url: item.web_url, gitlab_url: discoveredBase.value, gitlab_id: item.id })
       }
     }
     projects.value = await api<Project[]>('/reviews/projects', 'PUT', { removed_ids, projects: added })
@@ -110,8 +106,8 @@ function saveSelection() {
 }
 function openProject(project?: Project) {
   editing.value = project || null
-  const { id: _id, ...values } = project || { ...blankProject(), id: 0 }
-  Object.assign(draft, values)
+  const { name, alias, url, gitlab_url, gitlab_id, skip_slash_branches } = project || blankProject()
+  Object.assign(draft, { name, alias, url, gitlab_url, gitlab_id, skip_slash_branches })
   editor.value?.showModal()
 }
 function saveProject() {
@@ -120,6 +116,12 @@ function saveProject() {
     await api(id ? `/reviews/projects/${id}` : '/reviews/projects', id ? 'PUT' : 'POST', draft)
     projects.value = await api<Project[]>('/reviews/projects')
     syncSelection(); editor.value?.close(); feedback.value = '已保存审查项目'
+  })
+}
+function toggleCommon(project: Project) {
+  void perform(async () => {
+    const saved = await api<Project>(`/reviews/projects/${project.id}`, 'PATCH', { is_common: !project.is_common })
+    project.is_common = saved.is_common
   })
 }
 function removeProject(project: Project) {
@@ -162,8 +164,12 @@ function removeProject(project: Project) {
   <section class="panel review-panel">
     <div class="review-panel-head"><h2>审查项目</h2><button class="primary-button" type="button" :disabled="busy" @click="openProject()">＋ 手动新增</button></div>
     <div v-for="project in projects" :key="project.id" class="review-project">
-      <div><strong>{{ project.alias }}</strong><p>{{ project.name }} · {{ visibility[project.visibility] }}<template v-if="project.owner"> · {{ project.owner }}</template></p><a :href="project.url" target="_blank" rel="noopener noreferrer">{{ project.url }}</a><p>分支范围：{{ project.skip_slash_branches ? '只审查名称不含 / 的分支' : '所有分支' }}</p></div>
-      <div class="top-actions"><button class="mini-button" type="button" :disabled="busy" @click="openProject(project)">编辑</button><button class="mini-button danger" type="button" :disabled="busy" @click="removeProject(project)">删除</button></div>
+      <div><strong>{{ project.alias }}</strong><p>{{ project.name }}</p><a :href="project.url" target="_blank" rel="noopener noreferrer">{{ project.url }}</a><p>分支范围：{{ project.skip_slash_branches ? '只审查名称不含 / 的分支' : '所有分支' }}</p></div>
+      <div class="top-actions">
+        <button class="mini-button" type="button" :disabled="busy" @click="toggleCommon(project)">{{ project.is_common ? '取消常用' : '设为常用' }}</button>
+        <button class="mini-button" type="button" :disabled="busy" @click="openProject(project)">编辑</button>
+        <button class="mini-button danger" type="button" :disabled="busy" @click="removeProject(project)">删除</button>
+      </div>
     </div>
     <p v-if="!projects.length" class="empty">暂无审查项目</p>
   </section>
@@ -173,8 +179,6 @@ function removeProject(project: Project) {
       <label>项目名称<input v-model="draft.name" maxlength="250" required /></label>
       <label>项目别名<input v-model="draft.alias" maxlength="250" :placeholder="draft.name || '默认使用项目名称'" /></label>
       <label>项目 URL<input v-model="draft.url" type="url" maxlength="1000" required /></label>
-      <label>可见性<select v-model="draft.visibility"><option v-for="(label, key) in visibility" :key="key" :value="key">{{ label }}</option></select></label>
-      <label>项目所属用户或命名空间<input v-model="draft.owner" maxlength="250" /></label>
       <label class="review-checkbox"><input v-model="draft.skip_slash_branches" type="checkbox" />只审查名称不含 / 的分支</label>
       <p class="review-error" v-if="error" role="alert">{{ error }}</p>
       <div class="top-actions"><button type="button" class="secondary-button" @click="editor?.close()">取消</button><button class="primary-button" :disabled="busy">保存项目</button></div>

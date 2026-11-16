@@ -145,7 +145,12 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .review-tags .mini-button[aria-pressed="true"] { background: #ccff00; }
 .project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.review-filters { gap: 14px; max-width: none; }
+/* 将筛选卡片留在列表滚动区外，筛选项较多时在卡片内部滚动。 */
+.shell .review-work-area { display: flex; flex-direction: column; overflow: hidden; padding-right: 6px; }
+.review-filters { display: flex; flex: none; flex-direction: column; gap: 12px; max-width: none; max-height: max(54px, 55%); padding: 12px 16px; }
+.review-filters .review-panel-head { flex: none; }
+.review-filter-body { display: grid; align-content: start; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px; margin: -6px; }
+.review-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 0 0; margin-right: -6px; }
 .review-filter-top, .review-filter-group, .review-filter-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .review-filter-top { gap: 12px 24px; }
 .review-filter-group, .review-filter-projects { font-size: 13px; font-weight: 900; }
@@ -154,18 +159,27 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-issue { gap: 16px; max-width: none; overflow-wrap: anywhere; }
 .review-issue-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .review-issue-title { flex: 1 1 300px; min-width: 0; }
-.review-issue-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-left: auto; }
-.review-issue-controls select { min-width: 90px; }
+.review-card-head { justify-content: flex-start; align-items: center; gap: 8px; }
+.review-card-head .review-issue-title { flex: 0 1 auto; }
+.review-card-head .review-issue-title:only-child { flex: 1 1 auto; }
+.review-card-toggle { width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+.review-card-toggle:hover { background: #f1f1f1; }
+.review-card-toggle .status-tag { font-size: 12px; }
+.review-card-status { display: flex; align-items: center; gap: 6px; }
+.review-card-status select { width: auto; min-width: 90px; padding: 4px 6px; }
+.review-issue-add { margin-left: auto; }
+.review-issue-body { display: grid; gap: 16px; min-width: 0; }
 .review-issue h2 { margin: 10px 0 0; font-size: 1.25rem; line-height: 1.4; }
 .review-project-name { font-size: 12px; font-weight: 700; }
-.review-number, .review-severity { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
+.review-number, .review-severity, .review-author-tag { display: inline-block; padding: 3px 7px; border: 1px solid #000; font-size: 12px; font-weight: 900; }
+.review-author-tag { background: #e6f4ff; }
 .review-number { background: #00d9ff; }
 .review-severity { background: #f1f1f1; }
 .review-severity[data-level="严重"], .review-severity[data-level="高危"] { background: #ff8585; }
 .review-severity[data-level="中危"] { background: #ff9500; }
 .review-severity[data-level="低危"] { background: #ffff00; }
 .unread-count { display: inline-block; border-radius: 999px; padding: 3px 9px; background: #ffe7e8; color: #9a2833; font-size: 0.83rem; margin-left: 6px; }
-.unread-label, .review-error { color: #a12232; }
+.review-error { color: #a12232; }
 .unread-reminder-region {
   display: grid;
   gap: 12px;
@@ -288,7 +302,12 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-coverage li > div { flex: 1 1 180px; min-width: 0; }
 .review-summary-project details + details { margin-top: 8px; }
 .task-row.task-target { outline: 2px solid #2781b8; outline-offset: 2px; }
+.message-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .message-row strong { display: block; margin-top: 8px; }
+.message-row time { font-weight: 900; }
+.message-row .message-tag { min-width: 0; font-size: 12px; }
+.message-tag.message-kind { background: #e6f4ff; }
+.message-tag.message-unread { background: #ffea80; }
 @media (max-width: 520px) {
   .review-summary-run, .review-summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .review-summary-run > div:first-child { grid-column: 1 / -1; }

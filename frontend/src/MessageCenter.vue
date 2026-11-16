@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { api } from './api'
-import type { desktopNotificationPermission } from './notificationStream'
 import type { LiveMessage } from './types'
 
 const props = defineProps<{
   admin: boolean; jumpToMessage: (item: LiveMessage) => Promise<void>; refreshKey: number
-  permission: ReturnType<typeof desktopNotificationPermission>; requestingPermission: boolean
 }>()
-const emit = defineEmits<{ change: []; enableNotifications: [] }>()
+const emit = defineEmits<{ change: [] }>()
 interface Message extends LiveMessage {
   title: string; created_at: string; recipient?: string
 }
 const items = ref<Message[]>([]), total = ref(0), page = ref(1)
-const allUsers = ref(false), day = ref(''), status = ref(''), kind = ref('')
+// 进入消息中心时优先显示待处理的未读消息。
+const allUsers = ref(false), day = ref(''), status = ref('false'), kind = ref('')
 const loading = ref(false), busy = ref<number | null>(null), error = ref('')
 const timestamp = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium', timeStyle: 'short' })
 let serial = 0
@@ -59,10 +58,6 @@ async function jump(item: Message) {
     <label>日期<input v-model="day" type="date" /></label>
     <label>状态<select v-model="status"><option value="">全部</option><option value="false">未读</option><option value="true">已读</option></select></label>
     <label>类型<select v-model="kind"><option value="">全部</option><option>转交任务</option><option>代码审查</option></select></label>
-    <button v-if="permission === 'default'" class="secondary-button" type="button" :disabled="requestingPermission" @click="emit('enableNotifications')">开启桌面通知</button>
-    <small v-else-if="permission === 'denied'">请在浏览器站点设置中允许通知。</small>
-    <small v-else-if="permission === 'granted'">已开启桌面通知</small>
-    <small v-else>当前浏览器环境仅支持站内消息。</small>
   </section>
   <p v-if="error" class="review-error" role="alert">{{ error }}</p>
   <p v-if="loading" class="empty" role="status">正在加载消息…</p>
@@ -70,7 +65,12 @@ async function jump(item: Message) {
   <template v-else>
     <article v-for="item in items" :key="item.id" class="panel review-panel message-row">
       <div>
-        <div class="review-tags"><span>{{ item.kind }}</span><span :class="{ 'unread-label': !item.is_read }">{{ item.is_read ? '已读' : '未读' }}</span><span v-if="allUsers">接收人 {{ item.recipient }}</span><time :datetime="item.created_at">{{ timestamp.format(new Date(item.created_at)) }}</time></div>
+        <div class="review-tags">
+          <time :datetime="item.created_at">{{ timestamp.format(new Date(item.created_at)) }}</time>
+          <span class="status-tag message-tag message-kind">{{ item.kind }}</span>
+          <span class="status-tag message-tag" :class="{ 'message-unread': !item.is_read }">{{ item.is_read ? '已读' : '未读' }}</span>
+          <span v-if="allUsers">接收人 {{ item.recipient }}</span>
+        </div>
         <strong>{{ item.title }}</strong>
       </div>
       <div v-if="!allUsers" class="top-actions"><button v-if="item.target" class="mini-button" :disabled="busy !== null" @click="jump(item)">跳转</button><button class="mini-button" :disabled="busy !== null" @click="mark(item)">{{ item.is_read ? '标为未读' : '标为已读' }}</button></div>

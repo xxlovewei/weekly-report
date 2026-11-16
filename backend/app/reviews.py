@@ -54,6 +54,10 @@ class ProjectSelection(Input):
     projects: list[ProjectInput] = Field(default_factory=list, max_length=10000)
 
 
+class ProjectCommon(Input):
+    is_common: bool
+
+
 class GitLabConnection(Input):
     model_config = ConfigDict(str_strip_whitespace=False)
     url: str = Field(max_length=1000)
@@ -93,14 +97,19 @@ def gitlab_projects(encrypted: EncryptedCredentials, _=Depends(admin)):
 
 
 def project_json(row):
-    fields = ("id", "name", "alias", "url", "visibility", "owner", "gitlab_url", "gitlab_id", "skip_slash_branches")
+    fields = ("id", "name", "alias", "url", "visibility", "owner", "gitlab_url", "gitlab_id", "skip_slash_branches", "is_common")
     return {field: getattr(row, field) for field in fields}
 
 
-def save_project(db, data, project_id=None):
-    current = db.get(ReviewProject, project_id) if project_id is not None else None
-    if project_id is not None and (not current or not current.active):
+def get_active_project(db, project_id):
+    row = db.get(ReviewProject, project_id)
+    if not row or not row.active:
         raise HTTPException(404, "审查项目不存在")
+    return row
+
+
+def save_project(db, data, project_id=None):
+    current = get_active_project(db, project_id) if project_id is not None else None
     matching = db.scalar(select(ReviewProject).where(ReviewProject.url == data.url))
     if current and matching and current.id != matching.id:
         raise HTTPException(409, "此项目地址已存在")
@@ -113,8 +122,13 @@ def save_project(db, data, project_id=None):
     row = current or matching
     if project_id is None and row and row.active:
         return row
+    fields = data.model_dump()
+    if row is not None:
+        # 配置表单省略旧字段时保留原值，仍接受旧客户端显式提交的字段。
+        for field in {"visibility", "owner"} - data.model_fields_set:
+            del fields[field]
     row = row or ReviewProject()
-    for field, value in data.model_dump().items():
+    for field, value in fields.items():
         setattr(row, field, value)
     row.alias = data.alias or data.name
     row.active = True
@@ -168,12 +182,20 @@ def edit_project(project_id: int, data: ProjectInput, _=Depends(admin), db: Sess
     return project_json(row)
 
 
+@router.patch("/projects/{project_id}")
+def set_project_common(project_id: int, data: ProjectCommon, _=Depends(admin), db: Session = Depends(get_db)):
+    lock_task_changes(db)
+    row = get_active_project(db, project_id)
+    # 单独保存常用状态，编辑项目资料时保留该状态。
+    row.is_common = data.is_common
+    db.commit()
+    return project_json(row)
+
+
 @router.delete("/projects/{project_id}")
 def remove_project(project_id: int, _=Depends(admin), db: Session = Depends(get_db)):
     lock_task_changes(db)
-    row = db.get(ReviewProject, project_id)
-    if not row or not row.active:
-        raise HTTPException(404, "审查项目不存在")
+    row = get_active_project(db, project_id)
     row.active = False
     db.commit()
     return {"ok": True}
@@ -294,9 +316,11 @@ def issue_json(row, names, user, task_owner=None):
 @router.get("/days/{report_date}")
 def report_day(report_date: date, auth=Depends(active_session), db: Session = Depends(get_db)):
     run = db.get(ReviewRun, report_date)
-    projects = {p.id: p.alias for p in active_projects(db)}
+    configured_projects = list(active_projects(db))
+    projects = {p.id: p.alias for p in configured_projects}
+    common_project_ids = [p.id for p in configured_projects if p.is_common]
     if not run:
-        return {"summary": None, "issues": [], "projects": projects}
+        return {"summary": None, "issues": [], "projects": projects, "common_project_ids": common_project_ids}
     names = {username.lower(): name for username, name in db.execute(select(User.username, User.display_name))}
     rows = db.execute(select(ReviewIssue, Week.user_id).outerjoin(
         Task, Task.id == ReviewIssue.task_id,
@@ -310,7 +334,7 @@ def report_day(report_date: date, auth=Depends(active_session), db: Session = De
     return {
         "summary": {"report_date": run.report_date, "commit_date": run.commit_date, "model": run.model,
                     "duration_seconds": run.duration_seconds, "projects": run.projects},
-        "issues": issues, "projects": {**historical, **projects},
+        "issues": issues, "projects": {**historical, **projects}, "common_project_ids": common_project_ids,
     }
 
 
