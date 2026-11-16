@@ -9,28 +9,30 @@ const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
 const detailId = useId()
 const expanded = ref(false)
 const showDetails = computed(() => !props.collapsible || expanded.value)
+const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '0')}`)
 </script>
 
 <template>
   <header class="review-issue-head" :class="{ 'review-card-head': collapsible }">
+    <button
+      v-if="collapsible"
+      class="review-card-toggle"
+      type="button"
+      :aria-label="`${expanded ? '收起' : '展开'} ${issueNumber} 详情`"
+      :aria-expanded="expanded"
+      :aria-controls="detailId"
+      @click="expanded = !expanded"
+    ><span aria-hidden="true">{{ expanded ? '−' : '+' }}</span></button>
     <div class="review-issue-title">
-      <component
-        :is="collapsible ? 'button' : 'div'"
-        class="review-tags"
-        :class="{ 'review-card-toggle': collapsible }"
-        :type="collapsible ? 'button' : undefined"
-        :aria-expanded="collapsible ? expanded : undefined"
-        :aria-controls="collapsible ? detailId : undefined"
-        @click="collapsible && (expanded = !expanded)"
-      >
-        <span class="review-number">ISSUE-{{ String(issue.id).padStart(2, '0') }}</span>
+      <div class="review-tags">
+        <span class="review-number">{{ issueNumber }}</span>
         <span class="review-severity" :data-level="issue.severity">{{ issue.severity }}</span>
         <span class="review-project-name">{{ projectAlias }}</span>
         <template v-if="collapsible">
-          <span v-if="expanded" class="review-author-tag" :title="`修改人：${issue.author_name}`">{{ issue.author_name }}</span>
-          <span v-else class="status-tag" :class="{ completed: issue.status === '已完成', pending: !issue.status }" :style="progressStyle(issue.status)">{{ issue.status || '未开始' }}</span>
+          <span class="review-author-tag" :title="`修改人：${issue.author_name}`">{{ issue.author_name }}</span>
+          <span v-if="!expanded" class="status-tag" :class="{ completed: issue.status === '已完成', pending: !issue.status }" :style="progressStyle(issue.status)">{{ issue.status || '未开始' }}</span>
         </template>
-      </component>
+      </div>
       <h2 v-if="!collapsible"><ReviewText :text="issue.title" /></h2>
     </div>
     <slot v-if="showDetails" name="controls" />
