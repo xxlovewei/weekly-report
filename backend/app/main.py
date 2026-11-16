@@ -23,6 +23,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_PATH = os.getenv("COOKIE_PATH", "/")
 SESSION_LIFETIME = timedelta(days=7)
 LOCKED_MESSAGE = "账号已锁定，请联系管理员。"
+UserRole = Literal["user", "admin"]
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -50,13 +51,15 @@ class UserCreate(Input):
     username: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     display_name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=6, max_length=128)
-    role: Literal["user"] = "user"
+    role: UserRole = "user"
+    roles: set[UserRole] = Field(default_factory=lambda: {"user"}, min_length=1)
     status: Literal["正常", "锁定"] = "正常"
 
 class UserUpdate(Input):
     username: str | None = Field(default=None, min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]+$")
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
-    role: Literal["user", "admin"] | None = None
+    role: UserRole | None = None
+    roles: set[UserRole] | None = Field(default=None, min_length=1)
     is_active: bool | None = None
     status: Literal["正常", "锁定"] | None = None
 
@@ -128,7 +131,10 @@ class MeetingInput(Input):
         return value
 
 def user_json(user: User):
-    return {"id": user.id, "username": user.username, "display_name": user.display_name, "role": user.role, "is_active": user.is_active, "status": user.status, "must_change_password": user.must_change_password}
+    # 旧客户端仍可读取单角色，权限判断以完整角色列表为准。
+    return {"id": user.id, "username": user.username, "display_name": user.display_name,
+            "role": "admin" if user.has_role("admin") else "user", "roles": user.roles,
+            "is_active": user.is_active, "status": user.status, "must_change_password": user.must_change_password}
 
 def task_json(task: Task):
     return {"id": task.id, "meeting_task_id": task.meeting_task_id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "priority": task.priority, "transferred_by": task.transferred_by, "work_days": task.work_days, "notes": task.notes}
@@ -172,9 +178,14 @@ def active_session(request: Request, db: Session = Depends(get_db)):
     return user, row
 
 def admin(auth=Depends(active_session)):
-    if auth[0].role != "admin":
+    if not auth[0].has_role("admin"):
         raise HTTPException(403, "仅管理员可操作")
     return auth[0]
+
+def user_management_admin(request: Request, db: Session = Depends(get_db)):
+    # 先串行化账号管理写入，再检查权限，避免并发降级和锁定绕过保护。
+    db.execute(text("SELECT pg_advisory_xact_lock(26070502)"))
+    return admin(active_session(request, db))
 
 def monday(value: str):
     try:
@@ -301,12 +312,15 @@ def list_users(_: User = Depends(admin), db: Session = Depends(get_db)):
     return [user_json(x) for x in db.scalars(select(User).where(User.is_deleted.is_(False)).order_by(User.id)).all()]
 
 @app.post("/api/users", status_code=201)
-def create_user(encrypted: EncryptedCredentials, _: User = Depends(admin), db: Session = Depends(get_db)):
+def create_user(encrypted: EncryptedCredentials, _: User = Depends(user_management_admin), db: Session = Depends(get_db)):
     data = decrypt_credentials(encrypted, "/users", UserCreate)
+    if {"role", "roles"} <= data.model_fields_set:
+        raise HTTPException(422, "角色字段不能同时提交")
+    roles = sorted(data.roles) if "roles" in data.model_fields_set else [data.role]
     username = data.username.lower()
     if db.scalar(select(User.id).where(User.username == username)):
         raise HTTPException(409, "用户名已存在")
-    user = User(username=username, display_name=data.display_name, role=data.role, status=data.status, password_hash=hasher.hash(data.password), must_change_password=True)
+    user = User(username=username, display_name=data.display_name, roles=roles, status=data.status, password_hash=hasher.hash(data.password), must_change_password=True)
     db.add(user)
     try:
         db.commit()
@@ -316,34 +330,47 @@ def create_user(encrypted: EncryptedCredentials, _: User = Depends(admin), db: S
     db.refresh(user)
     return user_json(user)
 
-def protect_last_admin(db: Session, user: User, new_role: str, new_active: bool, new_status: str = "正常"):
-    if user.role == "admin" and user.is_active and user.status == "正常" and (new_role != "admin" or not new_active or new_status == "锁定"):
-        active_ids = db.scalars(select(User.id).where(User.role == "admin", User.is_active.is_(True), User.status == "正常").order_by(User.id).with_for_update()).all()
+def protect_last_admin(db: Session, user: User, new_roles: list[str], new_active: bool, new_status: str):
+    was_active_admin = user.has_role("admin") and user.is_active and user.status == "正常"
+    stays_active_admin = "admin" in new_roles and new_active and new_status == "正常"
+    if was_active_admin and not stays_active_admin:
+        active_ids = db.scalars(select(User.id).where(
+            User.has_role("admin"), User.is_active.is_(True),
+            User.is_deleted.is_(False), User.status == "正常",
+        ).order_by(User.id).with_for_update()).all()
         if len(active_ids) <= 1:
             raise HTTPException(409, "不能停用、锁定或降级最后一位有效管理员")
 
 @app.patch("/api/users/{user_id}")
-def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Session = Depends(get_db)):
-    user = db.get(User, user_id)
+def edit_user(user_id: int, data: UserUpdate, _: User = Depends(user_management_admin), db: Session = Depends(get_db)):
+    user = db.get(User, user_id, with_for_update=True, populate_existing=True)
     if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")
     values = data.model_dump(exclude_unset=True)
-    if user.role == "admin" and values.get("role", "admin") != "admin":
-        raise HTTPException(403, "管理员角色不可修改")
-    protect_last_admin(db, user, values.get("role", user.role), values.get("is_active", user.is_active), values.get("status", user.status))
-    if "username" in values and values["username"] is not None:
+    if any(value is None for value in values.values()):
+        raise HTTPException(422, "此字段不能为空")
+    if "role" in values:
+        if "roles" in values:
+            raise HTTPException(422, "角色字段不能同时提交")
+        role = values.pop("role")
+        # 旧客户端保存资料时重发同一单角色，保留账号已有的其他角色。
+        if role != ("admin" if user.has_role("admin") else "user"):
+            values["roles"] = {role}
+    if "roles" in values:
+        values["roles"] = sorted(values["roles"])
+    new_roles = values.get("roles", user.roles)
+    protect_last_admin(db, user, new_roles, values.get("is_active", user.is_active), values.get("status", user.status))
+    if "username" in values:
         values["username"] = values["username"].lower()
         if db.scalar(select(User.id).where(User.username == values["username"], User.id != user_id)):
             raise HTTPException(409, "用户名已存在")
-    old_role = user.role
+    old_roles = user.roles
     old_status = user.status
     for key, value in values.items():
-        if value is None:
-            raise HTTPException(422, "此字段不能为空")
         setattr(user, key, value)
     if old_status == "锁定" and user.status == "正常":
         user.failed_login_times = []
-    if not user.is_active or user.role != old_role or user.status == "锁定":
+    if not user.is_active or user.roles != old_roles or user.status == "锁定":
         db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
     try:
         db.commit()
@@ -353,18 +380,18 @@ def edit_user(user_id: int, data: UserUpdate, _: User = Depends(admin), db: Sess
     return user_json(user)
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int, _: User = Depends(admin), db: Session = Depends(get_db)):
-    user = db.get(User, user_id)
+def delete_user(user_id: int, _: User = Depends(user_management_admin), db: Session = Depends(get_db)):
+    user = db.get(User, user_id, with_for_update=True, populate_existing=True)
     if not user or user.is_deleted:
         raise HTTPException(404, "用户不存在")
-    if user.role == "admin":
-        raise HTTPException(403, "管理员不可删除")
+    if user.has_role("admin"):
+        raise HTTPException(403, "请先移除管理员角色，再删除用户")
     user.is_deleted = True
     db.execute(delete(LoginSession).where(LoginSession.user_id == user.id)); db.commit()
     return {"ok": True}
 
 @app.post("/api/users/{user_id}/password")
-def reset_password(user_id: int, encrypted: EncryptedCredentials, _: User = Depends(admin), db: Session = Depends(get_db)):
+def reset_password(user_id: int, encrypted: EncryptedCredentials, _: User = Depends(user_management_admin), db: Session = Depends(get_db)):
     data = decrypt_credentials(encrypted, f"/users/{user_id}/password", ResetPassword)
     user = db.get(User, user_id)
     if not user or user.is_deleted:
@@ -448,7 +475,7 @@ def own_task(db: Session, task_id: int, week_id: int):
 
 def transfer_recipients(sender_id: int):
     return select(User).where(
-        User.id != sender_id, User.role == "user", User.is_active.is_(True),
+        User.id != sender_id, User.has_role("user"), User.is_active.is_(True),
         User.is_deleted.is_(False), User.status == "正常",
     )
 
@@ -591,9 +618,9 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
 @app.get("/api/reports/{week_start}")
 def report_tabs(week_start: str, auth=Depends(active_session), db: Session = Depends(get_db)):
     start = monday(week_start)
-    active = db.scalars(select(User).where(User.is_active.is_(True), User.is_deleted.is_(False), User.role != "admin")).all()
+    active = db.scalars(select(User).where(User.is_active.is_(True), User.is_deleted.is_(False), User.has_role("user"))).all()
     past_ids = db.scalars(select(Week.user_id).join(Task).where(Week.start_date == start).distinct()).all()
-    inactive = db.scalars(select(User).where((User.is_active.is_(False)) | (User.is_deleted.is_(True)), User.role != "admin", User.id.in_(past_ids))).all() if past_ids else []
+    inactive = db.scalars(select(User).where((User.is_active.is_(False)) | (User.is_deleted.is_(True)), User.has_role("user"), User.id.in_(past_ids))).all() if past_ids else []
     users = sorted(active + inactive, key=lambda u: (u.display_name, u.username))
     counts = {}
     for u in users: counts[u.display_name] = counts.get(u.display_name, 0) + 1
@@ -603,7 +630,7 @@ def report_tabs(week_start: str, auth=Depends(active_session), db: Session = Dep
 def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
     start = monday(week_start)
     user = db.get(User, user_id)
-    if not user or user.role == "admin":
+    if not user or not user.has_role("user"):
         raise HTTPException(404, "用户不存在")
     row = week_row(db, user_id, start)
     return week_json(db, row)
@@ -633,7 +660,7 @@ def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "rev
     if scope == "work":
         query = query.where(Week.user_id == auth[0].id)
     else:
-        query = query.join(User, Week.user_id == User.id).where(User.role != "admin")
+        query = query.join(User, Week.user_id == User.id).where(User.has_role("user"))
     return sorted(day.isoformat() for day in db.scalars(query.distinct()).all())
 
 def touch_weeks(db: Session, week_ids: set[int]):
@@ -655,7 +682,7 @@ def delete_linked_tasks(db: Session, task: MeetingTask, affected: set[int]):
 
 @app.get("/api/meeting-assignees")
 def meeting_assignees(auth=Depends(active_session), db: Session = Depends(get_db)):
-    users = db.scalars(select(User).where(User.role == "user", User.is_deleted.is_(False)).order_by(User.display_name, User.id)).all()
+    users = db.scalars(select(User).where(User.has_role("user"), User.is_deleted.is_(False)).order_by(User.display_name, User.id)).all()
     return [meeting_person_json(user) for user in users]
 
 
@@ -694,7 +721,7 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
             linked = linked_by_user.get(assignment.user_id)
             user = db.get(User, assignment.user_id)
             if linked is None:
-                if not user or user.role != "user" or user.is_deleted:
+                if not user or not user.has_role("user") or user.is_deleted:
                     raise HTTPException(422, "只能指派普通用户")
                 week = week_row(db, user.id, start, create=True)
                 linked = Task(week_id=week.id, meeting_task=task, position=(db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0) + 1, work_days=[], notes="")

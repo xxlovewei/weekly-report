@@ -292,7 +292,7 @@ def ingest_report(data: DailyReport, db: Session = Depends(get_db)):
     unmatched = bool(authors - known)
     coverage_gaps = any(p.error or any(c.status != "complete" for c in p.commits) for p in data.projects)
     for user in users:
-        if user.username.lower() not in authors and not (user.role == "admin" and (unmatched or coverage_gaps)):
+        if user.username.lower() not in authors and not (user.has_role("admin") and (unmatched or coverage_gaps)):
             continue
         db.execute(insert(Notification).values(
             user_id=user.id, kind="代码审查", event_key=f"review:{data.report_date}",
@@ -309,7 +309,7 @@ def issue_json(row, names, user, task_owner=None):
         "author_name": names.get(author, row.author or "无名氏"), "mine": author == user.username.lower(),
         "anonymous": author not in names, "title": row.title, "severity": row.severity,
         "status": row.status, "notes": row.notes, "task_added": row.task_added,
-        "editable": task_owner is None or task_owner == user.id or user.role == "admin",
+        "editable": task_owner is None or task_owner == user.id or user.has_role("admin"),
     }
 
 
@@ -367,7 +367,7 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
     lock_task_changes(db)
     issue = get_issue(db, issue_id)
     task = db.get(Task, issue.task_id) if issue.task_id else None
-    if task and task.week.user_id != auth[0].id and auth[0].role != "admin":
+    if task and task.week.user_id != auth[0].id and not auth[0].has_role("admin"):
         raise HTTPException(403, "此问题已关联其他用户的任务")
     changes = data.model_dump(exclude_unset=True)
     status = changes.get("status", issue.status)
