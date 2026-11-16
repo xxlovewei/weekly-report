@@ -25,6 +25,8 @@ const draft = ref<Record<number, { status: string; notes: string }>>({})
 const adding = ref<number | null>(null), loading = ref(false), error = ref(''), issueError = ref<Record<number, string>>({})
 const filtersExpanded = ref(true)
 const filtersId = useId()
+const issueListId = useId()
+const expandedIssues = ref(new Set<number>())
 const authorLabels = { all: '全部', mine: '仅看我', anonymous: '仅看无名氏' }
 const completionLabels = { all: '全部', done: '已完成', open: '未完成' }
 const author = ref<keyof typeof authorLabels>('all')
@@ -60,6 +62,15 @@ const shown = computed(() => (data.value?.issues || []).filter(issue => selected
   && (author.value === 'all' || issue[author.value])
   && (completion.value === 'all' || (issue.status === '已完成') === (completion.value === 'done'))
   && (!severity.value.length || severity.value.includes(issue.severity))).sort(compareIssues))
+const listExpanded = computed(() => shown.value.length > 0 && shown.value.every(issue => expandedIssues.value.has(issue.id)))
+function toggleList() {
+  // 也更新被筛选掉的卡片，切换筛选条件后仍保持批量操作的结果。
+  expandedIssues.value = new Set(listExpanded.value ? [] : data.value?.issues.map(issue => issue.id))
+}
+function toggleIssue(id: number) {
+  if (expandedIssues.value.has(id)) expandedIssues.value.delete(id)
+  else expandedIssues.value.add(id)
+}
 const severityCounts = computed(() => severities.map(label => ({
   label, count: data.value?.issues.filter(issue => issue.severity === label).length || 0,
 })))
@@ -87,6 +98,7 @@ let serial = 0
 watch(() => [props.day, props.refreshKey] as const, async ([day]) => {
   const current = ++serial
   loading.value = true; error.value = ''; issueError.value = {}; data.value = null
+  expandedIssues.value.clear()
   try {
     const result = await api<ReviewDay>(`/reviews/days/${day}`)
     if (current !== serial) return
@@ -211,6 +223,7 @@ function toggleSeverity(level: string) {
   <section class="panel review-panel review-filters" aria-label="筛选审查记录">
     <header class="review-filter-head">
       <button class="mini-button" type="button" :aria-expanded="filtersExpanded" :aria-controls="filtersId" @click="filtersExpanded = !filtersExpanded">{{ filtersExpanded ? '收起筛选' : '展开筛选' }}</button>
+      <button class="mini-button" type="button" :aria-expanded="listExpanded" :aria-controls="issueListId" :disabled="!shown.length" @click="toggleList">{{ listExpanded ? '收起列表' : '展开列表' }}</button>
       <div v-if="!filtersExpanded" class="review-filter-summary" role="group" aria-label="当前筛选条件" tabindex="0">
         <span v-for="([label, value]) in filterSummary" :key="label">{{ label }}：{{ value }}</span>
       </div>
@@ -248,13 +261,13 @@ function toggleSeverity(level: string) {
       </div>
     </div>
   </section>
-  <section class="review-results" aria-label="审查问题列表">
+  <section :id="issueListId" class="review-results" aria-label="审查问题列表">
     <p v-if="navigationError" class="review-error" role="alert">{{ navigationError }}</p>
     <p v-if="loading" class="empty" role="status">正在加载 {{ day }} 的审查记录…</p>
     <p v-else-if="error" class="empty review-error" role="alert">{{ error }}</p>
     <p v-else-if="!shown.length" class="empty">{{ data?.summary ? '没有符合条件的审查问题' : `${day} 暂无审查日报` }}</p>
     <article v-for="issue in shown" :key="issue.id" class="panel review-panel review-issue">
-      <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" collapsible>
+      <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" :expanded="expandedIssues.has(issue.id)" collapsible @toggle="toggleIssue(issue.id)">
         <template #controls>
           <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
             <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>

@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, useId } from 'vue'
+import { computed, defineAsyncComponent, useId } from 'vue'
 import ReviewText from './ReviewText.vue'
 import { progressStyle } from './taskStatuses'
 import type { ReviewIssue } from './types'
 
-const props = defineProps<{ issue: ReviewIssue; projectAlias?: string; collapsible?: boolean }>()
+const props = defineProps<{ issue: ReviewIssue; projectAlias?: string; collapsible?: boolean; expanded?: boolean }>()
+const emit = defineEmits<{ toggle: [] }>()
 const ReviewCode = defineAsyncComponent(() => import('./ReviewCode.vue'))
 const detailId = useId()
-const expanded = ref(false)
-const showDetails = computed(() => !props.collapsible || expanded.value)
+const showDetails = computed(() => !props.collapsible || props.expanded)
 const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '0')}`)
 </script>
 
@@ -21,7 +21,7 @@ const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '
       :aria-label="`${expanded ? '收起' : '展开'} ${issueNumber} 详情`"
       :aria-expanded="expanded"
       :aria-controls="detailId"
-      @click="expanded = !expanded"
+      @click="emit('toggle')"
     ><span aria-hidden="true">{{ expanded ? '−' : '+' }}</span></button>
     <div class="review-issue-title">
       <div class="review-tags">
@@ -30,7 +30,10 @@ const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '
         <span class="review-project-name">{{ projectAlias }}</span>
         <template v-if="collapsible">
           <span class="review-author-tag" :title="`修改人：${issue.author_name}`">{{ issue.author_name }}</span>
-          <span v-if="!expanded" class="status-tag" :class="{ completed: issue.status === '已完成', pending: !issue.status }" :style="progressStyle(issue.status)">{{ issue.status || '未开始' }}</span>
+          <template v-if="!expanded">
+            <span class="status-tag" :class="{ completed: issue.status === '已完成', pending: !issue.status }" :style="progressStyle(issue.status)">{{ issue.status || '未开始' }}</span>
+            <span class="review-card-title"><ReviewText :text="issue.title" /></span>
+          </template>
         </template>
       </div>
       <h2 v-if="!collapsible"><ReviewText :text="issue.title" /></h2>
@@ -41,12 +44,12 @@ const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '
     <!-- 收起时延迟渲染详情，备注草稿仍由审查记录页面维护。 -->
     <template v-if="showDetails">
       <h2 v-if="collapsible"><ReviewText :text="issue.title" /></h2>
-      <dl class="review-metadata">
+      <dl class="review-metadata" :class="{ 'review-metadata-row': collapsible }">
         <div v-if="!collapsible"><dt>修改人</dt><dd>{{ issue.author_name }}</dd></div>
-        <div v-if="issue.category"><dt>问题类型</dt><dd>{{ issue.category }}</dd></div>
-        <div v-if="issue.dimension"><dt>审查维度</dt><dd>{{ issue.dimension }}</dd></div>
+        <div v-if="collapsible || issue.category"><dt>问题类型</dt><dd>{{ issue.category || '—' }}</dd></div>
+        <div v-if="collapsible || issue.dimension"><dt>审查维度</dt><dd>{{ issue.dimension || '—' }}</dd></div>
         <div class="review-meta-wide"><dt>提交</dt><dd class="preline"><code>{{ issue.sha }}</code> {{ issue.commit_message }}</dd></div>
-        <div v-if="issue.path" class="review-meta-wide"><dt>涉及文件</dt><dd><code>{{ issue.path }}</code><template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></dd></div>
+        <div v-if="collapsible || issue.path" class="review-meta-wide"><dt>涉及文件</dt><dd><template v-if="issue.path"><code>{{ issue.path }}</code><template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></template><template v-else>—</template></dd></div>
       </dl>
       <section class="review-detail">
         <h3>风险说明</h3>
