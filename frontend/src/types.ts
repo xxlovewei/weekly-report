@@ -22,6 +22,7 @@ export interface MessageTarget { date?: string; week?: string; task?: number }
 export interface LiveMessage {
   id: number
   kind: '转交任务' | '代码审查'
+  title?: string
   is_read: boolean
   target?: MessageTarget | null
 }
