@@ -73,7 +73,6 @@ async function refreshUnread() {
     const { count } = await api<{ count: number }>('/notifications/unread')
     if (user.value?.id !== account || user.value.must_change_password) return
     if (version === unreadVersion) unreadMessages.value = count
-    return unreadMessages.value
   } catch { /* 消息数刷新失败时保留上一次的值。 */ }
 }
 async function openUnreadReminder() {
@@ -82,15 +81,19 @@ async function openUnreadReminder() {
 }
 function checkNotificationPermission() {
   notificationPermission.value = desktopNotificationPermission()
-  if (notificationPermission.value === 'granted') showPermissionReminder.value = false
+  if (notificationPermission.value === 'granted') {
+    showPermissionReminder.value = false
+    showUnreadReminder.value = false
+    liveMessages.value = []
+  }
 }
 async function enableNotifications() {
   checkNotificationPermission()
   if (notificationPermission.value !== 'default' || requestingPermission.value) return
   requestingPermission.value = true
-  try { notificationPermission.value = await Notification.requestPermission() }
-  catch { checkNotificationPermission() }
-  finally { requestingPermission.value = false }
+  try { await Notification.requestPermission() }
+  catch { /* 浏览器拒绝请求时重新读取当前权限。 */ }
+  finally { checkNotificationPermission(); requestingPermission.value = false }
 }
 function dismissLiveMessage(id: number) {
   liveMessages.value = liveMessages.value.filter(message => message.id !== id)
@@ -610,8 +613,9 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   checkNotificationPermission()
   showPermissionReminder.value = notificationPermission.value !== 'granted'
   window.addEventListener('focus', checkNotificationPermission)
-  const stop = subscribeToMessages(account, count => {
+  const { stop, remindUnread } = subscribeToMessages(account, count => {
     if (user.value?.id !== account) return
+    checkNotificationPermission()
     unreadVersion++
     unreadMessages.value = count
     messagesRefresh.value++
@@ -621,14 +625,24 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   }, message => openLiveMessage(message))
   let active = true
   let checking = false
-  // 每五分钟查询一次未读数，账号切换后丢弃上一次检查的结果。
+  // 每五分钟检查未读数和最新未读消息，丢弃已被更新状态覆盖的结果。
   const timer = window.setInterval(async () => {
     if (checking) return
     checking = true
+    const version = ++unreadVersion
     try {
-      const count = await refreshUnread()
-      if (active && count !== undefined) showUnreadReminder.value = count > 0
-    } finally { checking = false }
+      const { total, items } = await api<{ total: number; items: LiveMessage[] }>('/notifications?is_read=false')
+      if (!active || version !== unreadVersion) return
+      unreadMessages.value = total
+      checkNotificationPermission()
+      if (notificationPermission.value === 'granted') {
+        if (total > 0 && items[0]) remindUnread(items[0], total)
+      } else {
+        showUnreadReminder.value = total > 0
+        if (total > 0) showPermissionReminder.value = true
+      }
+    } catch { /* 轮询失败时保留最近一次成功的未读状态。 */ }
+    finally { checking = false }
   }, unreadReminderInterval)
   onCleanup(() => {
     active = false
@@ -757,7 +771,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div class="unread-reminder-region" aria-live="polite">
       <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
         <strong>开启桌面通知</strong>
-        <p v-if="notificationPermission === 'default'">收到新消息时，可在操作系统中同步提醒。</p>
+        <p v-if="notificationPermission === 'default'">授权后，未读消息将通过操作系统提醒。</p>
         <p v-else-if="notificationPermission === 'denied'">通知已被浏览器阻止。请在地址栏的站点设置中允许通知。</p>
         <p v-else>当前浏览器或访问地址无法使用桌面通知。新消息会在网页内提醒。</p>
         <div class="notification-permission-actions">
