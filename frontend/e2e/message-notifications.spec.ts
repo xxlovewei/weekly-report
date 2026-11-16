@@ -2,6 +2,43 @@ import { test, expect } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 import type { WeekData } from '../src/types'
 
+test('消息中心在标题旁显示通知状态，并默认筛选未读消息', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { value: 'granted' }))
+  const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
+  await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: 1 } }))
+  await page.route('**/api/notifications/stream', route => route.abort())
+  const created_at = '2026-11-16T01:30:00Z'
+  const messages = [
+    { id: 41, kind: '转交任务', title: '待查看的转交任务', is_read: false, created_at },
+    { id: 42, kind: '代码审查', title: '已查看的审查日报', is_read: true, created_at },
+  ]
+  // 按实际请求的状态返回消息，覆盖默认筛选和手动切换。
+  await page.route('**/api/notifications?*', route => {
+    const filter = new URL(route.request().url()).searchParams.get('is_read')
+    const items = messages.filter(message => filter === null || String(message.is_read) === filter)
+    return route.fulfill({ json: { items, total: items.length } })
+  })
+
+  await page.goto('/messages')
+  await expect(page.getByRole('heading', { name: '消息中心' }).locator('+ small')).toHaveText('已开启桌面通知')
+  const filters = page.getByRole('region', { name: '消息筛选' })
+  await expect(filters.getByText('已开启桌面通知')).toHaveCount(0)
+  const status = filters.getByLabel('状态')
+  await expect(status).toHaveValue('false')
+  const rows = page.getByRole('article')
+  await expect(rows).toHaveCount(1)
+  const time = rows.first().locator('.review-tags > :first-child')
+  await expect(time).toHaveAttribute('datetime', created_at)
+  await expect(time).toHaveCSS('font-weight', '900')
+  await expect(rows.first().locator('.status-tag')).toHaveText(['转交任务', '未读'])
+
+  await status.selectOption('true')
+  await expect(rows.first().locator('.status-tag')).toHaveText(['代码审查', '已读'])
+  await status.selectOption('')
+  await expect(rows).toHaveCount(2)
+})
+
 test('登录和刷新时检查权限，新消息同时支持站内和桌面通知', async ({ page }) => {
   await page.addInitScript(() => {
     const state = Object.assign(window, {
