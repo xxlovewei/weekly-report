@@ -51,19 +51,26 @@ const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '
         <div class="review-meta-wide"><dt>提交</dt><dd class="preline"><code>{{ issue.sha }}</code> {{ issue.commit_message }}</dd></div>
         <div v-if="collapsible || issue.path" class="review-meta-wide"><dt>涉及文件</dt><dd><template v-if="issue.path"><code>{{ issue.path }}</code><template v-if="issue.start_line"> · 第 {{ issue.start_line }}<template v-if="issue.end_line && issue.end_line !== issue.start_line">–{{ issue.end_line }}</template> 行</template></template><template v-else>—</template></dd></div>
       </dl>
-      <section class="review-detail">
-        <h3>风险说明</h3>
-        <p class="preline"><ReviewText :text="issue.risk" /></p>
-      </section>
-      <section v-if="issue.existing_code" class="review-detail">
-        <h3>相关代码</h3>
-        <ReviewCode :source="issue.existing_code" :path="issue.path" />
-      </section>
-      <section v-if="issue.suggestion || issue.suggestion_code" class="review-detail">
-        <h3>修改建议</h3>
-        <p v-if="issue.suggestion" class="preline"><ReviewText :text="issue.suggestion" /></p>
-        <ReviewCode v-if="issue.suggestion_code" :source="issue.suggestion_code" :path="issue.path" />
-      </section>
+      <div class="review-detail-row">
+        <section class="review-detail">
+          <h3>风险说明</h3>
+          <p class="preline"><ReviewText :text="issue.risk" /></p>
+        </section>
+        <section v-if="issue.existing_code" class="review-detail">
+          <h3>相关代码</h3>
+          <ReviewCode :source="issue.existing_code" :path="issue.path" />
+        </section>
+      </div>
+      <div v-if="issue.suggestion || issue.suggestion_code" class="review-detail-row review-suggestion-row">
+        <section v-if="issue.suggestion" class="review-detail">
+          <h3>修改建议</h3>
+          <p class="preline"><ReviewText :text="issue.suggestion" /></p>
+        </section>
+        <section v-if="issue.suggestion_code" class="review-detail">
+          <h3 v-if="collapsible || !issue.suggestion">{{ collapsible ? '修改建议的代码' : '修改建议' }}</h3>
+          <ReviewCode :source="issue.suggestion_code" :path="issue.path" />
+        </section>
+      </div>
       <slot />
     </template>
   </div>
