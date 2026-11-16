@@ -11,6 +11,6 @@ Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 with SessionLocal() as db:
     for username, name, role in [("admin", "管理员", "admin"), ("alice", "小王", "user"), ("bob", "小李", "user")]:
-        db.add(User(username=username, display_name=name, role=role, password_hash=hasher.hash("e2e-password-123")))
+        db.add(User(username=username, display_name=name, roles=[role], password_hash=hasher.hash("e2e-password-123")))
     db.commit()
 print("Dedicated E2E database ready")

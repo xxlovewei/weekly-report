@@ -324,3 +324,28 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   .review-transfer-grid { grid-template-columns: 1fr; }
   .review-transfer-actions { display: flex; }
 }
+.user-roles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 9px;
+  border: 2px solid #000;
+}
+.user-roles legend {
+  font-size: 12px;
+  font-weight: 700;
+}
+.user-create .user-roles label, .user-controls .user-roles label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: none;
+}
+.user-roles input {
+  width: auto;
+  margin: 0;
+  accent-color: #000;
+}
