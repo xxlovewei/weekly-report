@@ -17,6 +17,7 @@ interface Commit {
 interface Project { project_id: number; alias: string; commits: Commit[]; positives: string[]; error: string }
 interface ReviewDay {
   projects: Record<string, string>; issues: Issue[]
+  common_project_ids: number[]
   summary: { commit_date: string; model: string; duration_seconds: number; projects: Project[] } | null
 }
 const data = ref<ReviewDay | null>(null)
@@ -27,6 +28,10 @@ const completion = ref<'all' | 'done' | 'open'>('all')
 const severities = ['严重', '高危', '中危', '低危', '提示'] as const
 const severity = ref<string[]>([])
 const selected = ref<string[]>([]), allProjects = ref(true)
+// 展开状态只控制筛选按钮的显示，不改变已经选中的项目。
+const projectsExpanded = ref(false)
+const commonProjectIds = computed(() => new Set(data.value?.common_project_ids))
+const hasOtherProjects = computed(() => Object.keys(data.value?.projects || {}).some(id => !commonProjectIds.value.has(Number(id))))
 const dialog = ref<HTMLDialogElement | null>(null)
 const shown = computed(() => (data.value?.issues || []).filter(issue => selected.value.includes(String(issue.project_id))
   && (author.value === 'all' || issue[author.value])
@@ -207,7 +212,8 @@ function toggleSeverity(level: string) {
       <div class="review-tags">
         <button class="mini-button" @click="selectAll(true)">全选</button>
         <button class="mini-button" @click="selectAll(false)">取消全选</button>
-        <button v-for="(alias, id) in data?.projects" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
+        <button v-if="hasOtherProjects" class="mini-button" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起非常用' : '展开全部' }}</button>
+        <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
       </div>
     </div>
   </section>

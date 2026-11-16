@@ -119,6 +119,7 @@ class ReviewProject(Base):
     gitlab_url: Mapped[str | None] = mapped_column(String(1000))
     gitlab_id: Mapped[int | None] = mapped_column(Integer)
     skip_slash_branches: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_common: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 停用配置后保留日报引用，重新添加同一项目时复用原 ID。
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
