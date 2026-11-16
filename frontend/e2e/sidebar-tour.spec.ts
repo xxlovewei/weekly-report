@@ -1,5 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
+import packageInfo from '../package.json' with { type: 'json' }
 import type { Task, User } from '../src/types'
+
+const currentVersion = packageInfo.version
 
 async function mockWorkspace(page: Page, user: User, tasks: Task[] = []) {
   await page.route('**/api/**', route => {
@@ -7,12 +10,48 @@ async function mockWorkspace(page: Page, user: User, tasks: Task[] = []) {
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
     if (path.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks } })
     if (path.endsWith('/meetings')) return route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 50 } })
-    if (path.includes('/releases/')) return route.fulfill({ json: { description: '新增侧栏折叠和按周导航。' } })
+    if (path.endsWith('/releases')) return route.fulfill({ json: [
+      { version: '1.10.0', description: '较新的历史版本说明。' },
+      { version: currentVersion, description: '新增侧栏折叠和按周导航。' },
+      { version: '1.9.0', description: '最早的版本说明。' },
+    ] })
     return route.fulfill({ json: [] })
   })
 }
 
 const member: User = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
+
+test('版本更新可按版本号前后切换，重新打开恢复当前版本', async ({ page }) => {
+  await mockWorkspace(page, member)
+  await page.goto('/categories')
+  const version = page.locator('[data-sidebar-tour="release-notes"]')
+  const notes = page.getByRole('region', { name: /更新内容/ })
+  const previous = notes.getByRole('button', { name: '上一个版本' })
+  const next = notes.getByRole('button', { name: '下一个版本' })
+  await version.hover()
+  await expect(notes).toHaveAccessibleName(`v${currentVersion} 更新内容`)
+  await expect(next).toBeDisabled()
+  await previous.click()
+  await expect(notes).toHaveAccessibleName('v1.10.0 更新内容')
+  await expect(notes).toContainText('较新的历史版本说明。')
+  await previous.click()
+  await expect(notes).toHaveAccessibleName('v1.9.0 更新内容')
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expect(notes).toHaveAccessibleName('v1.10.0 更新内容')
+  await page.mouse.move(4, 4)
+  await expect(notes).toHaveCount(0)
+
+  await version.focus()
+  await expect(notes).toHaveAccessibleName(`v${currentVersion} 更新内容`)
+  await page.keyboard.press('Tab')
+  await expect(previous).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(notes).toHaveAccessibleName('v1.10.0 更新内容')
+  await page.keyboard.press('Escape')
+  await expect(notes).toHaveCount(0)
+  await expect(version).toBeFocused()
+})
 
 test('任务引导自动高亮整张卡片，每个账号只显示一次', async ({ page }) => {
   await mockWorkspace(page, member, [{ id: 1, position: 1, category_name: null, task_group: '', description: '', status: null, work_days: [], notes: '' }])
@@ -49,17 +88,19 @@ test('首次进入逐步演示收起和展开，完成后刷新不再显示', as
   await tour.getByRole('button', { name: '收起侧栏' }).click()
 
   await expect(tour).toHaveAccessibleName('查看版本更新内容')
-  const version = page.locator('.release-notes small')
+  const version = page.locator('[data-sidebar-tour="release-notes"]')
   const versionBox = (await version.boundingBox())!
   const tourBox = (await tour.boundingBox())!
   expect(tourBox.x - (versionBox.x + versionBox.width)).toBeLessThan(32)
   await version.hover()
-  const releaseNotes = page.getByRole('tooltip')
+  const releaseNotes = page.getByRole('region', { name: /更新内容/ })
   await expect(releaseNotes).toContainText('新增侧栏折叠和按周导航。')
   const notesBox = (await releaseNotes.boundingBox())!
   expect(notesBox.y).toBeGreaterThanOrEqual(tourBox.y + tourBox.height)
   expect(tourBox.x + tourBox.width).toBeLessThanOrEqual(width)
   await releaseNotes.hover()
+  await releaseNotes.getByRole('button', { name: '上一个版本' }).click()
+  await expect(releaseNotes).toContainText('较新的历史版本说明。')
   await tour.getByRole('button', { name: '下一步' }).click()
 
   for (const title of ['本周工作', '周报汇总', '任务类型', '会议记录', '回到本周', '上一周', '下一周', '修改密码', '退出登录']) {

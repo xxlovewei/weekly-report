@@ -69,7 +69,7 @@ export function startSidebarTour(options: SidebarTourOptions) {
 
   const releaseNotes = step('release-notes', '查看版本更新内容', '将鼠标移到高亮的版本号上，即可查看本次更新。也可以用 Tab 聚焦版本号。')
   releaseNotes.disableActiveInteraction = false
-  releaseNotes.allowedElements = '.sidebar .release-notes [role="tooltip"]'
+  releaseNotes.allowedElements = '.sidebar .release-tooltip'
   releaseNotes.popover = { ...releaseNotes.popover, onPrevClick: () => changeLayout(false, tour.movePrevious) }
 
   const expand = step('toggle', '展开侧栏', '点击高亮的右箭头恢复完整菜单和月历。')
