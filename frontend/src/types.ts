@@ -1,4 +1,5 @@
-export interface User { id: number; username: string; display_name: string; role: 'admin' | 'user'; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
+export type UserRole = 'admin' | 'user'
+export interface User { id: number; username: string; display_name: string; role: UserRole; roles?: UserRole[]; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
 export interface Category { id: number; name: string }
 export type TaskPriority = '高' | '中' | '低'
 export interface Task { id: number; meeting_task_id?: number | null; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }

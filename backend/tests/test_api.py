@@ -20,9 +20,9 @@ def clean_db():
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         db.add_all([
-            User(username="admin", display_name="管理员", role="admin", password_hash=hasher.hash(PASSWORD)),
-            User(username="alice", display_name="小王", role="user", password_hash=hasher.hash(PASSWORD)),
-            User(username="bob", display_name="小李", role="user", password_hash=hasher.hash(PASSWORD)),
+            User(username="admin", display_name="管理员", roles=["admin"], password_hash=hasher.hash(PASSWORD)),
+            User(username="alice", display_name="小王", roles=["user"], password_hash=hasher.hash(PASSWORD)),
+            User(username="bob", display_name="小李", roles=["user"], password_hash=hasher.hash(PASSWORD)),
         ])
         db.commit()
     yield
@@ -69,7 +69,7 @@ def test_auth_roles_sessions_and_history():
     users = admin.get("/api/users").json()
     alice_id = next(u["id"] for u in users if u["username"] == "alice")
     admin_id = next(u["id"] for u in users if u["username"] == "admin")
-    assert admin.patch(f"/api/users/{admin_id}", json={"role":"user"}).status_code == 403
+    assert admin.patch(f"/api/users/{admin_id}", json={"role":"user"}).status_code == 409
     assert admin.delete(f"/api/users/{admin_id}").status_code == 403
     assert admin.delete(f"/api/users/{alice_id}").status_code == 200
     assert all(u["id"] != alice_id for u in admin.get("/api/users").json())
@@ -82,7 +82,6 @@ def test_auth_roles_sessions_and_history():
     assert admin.patch(f"/api/users/{alice_id}", json={"is_active": True}).status_code == 404
     assert credential_post(admin, f"/api/users/{alice_id}/password", {"password": PASSWORD}).status_code == 404
     assert credential_post(TestClient(app), "/api/auth/login", {"username": "alice", "password": PASSWORD}).status_code == 401
-    assert credential_post(admin, "/api/users", {"username": "next-admin", "display_name": "管理员", "password": PASSWORD, "role": "admin"}).status_code == 422
 
 def test_categories_snapshot_ownership_and_reset():
     alice = client("alice")

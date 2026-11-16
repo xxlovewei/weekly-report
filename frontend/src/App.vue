@@ -15,7 +15,7 @@ import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
 import { desktopNotificationPermission, subscribeToMessages } from './notificationStream'
-import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, WeekData } from './types'
+import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, UserRole, WeekData } from './types'
 
 const route = useRoute(), router = useRouter()
 const user = ref<User | null>(null), ready = ref(false), mobileOpen = ref(false)
@@ -33,7 +33,14 @@ const navItems = [
   { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
 ] as const
 const adminPages = ['users', 'review-config']
-const visibleNavItems = computed(() => navItems.filter(item => !adminPages.includes(item.name) || user.value?.role === 'admin'))
+function userRoles(item: User): UserRole[] {
+  return item.roles ?? [item.role]
+}
+function sameRoles(left: UserRole[], right: UserRole[]) {
+  return left.length === right.length && left.every(role => right.includes(role))
+}
+const isAdmin = computed(() => !!user.value && userRoles(user.value).includes('admin'))
+const visibleNavItems = computed(() => navItems.filter(item => !adminPages.includes(item.name) || isAdmin.value))
 const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
@@ -66,7 +73,6 @@ async function refreshUnread() {
     const { count } = await api<{ count: number }>('/notifications/unread')
     if (user.value?.id !== account || user.value.must_change_password) return
     if (version === unreadVersion) unreadMessages.value = count
-    return unreadMessages.value
   } catch { /* 消息数刷新失败时保留上一次的值。 */ }
 }
 async function openUnreadReminder() {
@@ -75,15 +81,19 @@ async function openUnreadReminder() {
 }
 function checkNotificationPermission() {
   notificationPermission.value = desktopNotificationPermission()
-  if (notificationPermission.value === 'granted') showPermissionReminder.value = false
+  if (notificationPermission.value === 'granted') {
+    showPermissionReminder.value = false
+    showUnreadReminder.value = false
+    liveMessages.value = []
+  }
 }
 async function enableNotifications() {
   checkNotificationPermission()
   if (notificationPermission.value !== 'default' || requestingPermission.value) return
   requestingPermission.value = true
-  try { notificationPermission.value = await Notification.requestPermission() }
-  catch { checkNotificationPermission() }
-  finally { requestingPermission.value = false }
+  try { await Notification.requestPermission() }
+  catch { /* 浏览器拒绝请求时重新读取当前权限。 */ }
+  finally { checkNotificationPermission(); requestingPermission.value = false }
 }
 function dismissLiveMessage(id: number) {
   liveMessages.value = liveMessages.value.filter(message => message.id !== id)
@@ -139,8 +149,8 @@ const meetingFilter = reactive({ date_from: '', date_to: '', content: '', status
 const notice = ref(''), saveStatus = ref<'saved' | 'saving' | 'failed' | 'conflict'>('saved')
 const mutating = ref(false)
 const newCategory = ref(''), categoryDrafts = reactive<Record<number, string>>({})
-const newUser = reactive({ username: '', display_name: '', password: '', status: '正常' as User['status'] })
-const userDrafts = reactive<Record<number, { username: string; display_name: string; role: 'user' | 'admin'; status: User['status']; password: string }>>({})
+const newUser = reactive({ username: '', display_name: '', password: '', roles: ['user'] as UserRole[], status: '正常' as User['status'] })
+const userDrafts = reactive<Record<number, { username: string; display_name: string; roles: UserRole[]; status: User['status']; password: string }>>({})
 const passwordForm = reactive({ old_password: '', new_password: '', confirm_password: '' })
 const modal = ref<null | { kind: 'delete'; taskId: number } | { kind: 'carry' }>(null)
 const modalFirst = ref<HTMLButtonElement | null>(null)
@@ -409,9 +419,9 @@ async function loadPage() {
     } else if (page.value === 'categories') {
       categories.value = await api<Category[]>('/categories')
       categories.value.forEach(item => { categoryDrafts[item.id] = item.name })
-    } else if (page.value === 'users' && user.value.role === 'admin') {
+    } else if (page.value === 'users' && isAdmin.value) {
       users.value = await api<User[]>('/users')
-      users.value.forEach(item => { userDrafts[item.id] = { username: item.username, display_name: item.display_name, role: item.role, status: item.status, password: '' } })
+      users.value.forEach(item => { userDrafts[item.id] = { username: item.username, display_name: item.display_name, roles: [...userRoles(item)], status: item.status, password: '' } })
     } else if (page.value === 'meetings') {
       await loadMeetings()
     }
@@ -534,13 +544,29 @@ async function deleteCategory(id: number) {
   try { await api(`/categories/${id}`, 'DELETE'); await loadPage() } catch (error) { showError(error) }
 }
 async function createUser() {
-  try { await credentialApi('/users', newUser); Object.assign(newUser, { username: '', display_name: '', password: '', role: 'user', status: '正常' }); await loadPage() } catch (error) { showError(error) }
+  if (!newUser.roles.length) { notice.value = '请至少选择一个角色。'; return }
+  try {
+    await credentialApi('/users', newUser)
+    Object.assign(newUser, { username: '', display_name: '', password: '', roles: ['user'], status: '正常' })
+    await loadPage()
+  } catch (error) { showError(error) }
 }
 async function saveUser(id: number) {
+  const { username, display_name, roles, status } = userDrafts[id]
+  const current = users.value.find(item => item.id === id)
+  if (!current) return
+  if (!roles.length) { notice.value = '请至少选择一个角色。'; return }
   try {
-    const updated = await api<User>(`/users/${id}`, 'PATCH', { username: userDrafts[id].username, display_name: userDrafts[id].display_name, ...(users.value.find(item => item.id === id)?.role === 'admin' ? {} : { role: userDrafts[id].role }), status: userDrafts[id].status })
-    if (user.value?.id === id && (user.value.role !== updated.role || updated.status === '锁定')) { await showLoginAfterRevocation(); return }
-    if (user.value?.id === id) user.value = updated
+    const updated = await api<User>(`/users/${id}`, 'PATCH', {
+      username, display_name, status, ...(sameRoles(userRoles(current), roles) ? {} : { roles }),
+    })
+    if (user.value?.id === id) {
+      if (!sameRoles(userRoles(user.value), userRoles(updated)) || updated.status === '锁定') {
+        await showLoginAfterRevocation()
+        return
+      }
+      user.value = updated
+    }
     await loadPage()
   } catch (error) { showError(error) }
 }
@@ -556,7 +582,7 @@ const removeRouteGuard = router.beforeEach(async (to, from) => {
   if (!ready.value || !user.value || to.fullPath === from.fullPath) return
   if (to.name === 'login' && !signingOut) return user.value.must_change_password ? '/password' : '/work'
   if (user.value.must_change_password && to.name !== 'password' && !signingOut) return '/password'
-  if (adminPages.includes(String(to.name)) && user.value.role !== 'admin') return '/work'
+  if (adminPages.includes(String(to.name)) && !isAdmin.value) return '/work'
   if (hasPending()) {
     try { if (structuralPromise) await structuralPromise; await flushPending() } catch { notice.value = '当前修改尚未保存，请先重试。'; return false }
   }
@@ -571,7 +597,7 @@ onMounted(async () => {
   catch { await router.replace('/login') }
   ready.value = true
   if (user.value?.must_change_password) await router.replace('/password')
-  else if (user.value && (page.value === 'login' || (adminPages.includes(page.value) && user.value.role !== 'admin'))) await router.replace('/work')
+  else if (user.value && (page.value === 'login' || (adminPages.includes(page.value) && !isAdmin.value))) await router.replace('/work')
   if (user.value) await loadPage()
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
@@ -587,8 +613,9 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   checkNotificationPermission()
   showPermissionReminder.value = notificationPermission.value !== 'granted'
   window.addEventListener('focus', checkNotificationPermission)
-  const stop = subscribeToMessages(account, count => {
+  const { stop, remindUnread } = subscribeToMessages(account, count => {
     if (user.value?.id !== account) return
+    checkNotificationPermission()
     unreadVersion++
     unreadMessages.value = count
     messagesRefresh.value++
@@ -598,14 +625,24 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   }, message => openLiveMessage(message))
   let active = true
   let checking = false
-  // 每五分钟查询一次未读数，账号切换后丢弃上一次检查的结果。
+  // 每五分钟检查未读数和最新未读消息，丢弃已被更新状态覆盖的结果。
   const timer = window.setInterval(async () => {
     if (checking) return
     checking = true
+    const version = ++unreadVersion
     try {
-      const count = await refreshUnread()
-      if (active && count !== undefined) showUnreadReminder.value = count > 0
-    } finally { checking = false }
+      const { total, items } = await api<{ total: number; items: LiveMessage[] }>('/notifications?is_read=false')
+      if (!active || version !== unreadVersion) return
+      unreadMessages.value = total
+      checkNotificationPermission()
+      if (notificationPermission.value === 'granted') {
+        if (total > 0 && items[0]) remindUnread(items[0], total)
+      } else {
+        showUnreadReminder.value = total > 0
+        if (total > 0) showPermissionReminder.value = true
+      }
+    } catch { /* 轮询失败时保留最近一次成功的未读状态。 */ }
+    finally { checking = false }
   }, unreadReminderInterval)
   onCleanup(() => {
     active = false
@@ -675,9 +712,9 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
       <div class="work-area" :class="{ 'review-work-area': page === 'review-records' }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
-      <ReviewConfig v-if="page === 'review-config' && user.role === 'admin'" :key="user.id" :account-id="user.id" />
+      <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
-      <MessageCenter v-else-if="page === 'messages'" :admin="user.role === 'admin'" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
+      <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
       <div v-else-if="page === 'work'">
         <div class="section-head">
           <strong>任务清单 <span>{{ week.tasks.length }}</span></strong>
@@ -690,7 +727,41 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <section v-else-if="page === 'meetings'" class="meetings-page"><form class="meeting-filters panel" @submit.prevent="searchMeetings"><label>开始日期<input v-model="meetingFilter.date_from" type="date" /></label><label>结束日期<input v-model="meetingFilter.date_to" type="date" /></label><label>会议内容<input v-model="meetingFilter.content" placeholder="模糊搜索" /></label><label>完成状态<select v-model="meetingFilter.status"><option value="">全部</option><option v-for="status in taskStatuses" :key="status" :value="status">{{ status }}</option><option value="未开始">未开始</option></select></label><button class="secondary-button" type="submit">查询</button><button class="primary-button" type="button" @click="openMeeting()">＋ 新增会议记录</button></form><div class="meeting-list"><article v-for="item in meetings.items" :key="item.id" class="meeting-card"><div class="meeting-card-head"><div><strong>{{ item.meeting_date }}</strong><span>{{ item.meeting_type }}</span><small class="meeting-person">创建人：{{ item.creator?.display_name || '未知' }}</small><small class="meeting-person">更新人：{{ item.updaters.map(person => person.display_name).join('、') || '暂无' }}</small></div><div class="top-actions"><button class="mini-button" type="button" @click="openMeeting(item)">编辑</button><button class="mini-button danger" type="button" @click="removeMeeting(item)">删除</button></div></div><p class="preline">{{ item.content }}</p><div v-if="item.needs_follow_up" class="meeting-tasks"><strong>跟踪任务</strong><div v-for="task in item.tasks" :key="task.id" class="meeting-task-line"><span class="preline">{{ task.position }}. {{ task.name }}</span>
             <span v-if="!task.assignments?.length" class="status-tag" :class="{ completed: task.status === '已完成', pending: !task.status }" :style="progressStyle(task.status)">{{ task.status || '未开始' }}</span>
             <span v-for="assignment in task.assignments" :key="assignment.user_id" class="meeting-person-progress"><span class="meeting-assignee-name">{{ assignment.person?.display_name }}</span><span>:</span><span class="status-tag" :class="{ completed: assignment.status === '已完成', pending: !assignment.status }" :style="progressStyle(assignment.status)">{{ assignment.status || '未开始' }}</span></span></div><p v-if="!item.tasks.length">暂无关联任务</p></div></article><div v-if="!meetings.items.length" class="empty">没有符合条件的会议记录。</div></div><div class="meeting-pagination"><span>共 {{ meetings.total }} 条 · 第 {{ meetings.page }} 页</span><button class="mini-button" type="button" :disabled="meetingPage <= 1" @click="turnMeetingPage(-1)">上一页</button><button class="mini-button" type="button" :disabled="meetingPage * meetings.page_size >= meetings.total" @click="turnMeetingPage(1)">下一页</button></div></section>
-      <section v-else-if="page === 'users' && user.role === 'admin'" class="panel"><h2>新增用户</h2><form class="user-create" @submit.prevent="createUser"><label>用户名<input v-model="newUser.username" required pattern="[A-Za-z0-9_.-]+" /></label><label>显示姓名<input v-model="newUser.display_name" required /></label><label>初始密码<input v-model="newUser.password" type="password" minlength="6" required /></label><label>角色<span>普通用户</span></label><label>状态<select v-model="newUser.status"><option>正常</option><option>锁定</option></select></label><button class="primary-button" type="submit">创建用户</button></form><h2>现有用户</h2><div v-for="item in users" :key="item.id" class="user-row"><div class="user-header"><strong>{{ item.username }}</strong><span>{{ item.is_active ? item.status : '已停用' }}</span></div><div class="user-controls"><label>用户名<input v-model="userDrafts[item.id].username" pattern="[A-Za-z0-9_.-]+" /></label><label>姓名<input v-model="userDrafts[item.id].display_name" /></label><label>角色<span v-if="item.role === 'admin'">管理员</span><select v-else v-model="userDrafts[item.id].role"><option value="user">普通用户</option><option value="admin">管理员</option></select></label><label>状态<select v-model="userDrafts[item.id].status"><option>正常</option><option>锁定</option></select></label><button class="mini-button" type="button" @click="saveUser(item.id)">保存资料</button><button v-if="item.role !== 'admin'" class="mini-button danger" type="button" @click="deleteUser(item)">删除用户</button></div><form class="inline-form" @submit.prevent="resetPassword(item.id)"><label>重置密码<input v-model="userDrafts[item.id].password" type="password" minlength="6" required placeholder="至少 6 位" /></label><button class="mini-button" type="submit">设置新密码</button></form></div></section>
+      <section v-else-if="page === 'users' && isAdmin" class="panel">
+        <h2>新增用户</h2>
+        <form class="user-create" @submit.prevent="createUser">
+          <label>用户名<input v-model="newUser.username" required pattern="[A-Za-z0-9_.-]+" /></label>
+          <label>显示姓名<input v-model="newUser.display_name" required /></label>
+          <label>初始密码<input v-model="newUser.password" type="password" minlength="6" required /></label>
+          <fieldset class="user-roles">
+            <legend>角色</legend>
+            <label><input v-model="newUser.roles" type="checkbox" value="user" />普通用户</label>
+            <label><input v-model="newUser.roles" type="checkbox" value="admin" />管理员</label>
+          </fieldset>
+          <label>状态<select v-model="newUser.status"><option>正常</option><option>锁定</option></select></label>
+          <button class="primary-button" type="submit">创建用户</button>
+        </form>
+        <h2>现有用户</h2>
+        <div v-for="item in users" :key="item.id" class="user-row">
+          <div class="user-header"><strong>{{ item.username }}</strong><span>{{ item.is_active ? item.status : '已停用' }}</span></div>
+          <div class="user-controls">
+            <label>用户名<input v-model="userDrafts[item.id].username" pattern="[A-Za-z0-9_.-]+" /></label>
+            <label>姓名<input v-model="userDrafts[item.id].display_name" /></label>
+            <fieldset class="user-roles">
+              <legend>角色</legend>
+              <label><input v-model="userDrafts[item.id].roles" type="checkbox" value="user" />普通用户</label>
+              <label><input v-model="userDrafts[item.id].roles" type="checkbox" value="admin" />管理员</label>
+            </fieldset>
+            <label>状态<select v-model="userDrafts[item.id].status"><option>正常</option><option>锁定</option></select></label>
+            <button class="mini-button" type="button" @click="saveUser(item.id)">保存资料</button>
+            <button v-if="!userRoles(item).includes('admin')" class="mini-button danger" type="button" @click="deleteUser(item)">删除用户</button>
+          </div>
+          <form class="inline-form" @submit.prevent="resetPassword(item.id)">
+            <label>重置密码<input v-model="userDrafts[item.id].password" type="password" minlength="6" required placeholder="至少 6 位" /></label>
+            <button class="mini-button" type="submit">设置新密码</button>
+          </form>
+        </div>
+      </section>
       <section v-else-if="page === 'password'" class="panel narrow"><h2>{{ user.must_change_password ? '首次登录，请修改初始密码' : '修改我的密码' }}</h2><p v-if="user.must_change_password">新密码不能与初始密码相同。修改成功后请重新登录。</p><form class="stack-form" @submit.prevent="changePassword"><label>当前密码<input v-model="passwordForm.old_password" type="password" autocomplete="current-password" required /></label><label>新密码（至少 6 位）<input v-model="passwordForm.new_password" type="password" autocomplete="new-password" minlength="6" required /></label><label>确认新密码<input v-model="passwordForm.confirm_password" type="password" autocomplete="new-password" minlength="6" required /></label><button class="primary-button" type="submit">更新密码</button></form></section>
       </div>
     </main>
@@ -700,7 +771,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div class="unread-reminder-region" aria-live="polite">
       <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
         <strong>开启桌面通知</strong>
-        <p v-if="notificationPermission === 'default'">收到新消息时，可在操作系统中同步提醒。</p>
+        <p v-if="notificationPermission === 'default'">授权后，未读消息将通过操作系统提醒。</p>
         <p v-else-if="notificationPermission === 'denied'">通知已被浏览器阻止。请在地址栏的站点设置中允许通知。</p>
         <p v-else>当前浏览器或访问地址无法使用桌面通知。新消息会在网页内提醒。</p>
         <div class="notification-permission-actions">

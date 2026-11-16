@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
-import type { WeekData } from '../src/types'
+import type { LiveMessage, WeekData } from '../src/types'
 
 test('消息中心在标题旁显示通知状态，并默认筛选未读消息', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { value: 'granted' }))
@@ -39,11 +39,11 @@ test('消息中心在标题旁显示通知状态，并默认筛选未读消息',
   await expect(rows).toHaveCount(2)
 })
 
-test('登录和刷新时检查权限，新消息同时支持站内和桌面通知', async ({ page }) => {
+test('未读轮询和即时消息按权限选择提醒，点击桌面通知后标记已读', async ({ page }) => {
   await page.addInitScript(() => {
     const state = Object.assign(window, {
       notificationPermission: 'default',
-      desktopMessages: [] as string[],
+      desktopMessages: [] as Notification[],
       messageStream: new EventTarget(),
     })
     window.EventSource = function () {
@@ -55,14 +55,35 @@ test('登录和刷新时检查权限，新消息同时支持站内和桌面通�
         if (!navigator.userActivation.isActive) throw new Error('missing user activation')
         return (state.notificationPermission = 'granted')
       }
-      constructor(_title: string, options: NotificationOptions) { state.desktopMessages.push(options.body || '') }
+      onclick: Notification['onclick'] = null
+      body: string
+      constructor(readonly title: string, options: NotificationOptions) {
+        this.body = options.body || ''
+        state.desktopMessages.push(this as unknown as Notification)
+      }
       close() {}
     } as unknown as typeof Notification
   })
 
   const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
+  const unread: LiveMessage[] = [
+    { id: 45, kind: '代码审查', title: '定时提醒的审查日报', is_read: false, target: { date: '2026-11-13' } },
+    { id: 44, kind: '转交任务', title: '仍未阅读的转交任务', is_read: false },
+  ]
+  const marked: number[] = []
+  await page.clock.install()
   await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
-  await page.route('**/api/notifications/42', route => route.fulfill({ json: { ok: true } }))
+  await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: unread.length } }))
+  await page.route('**/api/notifications?is_read=false', route => route.fulfill({ json: { items: unread, total: unread.length } }))
+  await page.route(/\/api\/notifications\/\d+$/, route => {
+    expect(route.request().method()).toBe('PATCH')
+    expect(route.request().postDataJSON()).toEqual({ is_read: true })
+    const id = Number(route.request().url().split('/').at(-1))
+    marked.push(id)
+    const index = unread.findIndex(message => message.id === id)
+    if (index !== -1) unread.splice(index, 1)
+    return route.fulfill({ json: { ok: true } })
+  })
 
   await page.goto('/work')
   const prompt = page.getByRole('group', { name: '桌面通知权限' })
@@ -88,15 +109,50 @@ test('登录和刷新时检查权限，新消息同时支持站内和桌面通�
   await receive(41)
   await expect(toast(41)).toBeHidden()
 
+  const desktopNotifications = () => page.evaluate(() =>
+    (window as unknown as { desktopMessages: Notification[] }).desktopMessages.map(({ title, body }) => ({ title, body })),
+  )
+  const clickDesktop = () => page.evaluate(() => {
+    const notification = (window as unknown as { desktopMessages: Notification[] }).desktopMessages.at(-1)!
+    notification.onclick?.(new Event('click'))
+  })
+  const reminder = page.getByRole('button', { name: /你有 2 条未读消息/ })
+  await prompt.getByRole('button', { name: '稍后再说' }).click()
+  await expect(reminder).toBeHidden()
+  await page.clock.fastForward(5 * 60 * 1000)
+  await expect(reminder).toBeVisible()
+  await expect(prompt).toBeVisible()
+  expect(await desktopNotifications()).toEqual([])
+  await reminder.click()
+  await expect(page).toHaveURL(/\/messages$/)
+  await expect(reminder).toBeHidden()
+
   await prompt.getByRole('button', { name: '开启桌面通知' }).click()
   await expect(prompt).toBeHidden()
   await receive(42)
-  await expect(toast(42)).toBeVisible()
-  await expect.poll(() => page.evaluate(() => (window as unknown as { desktopMessages: string[] }).desktopMessages)).toEqual(['审查日报 42'])
-  const marked = page.waitForRequest(request => request.url().endsWith('/api/notifications/42') && request.method() === 'PATCH')
-  await toast(42).click()
+  const liveNotice = { title: expect.any(String), body: '审查日报 42' }
+  await expect.poll(desktopNotifications).toEqual([liveNotice])
+  await expect(toast(42)).toBeHidden()
+  await clickDesktop()
   await expect(page).toHaveURL(/\/review-records\?date=2026-11-12$/)
-  expect((await marked).postDataJSON()).toEqual({ is_read: true })
+  await expect.poll(() => marked).toEqual([42])
+
+  await page.clock.fastForward(5 * 60 * 1000)
+  const unreadNotice = { title: '你有 2 条未读消息', body: '定时提醒的审查日报' }
+  await expect.poll(desktopNotifications).toEqual([liveNotice, unreadNotice])
+  await expect(reminder).toBeHidden()
+  await expect(prompt).toBeHidden()
+  await clickDesktop()
+  await expect(page).toHaveURL(/\/review-records\?date=2026-11-13$/)
+  await expect.poll(() => marked).toEqual([42, 45])
+  await expect(page.getByLabel('未读 1 条')).toBeVisible()
+
+  // 权限从浏览器设置撤销后，下一次定时检查恢复站内提醒。
+  await page.evaluate(() => { (window as unknown as { notificationPermission: string }).notificationPermission = 'denied' })
+  await page.clock.fastForward(5 * 60 * 1000)
+  await expect(page.getByRole('button', { name: /你有 1 条未读消息/ })).toBeVisible()
+  await expect(prompt.getByText(/请在地址栏的站点设置中允许通知/)).toBeVisible()
+  expect(await desktopNotifications()).toEqual([liveNotice, unreadNotice])
 })
 
 test('真实任务转交通知通过消息流即时送达', async ({ page, browser, baseURL }) => {
