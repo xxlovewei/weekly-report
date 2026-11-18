@@ -12,10 +12,31 @@ const languageByExtension: Record<string, string> = {
   yml: 'yaml', md: 'markdown', diff: 'diff', patch: 'diff', ps1: 'powershell',
 }
 
+function removeCommonIndent(source: string) {
+  const lines = source.split(/\r?\n/)
+  let indent: string | undefined
+  // 空白行不参与计算，只去掉非空行共有的缩进，保留代码层级。
+  for (const line of lines) {
+    const leading = line.match(/^[ \t]*/)![0]
+    if (leading.length === line.length) continue
+    if (indent === undefined) {
+      indent = leading
+    } else {
+      let shared = 0
+      while (shared < indent.length && indent[shared] === leading[shared]) shared++
+      indent = indent.slice(0, shared)
+    }
+    if (!indent) return source
+  }
+  if (!indent) return source
+  const prefix = indent
+  return lines.map(line => line.startsWith(prefix) ? line.slice(prefix.length) : line).join('\n')
+}
+
 const block = computed(() => {
   // Markdown 围栏中的语言优先，其次使用审查文件的扩展名。
-  const fence = props.source.trim().match(/^(`{3,}|~{3,})[ \t]*([\w.+#-]*)[^\r\n]*\r?\n([\s\S]*?)\r?\n\1[ \t]*$/)
-  const source = fence?.[3] ?? props.source
+  const fence = props.source.trim().match(/^(`{3,}|~{3,})[ \t]*([\w.+#-]*)[^\r\n]*\r?\n([\s\S]*?)\r?\n[ \t]*\1[ \t]*$/)
+  const source = removeCommonIndent(fence?.[3] ?? props.source)
   const extension = props.path.split('.').at(-1)?.toLowerCase() ?? ''
   const requested = fence?.[2]?.toLowerCase() || languageByExtension[extension]
   if (!requested || !hljs.getLanguage(requested) || source.length > 30000) {
