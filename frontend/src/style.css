@@ -297,6 +297,10 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .linked-review-issue .review-suggestion-row { gap: 10px; }
 .linked-review-issue .review-detail p { margin: 0; }
 .summary-dialog { width: min(820px, calc(100% - 40px)); border: 4px solid #000; border-radius: 0; box-shadow: 8px 8px 0 #ff006e; overflow-wrap: anywhere; }
+/* 报告顶部统计保持可见，滚动仅发生在明细区。 */
+.review-report-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+.review-report-dialog > :not(.review-report-body) { flex-shrink: 0; }
+.review-report-body { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
 .review-summary-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid #000; }
 .review-summary-head h2 { margin: 0 0 4px; font-size: 24px; }
 .review-summary-head time, .summary-dialog > p { font-size: 13px; }

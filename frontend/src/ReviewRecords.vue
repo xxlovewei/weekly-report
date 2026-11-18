@@ -9,7 +9,7 @@ import type { ReviewIssue as Issue } from './types'
 const props = defineProps<{ day: string; summaryRequest: number; refreshKey: number }>()
 const router = useRouter()
 interface Commit {
-  sha: string; author: string; title: string; branches: string[]
+  sha: string; author: string; author_name?: string; title: string; branches: string[]
   status: 'complete' | 'partial' | 'failed' | 'skipped'; reason: string
   ocr_elapsed?: string; ocr_comments?: number | null
   ocr_items_failed?: number | null; ocr_items_selected?: number | null
@@ -82,6 +82,7 @@ const duration = computed(() => {
   return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
 })
 const statusLabel: Record<string, string> = { complete: '已审查', partial: '部分完成', failed: '失败', skipped: '跳过' }
+const positiveProjects = computed(() => (data.value?.summary?.projects || []).filter(project => project.positives.length))
 const coverageProjects = computed(() => (data.value?.summary?.projects || []).filter(project => project.error || project.commits.length))
 const coverageCounts = computed(() => Object.entries(statusLabel).map(([status, label]) => ({
   label, count: coverageProjects.value.reduce((total, project) => total + project.commits.filter(commit => commit.status === status).length, 0),
@@ -285,7 +286,7 @@ function toggleSeverity(level: string) {
       </ReviewIssueContent>
     </article>
   </section>
-  <dialog ref="dialog" class="review-dialog summary-dialog" aria-labelledby="review-summary-title">
+  <dialog ref="dialog" class="review-dialog summary-dialog review-report-dialog" aria-labelledby="review-summary-title">
     <header class="review-summary-head">
       <div><h2 id="review-summary-title">审查总结</h2><time :datetime="day">{{ day }}</time></div>
       <button class="mini-button" @click="dialog?.close()">关闭</button>
@@ -305,37 +306,38 @@ function toggleSeverity(level: string) {
       <div class="review-tags review-summary-severities" aria-label="问题严重程度分布">
         <span v-for="{ label, count } in severityCounts" :key="label" class="review-severity" :data-level="label">{{ label }} {{ count }}</span>
       </div>
-      <section v-for="project in data.summary.projects" :key="project.project_id" class="review-summary-project">
-        <header><h3>{{ project.alias }}</h3><span>{{ project.commits.length }} 个提交</span></header>
-        <p v-if="project.error" class="review-error">{{ project.error }}</p>
-        <h4>正面评价</h4>
-        <ul v-if="project.positives.length"><li v-for="point in project.positives" :key="point">{{ point }}</li></ul>
-        <p v-else>暂无可列出的正面评价</p>
-      </section>
-      <section class="review-summary-project" aria-labelledby="review-coverage-heading">
-        <h3 id="review-coverage-heading">审查覆盖说明</h3>
-        <p v-if="!coverageProjects.length">本次日报没有待审查的提交。</p>
-        <template v-else>
-          <p>{{ coverageCounts.map(({ label, count }) => `${label} ${count} 个提交`).join(' · ') }}</p>
-          <p v-if="coverageProjects.some(project => project.error || project.commits.some(commit => commit.status !== 'complete'))">
-            建议优先补审未完整覆盖的提交，并检查读取失败的项目。
-          </p>
-          <details v-for="project in coverageProjects" :key="project.project_id" open>
-          <summary>{{ project.alias }} · {{ project.commits.length }} 个提交</summary>
+      <div class="review-report-body" tabindex="0" role="region" aria-label="审查报告明细">
+        <section v-for="project in positiveProjects" :key="project.project_id" class="review-summary-project">
+          <header><h3>{{ project.alias }}</h3><span>{{ project.commits.length }} 个提交</span></header>
           <p v-if="project.error" class="review-error">{{ project.error }}</p>
-          <ul class="review-coverage">
-            <li v-for="commit in project.commits" :key="commit.sha">
-              <span class="status-tag" :class="{ completed: commit.status === 'complete', pending: commit.status !== 'complete' }">{{ statusLabel[commit.status] }}</span>
-              <div>
-                <code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author || '无名氏' }}<template v-if="commit.title"> · {{ commit.title }}</template>
-                <p>{{ commit.ocr_comments ?? issueCountsByCommit.get(`${project.project_id}:${commit.sha}`) ?? 0 }} 条意见<template v-if="commit.ocr_elapsed"> · 耗时 {{ commit.ocr_elapsed }}</template></p>
-                <p v-if="commit.reason || commit.ocr_items_failed != null">{{ commit.reason }}<template v-if="commit.ocr_items_failed != null"> · {{ commit.ocr_items_selected }} 个审查项中 {{ commit.ocr_items_failed }} 个失败</template></p>
-              </div>
-            </li>
-          </ul>
-          </details>
-        </template>
-      </section>
+          <h4>正面评价</h4>
+          <ul><li v-for="point in project.positives" :key="point">{{ point }}</li></ul>
+        </section>
+        <section class="review-summary-project" aria-labelledby="review-coverage-heading">
+          <h3 id="review-coverage-heading">审查覆盖说明</h3>
+          <p v-if="!coverageProjects.length">本次日报没有待审查的提交。</p>
+          <template v-else>
+            <p>{{ coverageCounts.map(({ label, count }) => `${label} ${count} 个提交`).join(' · ') }}</p>
+            <p v-if="coverageProjects.some(project => project.error || project.commits.some(commit => commit.status !== 'complete'))">
+              建议优先补审未完整覆盖的提交，并检查读取失败的项目。
+            </p>
+            <details v-for="project in coverageProjects" :key="project.project_id" open>
+            <summary>{{ project.alias }} · {{ project.commits.length }} 个提交</summary>
+            <p v-if="project.error" class="review-error">{{ project.error }}</p>
+            <ul class="review-coverage">
+              <li v-for="commit in project.commits" :key="commit.sha">
+                <span class="status-tag" :class="{ completed: commit.status === 'complete', pending: commit.status !== 'complete' }">{{ statusLabel[commit.status] }}</span>
+                <div>
+                  <code>{{ commit.sha.slice(0, 8) }}</code> · {{ commit.author_name || commit.author || '无名氏' }}<template v-if="commit.title"> · {{ commit.title }}</template>
+                  <p>{{ commit.ocr_comments ?? issueCountsByCommit.get(`${project.project_id}:${commit.sha}`) ?? 0 }} 条意见<template v-if="commit.ocr_elapsed"> · 耗时 {{ commit.ocr_elapsed }}</template></p>
+                  <p v-if="commit.reason || commit.ocr_items_failed != null">{{ commit.reason }}<template v-if="commit.ocr_items_failed != null"> · {{ commit.ocr_items_selected }} 个审查项中 {{ commit.ocr_items_failed }} 个失败</template></p>
+                </div>
+              </li>
+            </ul>
+            </details>
+          </template>
+        </section>
+      </div>
     </template>
     <p v-else>{{ loading ? '正在加载日报…' : error || '当天暂无审查日报' }}</p>
   </dialog>
