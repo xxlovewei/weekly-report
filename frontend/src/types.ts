@@ -27,3 +27,7 @@ export interface LiveMessage {
   is_read: boolean
   target?: MessageTarget | null
 }
+export interface ScheduleSettings {
+  enabled: boolean
+  interval_minutes: number
+}

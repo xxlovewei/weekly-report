@@ -14,6 +14,7 @@ from .db import SessionLocal, get_db
 from .main import Input, active_session
 from .models import Notification, Task, User, Week
 from .notification_events import notification_lifespan, subscribers
+from .scheduled_tasks import UNREAD_REMINDER, task_settings
 
 router = APIRouter(prefix="/api/notifications", lifespan=notification_lifespan)
 SHANGHAI = timezone(timedelta(hours=8))
@@ -56,6 +57,7 @@ def stream_snapshot(request, user_id, cursor):
         messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
                      "target": notification_target(row, week, owner_id, user_id)} for row, week, owner_id in rows]
         return {"count": count_unread(db, user_id), "messages": messages,
+                "unread_reminder": task_settings(db, UNREAD_REMINDER).model_dump(),
                 "cursor": messages[-1]["id"] if messages else cursor}
 
 
@@ -76,6 +78,7 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
         try:
             await request.app.state.notifications_ready.wait()
             previous_count = None
+            previous_schedule = None
             invalidate = True
             while True:
                 changed.clear()
@@ -84,11 +87,13 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
                     yield "event: session-ended\ndata: {}\n\n"
                     return
                 cursor = snapshot["cursor"]
-                if invalidate or snapshot["messages"] or previous_count != snapshot["count"]:
+                if (invalidate or snapshot["messages"] or previous_count != snapshot["count"]
+                        or previous_schedule != snapshot["unread_reminder"]):
                     yield f"id: {cursor}\ndata: {json.dumps(jsonable_encoder(snapshot), ensure_ascii=False)}\n\n"
                 else:
                     yield ": heartbeat\n\n"
                 previous_count = snapshot["count"]
+                previous_schedule = snapshot["unread_reminder"]
                 if len(snapshot["messages"]) == 100:
                     continue
                 try:

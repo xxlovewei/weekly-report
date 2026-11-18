@@ -36,6 +36,15 @@ class LoginSession(Base):
     csrf_token: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+class ScheduledTask(Base):
+    __tablename__ = "scheduled_tasks"
+    __table_args__ = (
+        CheckConstraint("interval_minutes BETWEEN 1 AND 1440", name="ck_scheduled_tasks_interval"),
+    )
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    interval_minutes: Mapped[int] = mapped_column(Integer)
+
 class Category(Base):
     __tablename__ = "categories"
     __table_args__ = (UniqueConstraint("user_id", "name"),)
