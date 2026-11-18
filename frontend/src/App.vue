@@ -10,6 +10,7 @@ import ReleaseNotes from './ReleaseNotes.vue'
 import ReviewConfig from './ReviewConfig.vue'
 import ReviewRecords from './ReviewRecords.vue'
 import MessageCenter from './MessageCenter.vue'
+import ScheduledTasks from './ScheduledTasks.vue'
 import TaskTable from './TaskTable.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
@@ -30,9 +31,10 @@ const navItems = [
   { name: 'meetings', label: '会议记录', icon: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5' },
   { name: 'review-records', label: '审查记录', icon: 'M8 5 3 12l5 7 M16 5l5 7-5 7 M14 4l-4 16' },
   { name: 'review-config', label: '审查配置', icon: 'M4 6h16 M4 12h16 M4 18h16 M8 4v4 M16 10v4 M10 16v4' },
+  { name: 'scheduled-tasks', label: '定时任务', icon: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z M12 7v5l3 2' },
   { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
 ] as const
-const adminPages = ['users', 'review-config']
+const adminPages = ['users', 'review-config', 'scheduled-tasks']
 function userRoles(item: User): UserRole[] {
   return item.roles ?? [item.role]
 }
@@ -49,7 +51,6 @@ const showUnreadReminder = ref(false)
 const notificationPermission = ref<ReturnType<typeof desktopNotificationPermission>>(desktopNotificationPermission())
 const showPermissionReminder = ref(false), requestingPermission = ref(false)
 const liveMessages = ref<LiveMessage[]>([])
-const unreadReminderInterval = 5 * 60 * 1000
 const messagesRefresh = ref(0), reviewRefresh = ref(0)
 let unreadVersion = 0
 const reviewRecords = ref<InstanceType<typeof ReviewRecords> | null>(null)
@@ -198,14 +199,14 @@ watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCle
   if (cancelled) return
 
   stop = module.startSidebarTour({
-    menu: visibleNavItems.value.filter(item => item.name !== 'review-config' && item.name !== 'review-records'),
+    menu: visibleNavItems.value.filter(item => item.name !== 'review-config' && item.name !== 'review-records' && item.name !== 'scheduled-tasks'),
     showMeetingShortcut: activePage === 'reports',
     setCollapsed: collapsed => { sidebarCollapsed.value = collapsed },
     onShown: () => markGuideSeen(key),
     onClosed: close,
   })
 }, { flush: 'post' })
-const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码', 'review-config': '审查配置', 'review-records': '审查记录', messages: '消息中心' }[page.value] || '周报'))
+const title = computed(() => ({ work: '本周工作', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码', 'review-config': '审查配置', 'review-records': '审查记录', messages: '消息中心', 'scheduled-tasks': '定时任务' }[page.value] || '周报'))
 const taskFontSizeKey = 'zhoubao.task-font-size'
 function loadTaskFontSize() {
   try {
@@ -636,26 +637,39 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   checkNotificationPermission()
   showPermissionReminder.value = notificationPermission.value !== 'granted'
   window.addEventListener('focus', checkNotificationPermission)
-  const { stop, remindUnread } = subscribeToMessages(account, count => {
+  let reminderTimer: number | undefined
+  let intervalMinutes = 0
+  let scheduleVersion = 0
+  let checking = false
+  const { stop, remindUnread } = subscribeToMessages(account, (count, schedule) => {
     if (user.value?.id !== account) return
     checkNotificationPermission()
     unreadVersion++
     unreadMessages.value = count
     messagesRefresh.value++
+    const nextInterval = schedule?.enabled ? schedule.interval_minutes : 0
+    if (nextInterval === intervalMinutes) return
+    intervalMinutes = nextInterval
+    scheduleVersion++
+    window.clearInterval(reminderTimer)
+    if (intervalMinutes > 0) {
+      reminderTimer = window.setInterval(scanUnread, intervalMinutes * 60 * 1000)
+    } else {
+      showUnreadReminder.value = false
+    }
   }, message => {
     // 合并多个即时提醒时保留最新三条，其余可在消息中心查看。
     liveMessages.value = [...liveMessages.value.slice(-2), message]
   }, message => openLiveMessage(message))
-  let active = true
-  let checking = false
-  // 每五分钟检查未读数和最新未读消息，丢弃已被更新状态覆盖的结果。
-  const timer = window.setInterval(async () => {
+  // 配置或账号变更时，丢弃旧扫描尚未返回的结果。
+  async function scanUnread() {
     if (checking) return
     checking = true
     const version = ++unreadVersion
+    const schedule = scheduleVersion
     try {
       const { total, items } = await api<{ total: number; items: LiveMessage[] }>('/notifications?is_read=false')
-      if (!active || version !== unreadVersion) return
+      if (schedule !== scheduleVersion || version !== unreadVersion) return
       unreadMessages.value = total
       checkNotificationPermission()
       if (notificationPermission.value === 'granted') {
@@ -666,10 +680,10 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       }
     } catch { /* 轮询失败时保留最近一次成功的未读状态。 */ }
     finally { checking = false }
-  }, unreadReminderInterval)
+  }
   onCleanup(() => {
-    active = false
-    window.clearInterval(timer)
+    scheduleVersion++
+    window.clearInterval(reminderTimer)
     window.removeEventListener('focus', checkNotificationPermission)
     stop()
   })
@@ -736,6 +750,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <div class="work-area" :class="{ 'review-work-area': page === 'review-records' }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
+      <ScheduledTasks v-else-if="page === 'scheduled-tasks' && isAdmin" :key="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
       <div v-else-if="page === 'work'">

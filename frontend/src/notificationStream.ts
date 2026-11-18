@@ -1,8 +1,9 @@
-import type { LiveMessage } from './types'
+import type { LiveMessage, ScheduleSettings } from './types'
 
 interface Snapshot {
   count: number
   messages: LiveMessage[]
+  unread_reminder: ScheduleSettings
 }
 
 const titles: Record<LiveMessage['kind'], string> = {
@@ -18,7 +19,7 @@ export function desktopNotificationPermission(): NotificationPermission | 'unsup
 
 export function subscribeToMessages(
   account: number,
-  onSnapshot: (count: number) => void,
+  onSnapshot: (count: number, schedule: ScheduleSettings) => void,
   onNewMessage: (message: LiveMessage) => void,
   onClick: (message: LiveMessage) => Promise<void>,
 ) {
@@ -65,7 +66,7 @@ export function subscribeToMessages(
   stream.onmessage = event => {
     if (closed) return
     const snapshot: Snapshot = JSON.parse(event.data)
-    onSnapshot(snapshot.count)
+    onSnapshot(snapshot.count, snapshot.unread_reminder)
     for (const message of snapshot.messages) {
       // SSE 按消息编号递增发送，同一标签页只展示一次。
       if (message.id <= lastMessageId) continue

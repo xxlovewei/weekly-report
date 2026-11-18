@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.db import Base, SessionLocal, engine
 from app.main import app, hasher
 from app.models import User
+from app.scheduled_tasks import UNREAD_REMINDER, task_settings
 from tests.credentials import credential_post, encrypted_body
 
 PASSWORD = "correct-horse-123"
@@ -37,6 +38,29 @@ def client(username):
 def mutate(c, method, path, revision, body=None, key=None):
     headers = {"Idempotency-Key": key} if key else None
     return c.request(method, f"{path}?revision={revision}", json=body, headers=headers)
+
+
+def test_scheduled_task_settings_require_admin_and_persist():
+    path = "/api/scheduled-tasks"
+    task_path = f"{path}/{UNREAD_REMINDER}"
+    operator = client("admin")
+    member = client("alice")
+    assert TestClient(app).get(path).status_code == 401
+    assert member.get(path).status_code == 403
+    default, = operator.get(path).json()
+    assert default == {"key": UNREAD_REMINDER, "name": "未读消息提醒", "enabled": True, "interval_minutes": 5}
+    settings = {"enabled": False, "interval_minutes": 17}
+    assert member.put(task_path, json=settings).status_code == 403
+    assert operator.put(task_path, json=settings, headers={"X-CSRF-Token": ""}).status_code == 403
+    assert operator.put(f"{path}/unknown", json=settings).status_code == 404
+    for interval in (0, 1441, 1.5, True, "5"):
+        assert operator.put(task_path, json={**settings, "interval_minutes": interval}).status_code == 422
+    assert operator.put(task_path, json=settings).json() == {**default, **settings}
+    with SessionLocal() as db:
+        assert task_settings(db, UNREAD_REMINDER).model_dump() == settings
+    assert operator.get(path).json() == [{**default, **settings}]
+    assert operator.put(task_path, json={"enabled": True, "interval_minutes": 1}).status_code == 200
+    assert operator.get(path).json() == [{**default, "interval_minutes": 1}]
 
 def test_credential_requests_require_valid_encryption():
     anon = TestClient(app)
