@@ -93,13 +93,13 @@ test('未读轮询和即时消息按权限选择提醒，点击桌面通知后�
   await page.reload()
   await expect(prompt).toBeVisible()
 
-  async function receive(id: number) {
-    await page.evaluate(messageId => {
+  async function receive(id: number, unread_reminder = { enabled: true, interval_minutes: 5 }) {
+    await page.evaluate(({ messageId, unread_reminder, count }) => {
       const stream = (window as unknown as { messageStream: EventSource }).messageStream
       stream.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
-        count: 1, messages: [{ id: messageId, kind: '代码审查', title: `审查日报 ${messageId}`, is_read: false, target: { date: '2026-11-12' } }],
+        count, unread_reminder, messages: [{ id: messageId, kind: '代码审查', title: `审查日报 ${messageId}`, is_read: false, target: { date: '2026-11-12' } }],
       }) }))
-    }, id)
+    }, { messageId: id, unread_reminder, count: unread.length })
   }
 
   const toast = (id: number) => page.getByRole('button', { name: new RegExp(`审查日报 ${id}`) })
@@ -153,6 +153,16 @@ test('未读轮询和即时消息按权限选择提醒，点击桌面通知后�
   await expect(page.getByRole('button', { name: /你有 1 条未读消息/ })).toBeVisible()
   await expect(prompt.getByText(/请在地址栏的站点设置中允许通知/)).toBeVisible()
   expect(await desktopNotifications()).toEqual([liveNotice, unreadNotice])
+
+  const remainingReminder = page.getByRole('button', { name: /你有 1 条未读消息/ })
+  // 在线关闭后清除站内提醒并停止定时扫描，即时消息仍然送达。
+  await receive(46, { enabled: false, interval_minutes: 1 })
+  await expect(toast(46)).toBeVisible()
+  await page.clock.fastForward(5 * 60 * 1000)
+  await expect(remainingReminder).toBeHidden()
+  await receive(46, { enabled: true, interval_minutes: 1 })
+  await page.clock.fastForward(60 * 1000)
+  await expect(remainingReminder).toBeVisible()
 })
 
 test('真实任务转交通知通过消息流即时送达', async ({ page, browser, baseURL }) => {

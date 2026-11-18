@@ -838,6 +838,8 @@ def release_notes(version: str, auth=Depends(active_session), db: Session = Depe
 # 子模块复用上面的会话权限和任务事务，定义完成后挂载。
 from .notifications import router as notifications_router
 from .reviews import router as reviews_router
+from .scheduled_tasks import router as scheduled_tasks_router
 
 app.include_router(notifications_router)
 app.include_router(reviews_router)
+app.include_router(scheduled_tasks_router)
