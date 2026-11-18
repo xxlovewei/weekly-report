@@ -84,7 +84,7 @@ hermes cron create "30 8 * * *" --name daily-open-code-review-zhoubao --script z
 
 ## 发布版本号
 
-登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停、点击或键盘聚焦侧栏版本号时，默认显示当前版本的更新说明。可用左右箭头按版本号查看历史，按 Esc 关闭。本次版本为 `2.1.3`。
+登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停、点击或键盘聚焦侧栏版本号时，默认显示当前版本的更新说明。可用左右箭头按版本号查看历史，按 Esc 关闭。本次版本为 `2.1.4`。
 
 发版说明省略引导功能相关的改动。每次生产发版先将变更描述写入一个 UTF-8 文本文件，再从仓库根目录执行：
 
