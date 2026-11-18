@@ -331,9 +331,17 @@ def report_day(report_date: date, auth=Depends(active_session), db: Session = De
         project_id = issue["project_id"]
         if project_id not in historical and project_id not in projects:
             historical[project_id] = db.get(ReviewProject, project_id).alias
+    # 展示历史日报时按登录 ID 查询当前姓名，保留原始提交人字段。
+    summary_projects = [
+        {**project, "commits": [
+            {**commit, "author_name": names.get(commit["author"].lower(), commit["author"] or "无名氏")}
+            for commit in project["commits"]
+        ]}
+        for project in run.projects
+    ]
     return {
         "summary": {"report_date": run.report_date, "commit_date": run.commit_date, "model": run.model,
-                    "duration_seconds": run.duration_seconds, "projects": run.projects},
+                    "duration_seconds": run.duration_seconds, "projects": summary_projects},
         "issues": issues, "projects": {**historical, **projects}, "common_project_ids": common_project_ids,
     }
 
