@@ -132,6 +132,22 @@ test('审查记录的说明和代码等宽并排，内容分别滚动', async ({
   }
 })
 
+test('相关代码和建议代码去掉共同缩进，保留内部层级', async ({ page }) => {
+  await openReview(page, 1, 1, [{
+    path: 'src/review.py',
+    existing_code: '    if ready:\r\n        run()\r\n\r\n    done()',
+    suggestion_code: '  ```text\n\tif ready:\n\t\trun()\n  ```',
+  }])
+  await page.getByRole('button', { name: '展开列表', exact: true }).click()
+  const blocks = page.locator('.review-issue .review-code pre code')
+  await expect(blocks).toHaveCount(2)
+  // 直接读取文本，保留断言中的行首空格和制表符。
+  await expect.poll(() => blocks.allTextContents()).toEqual([
+    'if ready:\n    run()\n\ndone()',
+    'if ready:\n\trun()',
+  ])
+})
+
 test('筛选收起时显示文本摘要，项目操作按钮共用样式', async ({ page }) => {
   await openReview(page, 1, 2)
   const card = page.getByRole('region', { name: '筛选审查记录' })
