@@ -63,6 +63,7 @@ class Week(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = {"comment": "任务明细表"}
     id: Mapped[int] = mapped_column(primary_key=True)
     week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
     meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", name="fk_tasks_meeting_task", ondelete="RESTRICT"), nullable=True, index=True)
@@ -78,6 +79,30 @@ class Task(Base):
     work_days: Mapped[list[int]] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, default="")
     week: Mapped[Week] = relationship(back_populates="tasks")
+
+class BoardTask(Base):
+    __tablename__ = "board_tasks"
+    __table_args__ = (
+        CheckConstraint("state IN ('inbox', 'in_progress', 'done')", name="ck_board_task_state"),
+        CheckConstraint("priority IN ('高', '中', '低')", name="ck_board_task_priority"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    category_name: Mapped[str] = mapped_column(String(100))
+    priority: Mapped[str] = mapped_column(String(4))
+    state: Mapped[str] = mapped_column(String(16), default="inbox")
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class BoardTaskDetail(Base):
+    """保留同一卡片跨周的明细关联，每周最多一条。"""
+    __tablename__ = "board_task_details"
+    __table_args__ = (UniqueConstraint("board_task_id", "week_id"),)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    board_task_id: Mapped[int] = mapped_column(ForeignKey("board_tasks.id", ondelete="CASCADE"))
+    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"))
+
 
 class Idempotency(Base):
     __tablename__ = "idempotency"

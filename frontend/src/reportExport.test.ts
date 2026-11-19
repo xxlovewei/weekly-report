@@ -22,6 +22,8 @@ describe('report export', () => {
     expect(cell.f).toBeUndefined()
     expect(cell.v).toBe('=1+1\nline two')
     expect(workbook.Sheets['张三 开发']['A1'].v).toBe('周次')
+    expect(workbook.Sheets['张三 开发']['C1'].v).toBe('任务名称')
+    expect(workbook.Sheets['张三 开发']['C2'].v).toBe('客户端')
     expect(workbook.Sheets['张三 开发']['A1'].s).toMatchObject({
       font: { sz: 16, bold: true },
       alignment: { horizontal: 'center', vertical: 'center' },

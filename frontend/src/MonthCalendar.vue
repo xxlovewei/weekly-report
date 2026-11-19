@@ -2,23 +2,25 @@
 import { computed, ref, watch } from 'vue'
 import { addDays, monthGrid, mondayOf, todayShanghai, weekOfMonth } from './dates'
 import { api } from './api'
-const props = defineProps<{ selected: string; scope: 'work' | 'reports' | 'review-records'; refreshKey?: number; compact?: boolean }>()
+const props = defineProps<{ selected: string; scope: 'work' | 'reports' | 'review-records'; currentWeek?: string; memberId?: number | null; refreshKey?: number; compact?: boolean }>()
 const emit = defineEmits<{ select: [week: string, refresh?: boolean] }>()
 const displayed = ref({ year: Number(props.selected.slice(0, 4)), month: Number(props.selected.slice(5, 7)) })
 const current = ref(todayShanghai())
 const byDay = computed(() => props.scope === 'review-records')
 const dateKey = (day: string) => byDay.value ? day : mondayOf(day)
+const currentKey = computed(() => props.scope === 'work' && props.currentWeek ? props.currentWeek : dateKey(current.value))
 // 周历只需要日期，审查月历用问题数区分已审查的日期。
 type CalendarMark = string | { date: string; issue_count: number }
 const marked = ref(new Map<string, number | null>())
 let request = 0
-watch(() => [displayed.value.year, displayed.value.month, props.scope, props.refreshKey, props.compact], async () => {
+watch(() => [displayed.value.year, displayed.value.month, props.scope, props.memberId, props.refreshKey, props.compact], async () => {
   const latest = ++request
   if (props.compact) return
   marked.value = new Map()
   try {
     const counts = byDay.value ? '&include_issue_counts=true' : ''
-    const result = await api<CalendarMark[]>(`/calendar/marks?year=${displayed.value.year}&month=${displayed.value.month}&scope=${props.scope}${counts}`)
+    const member = props.scope === 'work' && props.memberId ? `&user_id=${props.memberId}` : ''
+    const result = await api<CalendarMark[]>(`/calendar/marks?year=${displayed.value.year}&month=${displayed.value.month}&scope=${props.scope}${counts}${member}`)
     if (latest === request) marked.value = new Map(result.map(mark => typeof mark === 'string' ? [mark, null] : [mark.date, mark.issue_count]))
   } catch { if (latest === request) marked.value = new Map() }
 }, { immediate: true })
@@ -38,7 +40,7 @@ function shift(offset: number) {
   displayed.value = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
 }
 function goCurrent() {
-  const today = todayShanghai()
+  const today = props.scope === 'work' && props.currentWeek ? props.currentWeek : todayShanghai()
   current.value = today
   if (!props.compact) displayed.value = { year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }
   emit('select', dateKey(today), true)
@@ -56,7 +58,7 @@ function goCurrent() {
       </div>
     </div>
     <div v-if="!compact" class="calendar-grid"><span v-for="label in ['一','二','三','四','五','六','日']" :key="label" class="calendar-label">{{ label }}</span>
-      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === dateKey(current), outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? [day, reviewMarkLabel(day)].filter(Boolean).join('，') : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" :title="byDay ? reviewMarkLabel(day) : undefined" @click="emit('select', dateKey(day))">
+      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === currentKey, outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? [day, reviewMarkLabel(day)].filter(Boolean).join('，') : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" :title="byDay ? reviewMarkLabel(day) : undefined" @click="emit('select', dateKey(day))">
         {{ Number(day.slice(8)) }}
         <span v-if="byDay && marked.has(day)" class="review-day-mark" :class="{ 'review-day-mark-empty': marked.get(day) === 0 }" aria-hidden="true" />
         <span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day))" class="week-check" aria-hidden="true">√</span>

@@ -79,7 +79,8 @@ def test_credential_requests_require_valid_encryption():
     assert admin.post("/api/users", json={"username": "new", "display_name": "新人", "password": PASSWORD}).status_code == 422
     assert admin.post("/api/users/2/password", json={"password": PASSWORD}).status_code == 422
 
-def test_auth_roles_sessions_and_history():
+def test_auth_roles_sessions_and_history(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     with TestClient(app) as anon:
         assert anon.get("/api/users").status_code == 401
         wrong = credential_post(anon, "/api/auth/login", {"username":"admin","password":"wrong"})
@@ -107,7 +108,8 @@ def test_auth_roles_sessions_and_history():
     assert credential_post(admin, f"/api/users/{alice_id}/password", {"password": PASSWORD}).status_code == 404
     assert credential_post(TestClient(app), "/api/auth/login", {"username": "alice", "password": PASSWORD}).status_code == 401
 
-def test_categories_snapshot_ownership_and_reset():
+def test_categories_snapshot_ownership_and_reset(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     alice = client("alice")
     bob = client("bob")
     admin = client("admin")
@@ -126,7 +128,8 @@ def test_categories_snapshot_ownership_and_reset():
     assert alice.get("/api/auth/me").status_code == 401
     assert credential_post(TestClient(app), "/api/auth/login", {"username":"alice","password":PASSWORD}).status_code == 401
 
-def test_task_order_copy_revision_and_idempotency():
+def test_task_order_copy_revision_and_idempotency(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-05"))
     alice = client("alice")
     week = "/api/weeks/2026-10-05"
     first = mutate(alice, "POST", f"{week}/tasks", 0, key="first").json()
@@ -141,6 +144,7 @@ def test_task_order_copy_revision_and_idempotency():
     assert duplicate["tasks"][1]["work_days"] == [1,3]
     assert mutate(alice, "POST", f"{week}/tasks/{first_id}/duplicate", 2, key="dup").json() == duplicate
     target = "/api/weeks/2026-10-12"
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 12))
     carried = mutate(alice, "POST", f"{target}/carry-over", 0, {"mode":"append"}, key="carry1").json()
     assert len(carried["tasks"]) == 2
     assert all(t["work_days"] == [] for t in carried["tasks"])
@@ -150,26 +154,32 @@ def test_task_order_copy_revision_and_idempotency():
     removed = mutate(alice, "DELETE", f"{target}/tasks/{overwritten['tasks'][0]['id']}", 2).json()
     assert [t["position"] for t in removed["tasks"]] == [1]
 
-def test_no_source_does_not_clear_and_blank_status_copies():
+def test_no_source_does_not_clear_and_blank_status_copies(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     alice = client("alice")
     target = "/api/weeks/2026-10-12"
     created = mutate(alice, "POST", f"{target}/tasks", 0).json()
     untouched = mutate(alice, "POST", f"{target}/carry-over", 1, {"mode":"overwrite"}).json()
     assert untouched["no_source"] is True and untouched["tasks"] == created["tasks"]
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 5))
     source = mutate(alice, "POST", "/api/weeks/2026-10-05/tasks", 0).json()
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 12))
     assert source["tasks"][0]["status"] is None
     copied = mutate(alice, "POST", f"{target}/carry-over", 1, {"mode":"append"}).json()
     assert len(copied["tasks"]) == 2
     assert copied["tasks"][1]["status"] is None
 
-def test_reorder_tasks_persists_and_rejects_invalid_or_stale_orders():
+def test_reorder_tasks_persists_and_rejects_invalid_or_stale_orders(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     alice, bob = client("alice"), client("bob")
     week = "/api/weeks/2026-10-12"
     for revision in range(3):
         original = mutate(alice, "POST", f"{week}/tasks", revision).json()
     ids = [task["id"] for task in original["tasks"]]
     foreign = mutate(bob, "POST", f"{week}/tasks", 0).json()["tasks"][0]["id"]
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 19))
     other_week = mutate(alice, "POST", "/api/weeks/2026-10-19/tasks", 0).json()["tasks"][0]["id"]
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 12))
     endpoint = f"{week}/tasks/order"
     for invalid in [[], ids[:-1], [ids[0], ids[0], ids[2]], [*ids, foreign], [ids[0], ids[1], foreign], [ids[0], ids[1], other_week]]:
         assert mutate(alice, "PUT", endpoint, 3, {"task_ids": invalid}).status_code == 422
@@ -190,7 +200,8 @@ def test_reorder_tasks_persists_and_rejects_invalid_or_stale_orders():
     assert bob.get(week).json()["tasks"][0]["id"] == foreign
     assert alice.put(f"{endpoint}?revision=4", json={"task_ids": ids}, headers={"X-CSRF-Token": "wrong"}).status_code == 403
 
-def test_all_statuses_user_edit_and_password_change():
+def test_all_statuses_user_edit_and_password_change(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     alice = client("alice")
     admin = client("admin")
     alice_id = next(u["id"] for u in admin.get("/api/users").json() if u["username"] == "alice")
@@ -228,7 +239,8 @@ def client_with_password(username, password):
     c.headers["X-CSRF-Token"] = response.json()["csrf_token"]
     return c
 
-def test_report_admin_hidden_and_calendar_marks_task_group():
+def test_report_admin_hidden_and_calendar_marks_task_group(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))
     manager, alice = client("admin"), client("alice")
     week = "/api/weeks/2026-10-12"
     admin_task = mutate(manager, "POST", f"{week}/tasks", 0).json()
@@ -248,6 +260,7 @@ def test_report_admin_hidden_and_calendar_marks_task_group():
     assert changed["tasks"][0]["task_group"] == "平台升级"
     duplicated = mutate(alice, "POST", f"{week}/tasks/{task_id}/duplicate", 2).json()
     assert duplicated["tasks"][1]["task_group"] == "平台升级"
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 19))
     carried = mutate(alice, "POST", "/api/weeks/2026-10-19/carry-over", 0, {"mode":"append"}).json()
     assert carried["tasks"][0]["task_group"] == "平台升级"
     assert alice.get(f"/api/reports/2026-10-12/users/{alice_id}").json()["tasks"][0]["category_name"] == "开发相关"

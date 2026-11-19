@@ -23,7 +23,7 @@ def editable(meeting):
             for k, v in meeting.items() if k in {"revision", "meeting_date", "meeting_type", "content", "needs_follow_up", "tasks"}}
 
 
-def test_new_assignees_receive_one_notification_with_their_work_target():
+def test_new_assignees_receive_one_notification_with_their_work_target(monkeypatch):
     alice, bob = client("alice"), client("bob")
     people = {p["username"]: p["id"] for p in alice.get("/api/meeting-assignees").json()}
     assignment_filter = {"kind": "会议指派", "is_read": False}
@@ -69,6 +69,7 @@ def test_new_assignees_receive_one_notification_with_their_work_target():
     assert message["target"]["task"] == current["id"]
 
     next_week = current_week() + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: next_week)
     carried = mutate(bob, "POST", f"/api/weeks/{next_week}/carry-over", 0, {"mode": "append"}).json()
     linked, = (task for task in carried["tasks"] if task["meeting_id"])
     message, = bob.get("/api/notifications", params=assignment_filter).json()["items"]
@@ -85,9 +86,10 @@ def test_assignment_sync_copy_delete_and_conflicts():
     assert a["tasks"][0]["status"] == "50%" and b["tasks"][0]["status"] is None
     task_id = a["tasks"][0]["id"]
     assert mutate(alice, "DELETE", f"{week}/tasks/{task_id}", a["revision"]).status_code == 403
-    changed = mutate(alice, "PATCH", f"{week}/tasks/{task_id}", a["revision"], {"description": "长描述" * 600, "status": "已完成"})
+    changed = mutate(alice, "PATCH", f"{week}/tasks/{task_id}", a["revision"], {"task_group": "新名称", "description": "长描述" * 600, "status": "已完成"})
     assert changed.status_code == 200, changed.text
-    assert bob.get(week).json()["tasks"][0]["description"] == "长描述" * 600
+    assert bob.get(week).json()["tasks"][0]["task_group"] == "新名称"
+    assert bob.get(week).json()["tasks"][0]["description"] == ""
     assert bob.get(week).json()["tasks"][0]["status"] is None
     assert alice.put(path, json=editable(meeting)).status_code == 409
     meeting = alice.get(path).json()
@@ -105,7 +107,7 @@ def test_assignment_sync_copy_delete_and_conflicts():
     old, new = copied["tasks"]
     assert old["meeting_task_id"] is None and new["meeting_task_id"]
     assert mutate(alice, "POST", f"{week}/tasks/{task_id}/duplicate", a["revision"], key="copy-linked").json() == copied
-    changed = mutate(alice, "PATCH", f"{week}/tasks/{old['id']}", copied["revision"], {"description": "独立旧任务"}).json()
+    changed = mutate(alice, "PATCH", f"{week}/tasks/{old['id']}", copied["revision"], {"task_group": "独立旧任务"}).json()
     assert alice.get(path).json()["tasks"][0]["name"] != "独立旧任务"
     assert alice.delete(path).status_code == 200
     remaining = alice.get(week).json()
@@ -114,10 +116,12 @@ def test_assignment_sync_copy_delete_and_conflicts():
     assert mutate(alice, "DELETE", f"{week}/tasks/{old['id']}", remaining["revision"]).status_code == 200
 
 
-def test_carry_transfers_only_current_link_and_protects_overwrite():
+def test_carry_transfers_only_current_link_and_protects_overwrite(monkeypatch):
     alice, bob, meeting = setup_assignment()
     source = f"/api/weeks/{current_week()}"
-    target = f"/api/weeks/{current_week() + timedelta(days=7)}"
+    next_week = current_week() + timedelta(days=7)
+    target = f"/api/weeks/{next_week}"
+    monkeypatch.setattr("app.main.current_work_week", lambda: next_week)
     old = alice.get(source).json()
     copied = mutate(alice, "POST", f"{target}/carry-over", 0, {"mode": "append"}).json()
     assert copied["tasks"][0]["meeting_task_id"]
@@ -125,9 +129,9 @@ def test_carry_transfers_only_current_link_and_protects_overwrite():
     assert alice.get(source).json()["revision"] > old["revision"]
     assert mutate(alice, "POST", f"{target}/carry-over", copied["revision"], {"mode": "overwrite"}).status_code == 409
     new = copied["tasks"][0]
-    assert mutate(alice, "PATCH", f"{target}/tasks/{new['id']}", copied["revision"], {"description": "新周描述", "status": "90%"}).status_code == 200
+    assert mutate(alice, "PATCH", f"{target}/tasks/{new['id']}", copied["revision"], {"task_group": "新周名称", "status": "90%"}).status_code == 200
     current = alice.get(f"/api/meetings/{meeting['id']}").json()
-    assert current["tasks"][0]["name"] == "新周描述"
+    assert current["tasks"][0]["name"] == "新周名称"
     payload = editable(current)
     payload["tasks"][0]["assignments"] = []
     assert alice.put(f"/api/meetings/{meeting['id']}", json=payload).status_code == 200
@@ -168,3 +172,34 @@ def test_assignment_migration_fresh_and_existing(monkeypatch):
         migration.downgrade()
         migration.upgrade()
         assert "meeting_task_id" in {c["name"] for c in inspect(connection).get_columns("tasks")}
+
+
+def test_legacy_long_meeting_name_is_displayed_and_preserved_until_renamed():
+    from app.db import SessionLocal
+    from app.models import MeetingTask, Task
+    from sqlalchemy import select
+
+    alice, _, meeting = setup_assignment()
+    legacy_name = "旧会议任务" * 100
+    meeting_task_id = meeting["tasks"][0]["id"]
+    with SessionLocal() as db:
+        db.get(MeetingTask, meeting_task_id).name = legacy_name
+        for detail in db.scalars(select(Task).where(Task.meeting_task_id == meeting_task_id)):
+            detail.task_group = ""
+            detail.description = legacy_name
+        db.commit()
+    week_path = f"/api/weeks/{current_week()}"
+    detail, = alice.get(week_path).json()["tasks"]
+    assert detail["task_group"] == legacy_name
+    meeting_path = f"/api/meetings/{meeting['id']}"
+    payload = editable(alice.get(meeting_path).json())
+    saved = alice.put(meeting_path, json={**payload, "content": "仅更新会议内容"})
+    assert saved.status_code == 200, saved.text
+    payload = editable(saved.json())
+    payload["tasks"][0]["name"] = legacy_name + "修改"
+    assert alice.put(meeting_path, json=payload).status_code == 422
+    payload["tasks"][0]["name"] = "新的任务名称"
+    assert alice.put(meeting_path, json=payload).status_code == 200
+    detail, = alice.get(week_path).json()["tasks"]
+    assert detail["task_group"] == "新的任务名称"
+    assert detail["description"] == legacy_name

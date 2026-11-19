@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import packageInfo from '../package.json' with { type: 'json' }
 import type { Task, User } from '../src/types'
+import { mondayOf, todayShanghai } from '../src/dates'
 
 const currentVersion = packageInfo.version
 
@@ -8,6 +9,7 @@ async function mockWorkspace(page: Page, user: User, tasks: Task[] = []) {
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
+    if (path.endsWith('/work-context')) return route.fulfill({ json: { current_week: mondayOf(todayShanghai()), members: [] } })
     if (path.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks } })
     if (path.endsWith('/meetings')) return route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 50 } })
     if (path.endsWith('/releases')) return route.fulfill({ json: [

@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
+from datetime import date
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -9,7 +10,8 @@ from .credentials import credential_post
 from .test_api import PASSWORD, client, clean_db, engine, mutate
 
 
-def test_dual_role_applies_to_permissions_and_workflows():
+def test_dual_role_applies_to_permissions_and_workflows(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 12))
     admin, alice, bob = client("admin"), client("alice"), client("bob")
     alice_id = alice.get("/api/auth/me").json()["user"]["id"]
     path = f"/api/users/{alice_id}"

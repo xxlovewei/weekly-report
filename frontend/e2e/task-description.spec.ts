@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures'
 import packageInfo from '../package.json' with { type: 'json' }
 import type { Task } from '../src/types'
+import { mondayOf, todayShanghai } from '../src/dates'
 
 test.beforeEach(async ({ page }) => {
   const tasks: Task[] = [{ id: 1, position: 1, category_name: null, task_group: '', description: '7、原有工作', status: null, work_days: [], notes: '' }]
@@ -12,6 +13,10 @@ test.beforeEach(async ({ page }) => {
     let data: unknown
     if (path.endsWith('/auth/me')) {
       data = { user: { id: 1, username: 'test', display_name: '测试用户', role: 'user', is_active: true, status: '正常', must_change_password: false }, csrf_token: 'test-csrf' }
+    } else if (path.endsWith('/work-context')) {
+      data = { current_week: mondayOf(todayShanghai()), members: [] }
+    } else if (path.endsWith('/meetings')) {
+      data = { items: [], total: 0, page: 1, page_size: 50 }
     } else if (path.endsWith('/categories') || path.endsWith('/calendar/marks')) {
       data = []
     } else if (/\/weeks\/\d{4}-\d{2}-\d{2}(\/tasks(\/\d+)?)?$/.test(path)) {
@@ -120,7 +125,7 @@ test('行中续号、选区替换、普通换行及输入法确认', async ({ pa
   await notes.fill('1. 备注')
   await notes.press('End')
   await notes.press('Enter')
-  await expect(notes).toHaveValue('1. 备注\n')
+  await expect(notes).toHaveValue('1. 备注\n2. ')
   await notes.fill('第一行\n第二行\n第三行\n第四行')
   expect(await notes.evaluate(el => (el as HTMLTextAreaElement).clientHeight >= (el as HTMLTextAreaElement).scrollHeight)).toBe(true)
   await expect(page.getByText('✓ 已保存')).toBeVisible()
@@ -337,6 +342,10 @@ test('内容冲突重试不丢编号，切周清除旧历史，只读汇总无�
   const previous = new Date(`${current}T00:00:00Z`)
   previous.setUTCDate(previous.getUTCDate() - 7)
   await page.getByRole('button', { name: `${previous.toISOString().slice(0, 10)}，选择该周`, exact: true }).click()
+  await expect(page.getByText('仅当前周可编辑。')).toBeVisible()
+  await expect(description).toHaveCount(0)
+  await page.getByRole('button', { name: '回到本周' }).click()
+  await expect(description).toHaveValue('1. A\n2. \n3. B')
   await description.press('Control+z')
   await expect(description).toHaveValue('1. A\n2. \n3. B')
   await page.getByRole('button', { name: /周报汇总/ }).click()

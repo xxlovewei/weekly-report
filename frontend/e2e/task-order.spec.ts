@@ -1,9 +1,15 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import type { Task } from '../src/types'
+import { mondayOf, todayShanghai } from '../src/dates'
 
 async function setup(page: Page) {
   await page.setViewportSize({ width: 1440, height: 1100 })
+  // 手柄拖拽直接使用鼠标坐标，引导不能在手势途中抢走焦点。
+  await page.addInitScript(() => {
+    localStorage.setItem('zhoubao.sidebar-tour.v1.4.0.1', '1')
+    localStorage.setItem('zhoubao.task-actions-tour.1', '1')
+  })
   let tasks: Task[] = ['第一项', '第二项', '第三项'].map((name, index) => ({ id: index + 1, position: index + 1, category_name: null, task_group: name, description: '', status: null, work_days: [], notes: '' }))
   let revision = 0
   const writes: string[] = []
@@ -14,7 +20,8 @@ async function setup(page: Page) {
     let data: unknown
     if (path.endsWith('/auth/me')) {
       data = { user: { id: 1, username: 'test', display_name: '测试用户', role: 'user', is_active: true, status: '正常', must_change_password: false }, csrf_token: 'test-csrf' }
-    } else if (path.endsWith('/categories') || path.endsWith('/calendar/marks')) data = []
+    } else if (path.endsWith('/work-context')) data = { current_week: mondayOf(todayShanghai()), members: [] }
+    else if (path.endsWith('/categories') || path.endsWith('/calendar/marks')) data = []
     else if (path.endsWith('/meetings')) data = { items: [], total: 0, page: 1, page_size: 50 }
     else if (/\/reports\/[^/]+$/.test(path)) data = [
       { id: 1, name: '测试用户', is_active: true },
@@ -63,14 +70,14 @@ test('手柄拖拽上下排序，松手才保存，刷新后保留顺序与编�
   expect(state.orders).toEqual([])
   await expect(page.locator('.task-row.drop-after')).toHaveCount(1)
   await page.mouse.up()
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '第三项', '第一项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '第三项', '第一项'])
   expect(state.orders).toEqual([[2, 3, 1]])
   await page.reload()
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '第三项', '第一项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '第三项', '第一项'])
   await expect(page.locator('.task-index')).toHaveText(['01', '02', '03'])
   await startDrag(page, 2, 0, false)
   await page.mouse.up()
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第一项', '第二项', '第三项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第一项', '第二项', '第三项'])
   expect(state.orders).toEqual([[2, 3, 1], [1, 2, 3]])
   await page.screenshot({ path: testInfo.outputPath('task-order-desktop.png'), fullPage: true })
   for (const width of [320, 768, 1024]) {
@@ -85,15 +92,15 @@ test('手柄拖拽上下排序，松手才保存，刷新后保留顺序与编�
 
 test('排序前保存待提交的编辑，手柄支持键盘上下移动', async ({ page }) => {
   const state = await setup(page)
-  await page.getByRole('textbox', { name: '任务大类' }).first().fill('修改后')
+  await page.getByRole('textbox', { name: '任务名称' }).first().fill('修改后')
   // 现有手柄交互要求先选中卡片，再用方向键排序。
   await page.locator('.task-drag-handle').first().click()
   await page.locator('.task-drag-handle').first().press('ArrowDown')
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '修改后', '第三项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第二项', '修改后', '第三项'])
   expect(state.writes).toEqual(['PATCH', 'PUT'])
   await expect(page.locator('.task-drag-handle').nth(1)).toBeFocused()
   await page.keyboard.press('ArrowUp')
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['修改后', '第二项', '第三项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['修改后', '第二项', '第三项'])
   await expect(page.locator('.task-drag-handle').first()).toBeFocused()
   await page.locator('.task-drag-handle').first().press('ArrowUp')
   expect(state.orders).toHaveLength(2)
@@ -112,7 +119,7 @@ test('取消拖拽与原地放下不保存，保存冲突时保留原顺序', as
   await startDrag(page, 0, 2, true)
   await page.mouse.up()
   await expect(page.getByRole('alert')).toContainText('本周任务已在其他页面更新')
-  await expect.poll(() => page.getByRole('textbox', { name: '任务大类' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第一项', '第二项', '第三项'])
+  await expect.poll(() => page.getByRole('textbox', { name: '任务名称' }).evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(['第一项', '第二项', '第三项'])
 })
 
 test('周报汇总只读卡片不显示拖拽手柄', async ({ page }) => {

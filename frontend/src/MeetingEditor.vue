@@ -71,7 +71,7 @@ async function save() {
         <div v-if="form.needs_follow_up" class="meeting-followups"><div class="section-head"><strong>关联任务</strong><button class="mini-button" type="button" @click="form.tasks.push({ name: '', status: null, assignments: [] })">＋ 添加任务</button></div>
           <div v-for="(task, index) in form.tasks" :key="taskKey(task)" class="meeting-task-edit">
             <strong>{{ index + 1 }}</strong>
-            <TaskDescription v-model="task.name" class="meeting-task-description" title-class="meeting-task-field-title" placeholder="" :rows="3" />
+            <TaskDescription v-model="task.name" label="任务名称" :max-length="Math.max(200, [...(meeting?.tasks.find(original => original.id === task.id)?.name || '')].length)" class="meeting-task-description" title-class="meeting-task-field-title" placeholder="" :rows="3" />
             <div class="meeting-task-field meeting-assignees">
               <span class="meeting-task-field-title">指派人员</span>
               <AssigneeSelect :people="people" :selected="(task.assignments || []).map(a => a.user_id)" :loading="peopleLoading" :label="`任务 ${index + 1} 指派人员`" @toggle="togglePerson(task, $event)" />

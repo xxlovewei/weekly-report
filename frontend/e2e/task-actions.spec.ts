@@ -31,7 +31,7 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
       week = await edited.json()
     }
     const rows = page.locator('.task-row')
-    const groups = page.getByRole('textbox', { name: '任务大类' })
+    const groups = page.getByRole('textbox', { name: '任务名称' })
     const assertOrder = (order: string[]) => expect.poll(() => groups.evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(order)
     await page.goto('/work')
     await assertOrder([...baseline, ...names])
@@ -90,7 +90,7 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
 
     await recipientPage.reload()
     const received = recipientPage.locator('.task-row').last()
-    await expect(received.getByRole('textbox', { name: '任务大类' })).toHaveValue(c)
+    await expect(received.getByRole('textbox', { name: '任务名称' })).toHaveValue(c)
     await expect(received.locator('.task-leading')).toHaveClass(/priority-high/)
     const tooltip = `由${alice.user.display_name}转交的任务`
     const light = received.getByRole('img', { name: tooltip })

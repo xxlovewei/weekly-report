@@ -24,7 +24,7 @@ test('新增和编辑会议指派都会通知新增人员，消息和工作任�
     await create.getByLabel('会议内容').fill(content)
     await create.getByLabel('是否需要跟踪完成情况').selectOption('true')
     await create.getByRole('button', { name: /添加任务/ }).click()
-    await create.getByLabel('任务描述').fill(taskName)
+    await create.getByLabel('任务名称').fill(taskName)
     await create.getByRole('button', { name: '任务 1 指派人员' }).click()
     await page.getByRole('dialog', { name: '任务 1 指派人员' }).getByRole('checkbox', { name: '小李' }).check()
     const created = page.waitForResponse(response => response.url().endsWith('/api/meetings') && response.request().method() === 'POST')
@@ -45,7 +45,7 @@ test('新增和编辑会议指派都会通知新增人员，消息和工作任�
     expect((await marked).status()).toBe(200)
     await expect(bob).toHaveURL(new RegExp(`/work\\?week=${mondayOf(date)}&task=\\d+$`))
     const target = bob.locator('.task-target')
-    await expect(target.getByLabel('任务描述')).toHaveValue(taskName)
+    await expect(target.getByLabel('任务名称')).toHaveValue(taskName)
     const bulbText = `${date}会议指派，点击可跳转会议记录`
     const bulb = target.getByRole('link', { name: bulbText })
     await expect(bulb).toHaveAttribute('title', bulbText)
