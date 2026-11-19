@@ -53,6 +53,8 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .page-top.page-top-collapsed { flex-direction: row; align-items: center; gap: 12px; padding: 4px 4px 8px; margin-bottom: 12px; overflow-x: auto; }
 .page-top-collapsed .page-top-leading, .page-top-collapsed .page-top-text { display: flex; flex: none; align-items: center; gap: 8px; white-space: nowrap; }
 .page-top-collapsed .eyebrow, .page-top-collapsed .date-range { font-size: 16px; }
+/* 收起时成员按钮与功能按钮共用页头的横向滚动。 */
+.report-top.page-top-collapsed .tabs { flex: 1 0 auto; align-self: center; width: auto; overflow: visible; }
 .page-top-collapsed .top-actions { flex: none; flex-wrap: nowrap; width: auto; }
 .page-top-collapsed .top-actions button { flex: none; white-space: nowrap; }
 .sidebar-bottom{height:70px;padding-top:12px}.sidebar-user{height:56px;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px}.sidebar-bottom .identity{height:56px;grid-template-rows:1fr 1fr;align-content:stretch;gap:0;padding:0}.sidebar-bottom .identity strong{font-size:18px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-bottom .identity small{font-size:11px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-actions{display:grid;grid-template-rows:1fr 1fr;gap:6px}.sidebar-actions button{width:100%;min-height:0;padding:4px 5px}
