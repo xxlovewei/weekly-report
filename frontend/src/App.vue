@@ -162,6 +162,8 @@ const reportExportOpen = ref(false), reportExporting = ref(false), reportExportE
 const reportExportStart = ref(''), reportExportEnd = ref('')
 const reportExportStartInput = ref<HTMLInputElement | null>(null)
 const page = computed(() => String(route.name || 'work'))
+// 页内导航共用页头的折叠状态，刷新后默认展开。
+const pageTopCollapsed = ref(false)
 const sidebarTourAccount = computed(() =>
   ready.value && desktopSidebar.value && !user.value?.must_change_password && (page.value === 'work' || page.value === 'reports')
     ? user.value?.id : undefined,
@@ -730,23 +732,28 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
         </div>
       </div>
     </aside>
-    <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports' }">
-      <div>
-        <span class="eyebrow">周报系统 / {{ title }}</span>
-        <div :class="{ 'message-heading': page === 'messages' }">
-          <h1>{{ title }}</h1>
-          <template v-if="page === 'messages'">
-            <button v-if="notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button>
-            <small v-else-if="notificationPermission === 'denied'">请在浏览器站点设置中允许通知。</small>
-            <small v-else-if="notificationPermission === 'granted'">已开启桌面通知</small>
-            <small v-else>当前浏览器环境仅支持站内消息。</small>
-          </template>
+    <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports', 'page-top-collapsed': pageTopCollapsed }">
+      <div class="page-top-leading">
+        <button class="review-card-toggle page-top-toggle" type="button" :aria-label="pageTopCollapsed ? '展开页头' : '收起页头'" :title="pageTopCollapsed ? '展开页头' : '收起页头'" :aria-expanded="!pageTopCollapsed" aria-controls="page-top-details" @click="pageTopCollapsed = !pageTopCollapsed">
+          <span aria-hidden="true">{{ pageTopCollapsed ? '↓' : '↑' }}</span>
+        </button>
+        <div class="page-top-text">
+          <span class="eyebrow">周报系统 / {{ title }}</span>
+          <div v-show="!pageTopCollapsed" id="page-top-details" :class="{ 'message-heading': page === 'messages' }">
+            <h1>{{ title }}</h1>
+            <template v-if="page === 'messages'">
+              <button v-if="notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button>
+              <small v-else-if="notificationPermission === 'denied'">请在浏览器站点设置中允许通知。</small>
+              <small v-else-if="notificationPermission === 'granted'">已开启桌面通知</small>
+              <small v-else>当前浏览器环境仅支持站内消息。</small>
+            </template>
+          </div>
+          <p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p>
+          <p v-else-if="page === 'review-records'" class="date-range">{{ reviewDay }}</p>
         </div>
-        <p v-if="page === 'work' || page === 'reports'" class="date-range">{{ selectedWeek }} 至 {{ new Date(new Date(`${selectedWeek}T12:00:00Z`).getTime() + 6 * 86400000).toISOString().slice(0,10) }}</p>
-        <p v-else-if="page === 'review-records'" class="date-range">{{ reviewDay }}</p>
       </div>
-      <div class="top-actions"><template v-if="page === 'work' || page === 'reports'"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></template><button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button><button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">审查总结</button></div>
-      <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
+      <div class="top-actions"><button v-if="pageTopCollapsed && page === 'messages' && notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button><template v-if="page === 'work' || page === 'reports'"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output v-show="!pageTopCollapsed" aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></template><button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button><button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">审查总结</button></div>
+      <div v-if="page === 'reports' && tabs.length" v-show="!pageTopCollapsed" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
       <div class="work-area" :class="{ 'review-work-area': page === 'review-records' }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />

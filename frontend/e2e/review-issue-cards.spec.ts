@@ -32,6 +32,32 @@ async function openReview(page: Page, issueCount = 1, projectCount = 1, override
   return issues[0]!
 }
 
+test('页头可收成一行，保留日期和功能按钮', async ({ page }) => {
+  await openReview(page)
+  const header = page.locator('.page-top')
+  const heading = header.getByRole('heading', { name: '审查记录' })
+  await expect(heading).toBeVisible()
+  const expandedHeight = (await header.boundingBox())!.height
+
+  await header.getByRole('button', { name: '收起页头' }).press('Enter')
+  await expect(heading).toBeHidden()
+  const title = header.locator('.eyebrow')
+  const date = header.locator('.date-range')
+  await expect(title).toHaveCSS('font-size', '16px')
+  await expect(date).toHaveCSS('font-size', '16px')
+  const titleBox = (await title.boundingBox())!
+  const dateBox = (await date.boundingBox())!
+  expect(dateBox.y + dateBox.height / 2).toBeCloseTo(titleBox.y + titleBox.height / 2, 0)
+  expect(dateBox.x).toBeGreaterThan(titleBox.x + titleBox.width)
+  expect((await header.boundingBox())!.height).toBeLessThan(expandedHeight)
+  await expect(header.getByRole('button', { name: '审查总结' })).toBeVisible()
+  await expect(header.getByRole('button', { name: '消息中心' })).toBeVisible()
+
+  await header.getByRole('button', { name: '展开页头' }).click()
+  await expect(heading).toBeVisible()
+  expect((await header.boundingBox())!.height).toBe(expandedHeight)
+})
+
 test('审查问题默认收起，展开后可修改状态和备注', async ({ page }) => {
   const issue = await openReview(page)
   const card = page.locator('.review-issue')
@@ -154,6 +180,9 @@ test('筛选收起时显示文本摘要，项目操作按钮共用样式', async
   const summary = card.getByRole('group', { name: '当前筛选条件' })
   const collapse = card.getByRole('button', { name: '收起筛选' })
   const expand = card.getByRole('button', { name: '展开筛选' })
+  await expect(card.locator('.review-filter-top > [role="group"]')).toHaveCount(4)
+  await expect(card.locator('[aria-label="严重程度"] + [aria-label="审查项目"]')).toHaveCSS('border-top-width', '0px')
+  await expect(collapse).toHaveClass(/review-card-toggle/)
   await collapse.click()
   await expect(summary.locator('span')).toHaveText(['修改人：全部', '完成状态：全部', '严重程度：全部', '审查项目：全部'])
   await expect(card.getByRole('button')).toHaveCount(2)

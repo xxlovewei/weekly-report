@@ -48,6 +48,13 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .report-top .tabs{order:1;flex:1;min-width:0;width:auto;align-self:end;margin:0;padding:0}.report-top .tabs button:first-child{margin-left:auto}.report-top .tabs button:last-child{margin-right:auto}.report-top .top-actions{order:2}
 @media(max-width:800px){.report-top .tabs{width:100%;flex:none}}
 .font-size-controls{display:flex;align-items:center;gap:6px}.font-size-controls output{min-width:40px;text-align:center;font-size:12px;font-weight:900}.font-size-controls button:disabled{cursor:not-allowed}
+.page-top-leading { display: flex; align-items: flex-start; gap: 8px; }
+/* 收起后保持单行，窄屏可以横向滑动查看功能按钮。 */
+.page-top.page-top-collapsed { flex-direction: row; align-items: center; gap: 12px; padding: 4px 4px 8px; margin-bottom: 12px; overflow-x: auto; }
+.page-top-collapsed .page-top-leading, .page-top-collapsed .page-top-text { display: flex; flex: none; align-items: center; gap: 8px; white-space: nowrap; }
+.page-top-collapsed .eyebrow, .page-top-collapsed .date-range { font-size: 16px; }
+.page-top-collapsed .top-actions { flex: none; flex-wrap: nowrap; width: auto; }
+.page-top-collapsed .top-actions button { flex: none; white-space: nowrap; }
 .sidebar-bottom{height:70px;padding-top:12px}.sidebar-user{height:56px;display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:10px}.sidebar-bottom .identity{height:56px;grid-template-rows:1fr 1fr;align-content:stretch;gap:0;padding:0}.sidebar-bottom .identity strong{font-size:18px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-bottom .identity small{font-size:11px;line-height:28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sidebar-actions{display:grid;grid-template-rows:1fr 1fr;gap:6px}.sidebar-actions button{width:100%;min-height:0;padding:4px 5px}
 
 /* 标题居中，完成状态在上、姓名在下；人员选择宽度为原 165px 的 75%。 */
@@ -155,11 +162,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-filter-summary span { flex: none; padding: 3px 7px; border: 1px solid #000; background: #f1f1f1; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .review-filter-body { display: grid; align-content: start; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px; margin: -6px; }
 .review-results { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px 0 0; margin-right: -6px; }
-.review-filter-top, .review-filter-group, .review-filter-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.review-filter-top, .review-filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .review-filter-top { gap: 12px 24px; }
-.review-filter-group, .review-filter-projects { font-size: 13px; font-weight: 900; }
-.review-filter-projects { border-top: 2px solid #000; padding-top: 12px; }
-.review-filter-projects .review-tags { flex: 1 1 240px; min-width: 0; }
+.review-filter-group { font-size: 13px; font-weight: 900; }
+.review-filter-projects { min-width: 0; max-width: 100%; }
+.review-filter-projects .review-tags { flex: 1; min-width: 0; }
 .review-project-action { background: #00d9ff; }
 .review-issue { gap: 16px; max-width: none; overflow-wrap: anywhere; }
 .review-results .review-issue { position: relative; }
@@ -171,6 +178,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-card-toggle { position: absolute; top: -2px; left: -2px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 2px solid #000; background: #fff; font-size: 17px; font-weight: 900; line-height: 1; }
 .review-card-toggle:hover { background: #ffff00; }
 .review-card-toggle:focus-visible { outline-offset: -4px; }
+.review-card-toggle.page-top-toggle, .review-card-toggle.review-filter-toggle { position: static; flex: none; }
 .review-card-head .status-tag { font-size: 12px; }
 .review-card-title { min-width: 0; font-size: 14px; font-weight: 400; }
 .review-card-status { display: flex; align-items: center; gap: 6px; }

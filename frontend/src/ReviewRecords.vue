@@ -223,7 +223,9 @@ function toggleSeverity(level: string) {
 <template>
   <section class="panel review-panel review-filters" aria-label="筛选审查记录">
     <header class="review-filter-head">
-      <button class="mini-button" type="button" :aria-expanded="filtersExpanded" :aria-controls="filtersId" @click="filtersExpanded = !filtersExpanded">{{ filtersExpanded ? '收起筛选' : '展开筛选' }}</button>
+      <button class="review-card-toggle review-filter-toggle" type="button" :aria-label="filtersExpanded ? '收起筛选' : '展开筛选'" :title="filtersExpanded ? '收起筛选' : '展开筛选'" :aria-expanded="filtersExpanded" :aria-controls="filtersId" @click="filtersExpanded = !filtersExpanded">
+        <span aria-hidden="true">{{ filtersExpanded ? '−' : '+' }}</span>
+      </button>
       <button class="mini-button" type="button" :aria-expanded="listExpanded" :aria-controls="issueListId" :disabled="!shown.length" @click="toggleList">{{ listExpanded ? '收起列表' : '展开列表' }}</button>
       <div v-if="!filtersExpanded" class="review-filter-summary" role="group" aria-label="当前筛选条件" tabindex="0">
         <span v-for="([label, value]) in filterSummary" :key="label">{{ label }}：{{ value }}</span>
@@ -251,13 +253,13 @@ function toggleSeverity(level: string) {
             <button v-for="level in severities" :key="level" class="mini-button" :aria-pressed="severity.includes(level)" @click="toggleSeverity(level)">{{ level }}</button>
           </div>
         </div>
-      </div>
-      <div class="review-filter-projects" role="group" aria-label="审查项目">
-        <strong>审查项目</strong>
-        <div class="review-tags">
-          <button class="mini-button review-project-action" type="button" :disabled="!projectIds.length" @click="selectAll(!allProjects)">{{ allProjects ? '取消全选' : '全选' }}</button>
-          <button v-if="hasOtherProjects" class="mini-button review-project-action" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起' : '展开全部' }}</button>
-          <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
+        <div class="review-filter-group review-filter-projects" role="group" aria-label="审查项目">
+          <strong>审查项目</strong>
+          <div class="review-tags">
+            <button class="mini-button review-project-action" type="button" :disabled="!projectIds.length" @click="selectAll(!allProjects)">{{ allProjects ? '取消全选' : '全选' }}</button>
+            <button v-if="hasOtherProjects" class="mini-button review-project-action" type="button" :aria-expanded="projectsExpanded" @click="projectsExpanded = !projectsExpanded">{{ projectsExpanded ? '收起' : '展开全部' }}</button>
+            <button v-for="(alias, id) in data?.projects" v-show="projectsExpanded || commonProjectIds.has(Number(id))" :key="id" class="mini-button project-tag" :aria-pressed="selected.includes(String(id))" @click="toggleProject(String(id))">{{ alias }}</button>
+          </div>
         </div>
       </div>
     </div>
