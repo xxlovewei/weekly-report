@@ -39,7 +39,13 @@ test('页头可收成一行，保留日期和功能按钮', async ({ page }) => 
   await expect(heading).toBeVisible()
   const expandedHeight = (await header.boundingBox())!.height
 
-  await header.getByRole('button', { name: '收起页头' }).press('Enter')
+  const collapse = header.getByRole('button', { name: '收起页头' })
+  const sidebarToggle = page.locator('.sidebar-toggle')
+  for (const property of ['width', 'height', 'border', 'box-shadow']) {
+    const sidebarStyle = await sidebarToggle.evaluate((button, name) => getComputedStyle(button).getPropertyValue(name), property)
+    await expect(collapse).toHaveCSS(property, sidebarStyle)
+  }
+  await collapse.press('Enter')
   await expect(heading).toBeHidden()
   const title = header.locator('.eyebrow')
   const date = header.locator('.date-range')

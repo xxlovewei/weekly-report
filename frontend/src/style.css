@@ -81,7 +81,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .numbered-text-field{min-width:0}
 
 .sidebar-body{display:contents}
-.sidebar-toggle{margin-left:auto;flex:none;width:32px;height:32px;padding:0}
+/* 页头和侧栏共用同一套折叠按钮尺寸。 */
+.sidebar-toggle,.page-top-toggle{flex:none;width:32px;height:32px;padding:0}
+.sidebar-toggle{margin-left:auto}
 .brand-mark{flex:none}
 .sidebar-icon{display:block;width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .sidebar nav button{display:flex;align-items:center;gap:8px}
@@ -178,7 +180,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-card-toggle { position: absolute; top: -2px; left: -2px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 2px solid #000; background: #fff; font-size: 17px; font-weight: 900; line-height: 1; }
 .review-card-toggle:hover { background: #ffff00; }
 .review-card-toggle:focus-visible { outline-offset: -4px; }
-.review-card-toggle.page-top-toggle, .review-card-toggle.review-filter-toggle { position: static; flex: none; }
+.review-card-toggle.review-filter-toggle { position: static; flex: none; }
 .review-card-head .status-tag { font-size: 12px; }
 .review-card-title { min-width: 0; font-size: 14px; font-weight: 400; }
 .review-card-status { display: flex; align-items: center; gap: 6px; }

@@ -734,7 +734,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     </aside>
     <main class="content" :style="{ '--task-font-size': `${taskFontSize}px` }"><div class="page-top" :class="{ 'report-top': page === 'reports', 'page-top-collapsed': pageTopCollapsed }">
       <div class="page-top-leading">
-        <button class="review-card-toggle page-top-toggle" type="button" :aria-label="pageTopCollapsed ? '展开页头' : '收起页头'" :title="pageTopCollapsed ? '展开页头' : '收起页头'" :aria-expanded="!pageTopCollapsed" aria-controls="page-top-details" @click="pageTopCollapsed = !pageTopCollapsed">
+        <button class="icon-btn page-top-toggle" type="button" :aria-label="pageTopCollapsed ? '展开页头' : '收起页头'" :title="pageTopCollapsed ? '展开页头' : '收起页头'" :aria-expanded="!pageTopCollapsed" aria-controls="page-top-details" @click="pageTopCollapsed = !pageTopCollapsed">
           <span aria-hidden="true">{{ pageTopCollapsed ? '↓' : '↑' }}</span>
         </button>
         <div class="page-top-text">
