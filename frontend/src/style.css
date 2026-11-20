@@ -32,7 +32,13 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .description-error{font-size:11px;margin:5px 0 0;color:#a30031}
 .task-leading{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.task-drag-handle{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid #000;background:#fff;cursor:grab}.task-drag-handle:hover{background:#ffff00}.task-drag-handle:active{cursor:grabbing}.task-row.dragging{opacity:.45}.task-row.drop-before{border-top-color:#ff006e;box-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}.task-row.drop-after{border-bottom-color:#ff006e;box-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
 .task-row.selected{outline:3px solid #ff006e;outline-offset:2px}.task-drag-handle[aria-pressed=true]{outline:3px solid #ff006e;outline-offset:2px}
-.task-leading.priority-high{background:#ff5757}.task-leading.priority-medium{background:#ff9500}
+/* 看板和任务明细共用左缘光晕，保留任务明细的拖拽定位阴影。 */
+.priority-edge[data-priority]{--priority-glow:#2472ce;--priority-edge-shadow:inset 5px 0 12px -8px var(--priority-glow),-3px 0 7px -3px var(--priority-glow)}
+.priority-edge[data-priority="高"]{--priority-glow:#e13042}
+.priority-edge[data-priority="中"]{--priority-glow:#db7500}
+.task-row[data-priority]{border-left:4px solid var(--priority-glow);box-shadow:var(--priority-edge-shadow),var(--task-row-shadow,4px 4px 0 #000)}
+.task-row.drop-before{--task-row-shadow:0 -4px 0 #ff006e,4px 4px 0 #000}
+.task-row.drop-after{--task-row-shadow:0 4px 0 #ff006e,4px 4px 0 #000}
 .task-transfer-mark{line-height:1;cursor:help}
 .task-meeting-link{color:inherit;text-decoration:none;cursor:pointer}
 .task-meeting-link:focus-visible{outline:3px solid #ff006e;outline-offset:2px}

@@ -66,16 +66,18 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
     await expect(priorityMenu.getByRole('button', { name: '低' })).toBeFocused()
     await page.keyboard.press('Escape')
 
-    for (const [priority, background] of [['高', 'rgb(255, 87, 87)'], ['中', 'rgb(255, 149, 0)'], ['低', 'rgba(0, 0, 0, 0)'], ['高', 'rgb(255, 87, 87)']]) {
+    for (const [priority, color] of [['高', 'rgb(225, 48, 66)'], ['中', 'rgb(219, 117, 0)'], ['低', 'rgb(36, 114, 206)'], ['高', 'rgb(225, 48, 66)']]) {
       await open(baseline.length + 2)
       await action('设置优先级').click()
       await priorityMenu.getByRole('button', { name: priority, exact: true }).click()
-      await expect(last.locator('.task-leading')).toHaveCSS('background-color', background)
+      await expect(last).toHaveCSS('border-left-color', color)
+      await expect(last).toHaveCSS('box-shadow', new RegExp(color.replace(/[()]/g, char => '\\' + char)))
+      await expect(last.locator('.task-leading')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
       await expect(page.getByText('✓ 已保存')).toBeVisible()
     }
     await page.reload()
     await assertOrder([...baseline, a, b, c])
-    await expect(last.locator('.task-leading')).toHaveClass(/priority-high/)
+    await expect(last).toHaveCSS('border-left-color', 'rgb(225, 48, 66)')
     await last.locator('.task-drag-handle').press('Shift+F10')
     await action('转交任务').click()
     const dialog = page.getByRole('dialog', { name: '转交任务' })
@@ -91,11 +93,16 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
     await recipientPage.reload()
     const received = recipientPage.locator('.task-row').last()
     await expect(received.getByRole('textbox', { name: '任务名称' })).toHaveValue(c)
-    await expect(received.locator('.task-leading')).toHaveClass(/priority-high/)
+    await expect(received).toHaveCSS('border-left-color', 'rgb(225, 48, 66)')
     const tooltip = `由${alice.user.display_name}转交的任务`
     const light = received.getByRole('img', { name: tooltip })
     await light.hover()
     await expect(light).toHaveAttribute('title', tooltip)
+    await recipientPage.getByRole('button', { name: '周报汇总', exact: true }).click()
+    await recipientPage.getByRole('tab', { name: bob.user.display_name, exact: true }).click()
+    const reported = recipientPage.locator('.task-row').filter({ hasText: c })
+    await expect(reported).toHaveCSS('border-left-color', 'rgb(225, 48, 66)')
+    await expect(reported.locator('.task-leading')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   } finally {
     // 只清理本次验证创建的任务，保留测试环境原有数据。
     try {

@@ -190,7 +190,7 @@ function drop(event: DragEvent, state: State) {
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
       </header>
       <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
-      <article v-for="card in column.cards" :key="card.id" class="board-card" :data-priority="card.priority"
+      <article v-for="card in column.cards" :key="card.id" class="board-card priority-edge" :data-priority="card.priority"
         :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id }"
         :aria-label="`${card.name}，优先级${card.priority}`" :draggable="!busy"
         @dragstart="startDrag($event, card)" @dragend="resetDrag">
@@ -252,9 +252,7 @@ function drop(event: DragEvent, state: State) {
 .board-empty { padding: 14px 0; color: #555; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
-.board-card { --priority-glow: #2472ce; background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: inset 5px 0 12px -8px var(--priority-glow), -3px 0 7px -3px var(--priority-glow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
-.board-card[data-priority="高"] { --priority-glow: #e13042; }
-.board-card[data-priority="中"] { --priority-glow: #db7500; }
+.board-card { background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: var(--priority-edge-shadow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
