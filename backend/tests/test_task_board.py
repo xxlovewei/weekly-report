@@ -33,7 +33,8 @@ def test_board_move_and_week_status_sync():
     path = f"{board}/{card['id']}/status"
     body = {"state": "done", "revision": card["revision"], "week_start": str(current_week())}
     assert bob.patch(path, json=body).status_code == 404
-    assert alice.patch(path, json=body).status_code == 200
+    moved = alice.patch(path, json=body)
+    assert moved.status_code == 200 and moved.json()["status"] == "已完成"
     assert alice.patch(path, json=body).status_code == 409
     detail, = (data := alice.get(week).json())["tasks"]
     assert (detail["task_group"], detail["status"], detail["board_task_id"]) == ("联调接口", "已完成", card["id"])
@@ -42,7 +43,8 @@ def test_board_move_and_week_status_sync():
     card, = alice.get(board).json()["tasks"]
     assert card["state"] == "inbox" and card["has_current_detail"]
     body.update(state="in_progress", revision=card["revision"])
-    assert alice.patch(path, json=body).status_code == 200
+    moved = alice.patch(path, json=body)
+    assert moved.status_code == 200 and moved.json()["status"] == "5%"
     detail, = alice.get(week).json()["tasks"]
     assert detail["status"] == "5%"
 
@@ -80,14 +82,28 @@ def test_week_history_locks_rename_and_delete_but_allows_progress_and_copy(monke
     created = mutate(alice, "POST", f"{week}/tasks", 0).json()
     original, = created["tasks"]
     assert mutate(alice, "PATCH", f"{week}/tasks/{original['id']}", created["revision"], {
-        "task_group": "跨周任务", "status": "40%",
+        "task_group": "跨周任务", "status": "40%", "description": "上周进展",
     }).status_code == 200
     current = previous + timedelta(days=7)
     monkeypatch.setattr("app.main.current_work_week", lambda: current)
     current_path = f"/api/weeks/{current}"
-    resumed = mutate(alice, "POST", f"{current_path}/add-in-progress", 0).json()
-    detail, = resumed["tasks"]
+    board = "/api/board-tasks"
+    assert alice.get(board).json()["tasks"][0]["status"] == "40%"
+    existing = mutate(alice, "POST", f"{current_path}/tasks", 0).json()
+    existing_task, = existing["tasks"]
+    existing = mutate(alice, "PATCH", f"{current_path}/tasks/{existing_task['id']}", existing["revision"], {
+        "task_group": "本周已有任务", "status": "80%", "description": "已填本周进展",
+    }).json()
+    added = mutate(alice, "POST", f"{current_path}/tasks", existing["revision"])
+    assert added.status_code == 201
+    latest = added.json()
+    resumed = mutate(alice, "POST", f"{current_path}/add-in-progress", latest["revision"]).json()
+    assert resumed["tasks"][:2] == latest["tasks"]
+    detail = resumed["tasks"][2]
+    assert (detail["status"], detail["description"]) == ("40%", "")
     assert detail["has_history"] and detail["board_task_id"] == original["board_task_id"]
+    repeated = mutate(alice, "POST", f"{current_path}/add-in-progress", resumed["revision"]).json()
+    assert repeated == {**resumed, "no_source": True}
     path = f"{current_path}/tasks/{detail['id']}"
     assert mutate(alice, "PATCH", path, resumed["revision"], {"task_group": "禁止改名"}).status_code == 409
     assert mutate(alice, "DELETE", path, resumed["revision"]).status_code == 409
@@ -97,10 +113,11 @@ def test_week_history_locks_rename_and_delete_but_allows_progress_and_copy(monke
     edited = mutate(alice, "PATCH", path, resumed["revision"], {
         "task_group": "跨周任务", "description": "本周进展", "status": "60%",
     }).json()
-    assert edited["tasks"][0]["description"] == "本周进展"
+    assert edited["tasks"][2]["description"] == "本周进展"
+    assert next(item for item in alice.get(board).json()["tasks"] if item["id"] == original["board_task_id"])["status"] == "60%"
     copied = mutate(alice, "POST", f"{path}/duplicate", edited["revision"]).json()
-    assert not copied["tasks"][1]["has_history"]
-    assert copied["tasks"][1]["board_task_id"] != original["board_task_id"]
+    duplicate = copied["tasks"][-1]
+    assert not duplicate["has_history"] and duplicate["board_task_id"] != original["board_task_id"]
     assert alice.get(week).json()["tasks"][0]["status"] == "40%"
 
 

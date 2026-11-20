@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .test_api import clean_db, client, mutate
 from .test_meeting_assignments import current_week
@@ -115,6 +115,12 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     historical = alice.get(day).json()
     assert historical["projects"] == {str(project_id): "Demo"}
     assert historical["common_project_ids"] == []
+
+    next_week = current_week() + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: next_week)
+    resumed = mutate(alice, "POST", f"/api/weeks/{next_week}/add-in-progress", 0).json()
+    resumed_task, = resumed["tasks"]
+    assert (resumed_task["review_issue_id"], resumed_task["status"], resumed_task["description"]) == (unknown["id"], "40%", "")
 
 
 def test_transfer_notification_access_filters_and_read_state():

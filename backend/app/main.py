@@ -711,7 +711,8 @@ def add_in_progress(week_start: str, revision: int, idempotency_key: str | None 
     position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
     for position, card in enumerate(cards, position + 1):
         status = progress_status(db, card)
-        attach_detail(db, card, week, position, status)
+        # 批量续做保留完成百分比，本周工作进展重新填写。
+        attach_detail(db, card, week, position, status, description="")
         set_assignment_status(card, status)
         card.revision += 1
     return finish(db, owner, idempotency_key, operation, work_week_json(db, week))

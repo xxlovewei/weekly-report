@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import { sharedTaskTypes } from './taskTypes'
-import type { Category, TaskPriority } from './types'
+import type { Category, TaskPriority, WeekData } from './types'
 
 const columns = [
   { state: 'inbox', name: '任务箱' },
@@ -15,6 +15,7 @@ interface CardFields { name: string; category_name: string; priority: TaskPriori
 interface Card extends CardFields {
   id: number
   state: State
+  status: string | null
   revision: number
   position: number
   has_current_detail: boolean
@@ -31,6 +32,7 @@ const cards = ref<Card[]>([])
 const categories = ref<Category[]>([])
 const weekStart = ref('')
 const loading = ref(true), busy = ref(false), error = ref('')
+const continuationNotice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
@@ -44,6 +46,7 @@ const grouped = computed(() => columns.map(column => ({
   ...column, cards: cards.value.filter(card => card.state === column.state)
     .sort((left, right) => left.position - right.position || left.id - right.id),
 })))
+const canContinue = computed(() => cards.value.some(card => card.state === 'in_progress' && !card.has_current_detail))
 
 function message(cause: unknown) {
   return cause instanceof ApiError ? cause.message : '操作失败，请重试。'
@@ -52,16 +55,16 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [board, types] = await Promise.all([
-      api<{ current_week: string; tasks: Card[] }>('/board-tasks'),
-      api<Category[]>('/categories'),
-    ])
-    cards.value = board.tasks
-    weekStart.value = board.current_week
+    const [types] = await Promise.all([api<Category[]>('/categories'), refreshBoard()])
     categories.value = types
   } catch (cause) {
     error.value = message(cause)
   } finally { loading.value = false }
+}
+async function refreshBoard() {
+  const board = await api<{ current_week: string; tasks: Card[] }>('/board-tasks')
+  cards.value = board.tasks
+  weekStart.value = board.current_week
 }
 onMounted(load)
 watch(() => [loading.value, props.targetTask, props.targetRefresh], () => {
@@ -89,6 +92,7 @@ async function perform(job: () => Promise<void>, inDialog = false) {
   busy.value = true
   error.value = ''
   formError.value = ''
+  continuationNotice.value = ''
   try {
     await job()
     if (inDialog) dialog.value?.close()
@@ -96,6 +100,16 @@ async function perform(job: () => Promise<void>, inDialog = false) {
     if (inDialog) formError.value = message(cause)
     else error.value = message(cause)
   } finally { busy.value = false }
+}
+function continueThisWeek() {
+  void perform(async () => {
+    const weekPath = `/weeks/${weekStart.value}`
+    const week = await api<WeekData>(weekPath)
+    // 与本周工作共用批量续做接口，由服务端按卡片与周明细的关联去重。
+    const result = await api<WeekData>(`${weekPath}/add-in-progress?revision=${week.revision}`, 'POST', undefined, newIdempotencyKey())
+    continuationNotice.value = result.no_source ? '进行中的任务均已加入本周工作。' : '已将进行中的任务加入本周工作。'
+    await refreshBoard()
+  })
 }
 function open(nextAction: Dialog) {
   action.value = nextAction
@@ -142,7 +156,7 @@ async function move(card: Card, state: State) {
   }))
 }
 function requestMove(card: Card, state: State) {
-  if (busy.value || (state === card.state && (state !== 'in_progress' || card.has_current_detail))) return
+  if (busy.value || state === card.state) return
   if (state === 'inbox' && card.has_current_detail) open({ kind: 'return', card })
   else void perform(() => move(card, state))
 }
@@ -198,6 +212,7 @@ function drop(event: DragEvent, state: State) {
   <div v-if="error" class="message error board-error" role="alert">
     {{ error }} <button type="button" class="mini-button" @click="load">重新载入</button>
   </div>
+  <p v-if="continuationNotice" class="message board-notice" role="status">{{ continuationNotice }}</p>
   <div v-if="!loading && weekStart" class="board">
     <section v-for="column in grouped" :key="column.state" class="board-column panel"
       :class="{ 'board-drop-target': hovered === column.state }" :aria-label="column.name"
@@ -206,13 +221,16 @@ function drop(event: DragEvent, state: State) {
         <h2>{{ column.name }}</h2>
         <button v-if="column.state === 'inbox'" type="button" class="primary-button"
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
+        <button v-else-if="column.state === 'in_progress'" type="button" class="secondary-button"
+          :disabled="busy || !canContinue" @click="continueThisWeek">继续本周工作</button>
       </header>
       <div class="board-card-list">
         <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
         <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
-          tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id }"
+          tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state === 'in_progress' }"
           :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
           @dragstart="startDrag($event, card)" @dragend="resetDrag">
+          <div v-if="card.state === 'in_progress'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': card.status || '5%' }" />
           <div class="board-card-content">
             <div class="board-card-title">
               <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
@@ -225,8 +243,6 @@ function drop(event: DragEvent, state: State) {
               </button>
               <strong>{{ card.name || '未命名任务' }}</strong>
             </div>
-            <button v-if="card.state === 'in_progress' && !card.has_current_detail" type="button" class="mini-button"
-              :disabled="busy" @click="requestMove(card, 'in_progress')">继续本周工作</button>
           </div>
           <div class="board-card-actions">
             <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
@@ -242,6 +258,8 @@ function drop(event: DragEvent, state: State) {
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
             </button>
           </div>
+          <span v-if="card.state === 'in_progress'" class="board-charge-value" role="meter" aria-label="完成状态"
+            aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(card.status || '5%', 10)">{{ card.status || '5%' }}</span>
         </article>
       </div>
     </section>
@@ -305,6 +323,68 @@ function drop(event: DragEvent, state: State) {
 .board-card-content strong { white-space: pre-wrap; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.board-notice { margin: 0 0 8px; }
+.board-card-charging {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  margin-inline-end: 5px;
+  padding-block-end: 20px;
+  border-radius: 8px;
+  color: #112d3e;
+  background: #eaf1f6;
+}
+.board-card-charging::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: -6px;
+  inset-block-start: 50%;
+  translate: 0 -50%;
+  inline-size: 5px;
+  block-size: 23px;
+  border-radius: 0 3px 3px 0;
+  background: #426675;
+  pointer-events: none;
+}
+.board-card-charging .icon-btn { padding-inline: 5px; }
+/* 电量层独立于任务文字和操作区，拥有柔和的刻度与充电边缘。 */
+.board-charge-fill {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg, transparent 0 23px, #244e6312 23px 24px);
+}
+.board-charge-fill::before {
+  content: '';
+  display: block;
+  box-sizing: border-box;
+  block-size: 100%;
+  inline-size: var(--charge);
+  border-inline-end: 2px solid #2a9e8a;
+  background: repeating-linear-gradient(90deg, transparent 0 23px, #207a7624 23px 24px), linear-gradient(110deg, #9ddfea, #92edcb);
+  box-shadow: 4px 0 12px #39bca052;
+  animation: board-charge-in 650ms cubic-bezier(.2,.7,.25,1);
+  transition: inline-size 430ms cubic-bezier(.2,.7,.25,1);
+}
+@keyframes board-charge-in { from { inline-size: 0; } }
+.board-charge-value {
+  grid-column: 1 / -1;
+  justify-self: center;
+  translate: 0 -6px;
+  color: #174c5e;
+  font: 800 clamp(30px, 4vw, 42px)/1 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.075em;
+  text-shadow: 0 1px #ffffffa8;
+}
+@media (prefers-reduced-motion: reduce) {
+  .board-charge-fill::before { animation: none; transition: none; }
+}
 .board-dialog { margin: auto; }
 .board-dialog::backdrop { background: #0009; }
 .board-destructive { background: #ff8585; }

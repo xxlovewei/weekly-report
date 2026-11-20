@@ -114,10 +114,20 @@ def sync_card_from_detail(db: Session, card: BoardTask, task: Task, fields):
         card.revision += 1
 
 
-def card_json(card: BoardTask, *, current=False, historical=False):
+def percentage(status: str | None):
+    return status if status and status.endswith("%") else None
+
+
+def pending_progress(card: BoardTask):
+    status = card.assignment_status if card.meeting_task_id else (card.handoff or {}).get("status")
+    return percentage(status)
+
+
+def card_json(card: BoardTask, *, current=False, historical=False, status: str | None = None):
     meeting = card.meeting_task.meeting if card.meeting_task else None
+    status = (percentage(status) or "5%") if card.state == "in_progress" else "已完成" if card.state == "done" else None
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority,
-            "state": card.state, "position": card.position, "revision": card.revision,
+            "state": card.state, "status": status, "position": card.position, "revision": card.revision,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
             "review_issue_id": card.review_issue.id if card.review_issue else None,
             "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),
@@ -147,14 +157,19 @@ def checked_card(db: Session, user_id: int, card_id: int, revision: int, week_st
 @router.get("")
 def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
     start = main.current_work_week()
-    # 一条查询读取卡片及其关联周，避免并发更新造成同一次响应内的数据不一致。
-    rows = db.execute(select(BoardTask, Week.start_date).options(joinedload(BoardTask.review_issue))
+    # 同时读取卡片和周明细，本周尚无明细时优先保留最近一次进度。
+    rows = db.execute(select(BoardTask, Week.start_date, Task.status).options(joinedload(BoardTask.review_issue))
                       .outerjoin(BoardTaskDetail, BoardTaskDetail.board_task_id == BoardTask.id)
                       .outerjoin(Week, Week.id == BoardTaskDetail.week_id)
-                      .where(BoardTask.user_id == auth[0].id).order_by(BoardTask.position, BoardTask.id))
+                      .outerjoin(Task, Task.id == BoardTaskDetail.task_id)
+                      .where(BoardTask.user_id == auth[0].id)
+                      .order_by(BoardTask.position, BoardTask.id, Week.start_date.desc().nulls_last()))
     cards = {}
-    for card, linked_week in rows:
-        payload = cards.setdefault(card.id, card_json(card))
+    for card, linked_week, status in rows:
+        if card.id not in cards:
+            status = status if linked_week == start else pending_progress(card) or status
+            cards[card.id] = card_json(card, status=status)
+        payload = cards[card.id]
         if linked_week == start:
             payload["has_current_detail"] = True
         elif linked_week is not None and linked_week < start:
@@ -203,7 +218,7 @@ def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate,
         if detail:
             week.revision += 1
     db.commit()
-    return card_json(card, current=detail is not None)
+    return card_json(card, current=detail is not None, status=detail.status if detail else pending_progress(card))
 
 
 @router.post("/{card_id}/duplicate", status_code=201)
@@ -241,23 +256,15 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     return {"ok": True}
 
 
-def continued_status(db: Session, card_id: int, current_detail: Task | None):
-    if current_detail:
-        previous = current_detail.status
-    else:
-        previous = db.scalar(select(Task.status).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
-                             .join(Week, Week.id == BoardTaskDetail.week_id)
-                             .where(BoardTaskDetail.board_task_id == card_id).order_by(Week.start_date.desc()).limit(1))
-    return previous if previous and previous.endswith("%") else "5%"
-
-
 def progress_status(db: Session, card: BoardTask, detail: Task | None = None):
-    if detail is None:
-        # 已指派或转交的任务保留已有百分比，后续每周只带入完成状态。
-        status = card.assignment_status if card.meeting_task_id else (card.handoff or {}).get("status")
-        if status and status.endswith("%"):
-            return status
-    return continued_status(db, card.id, detail)
+    if detail is not None:
+        return percentage(detail.status) or "5%"
+    if status := pending_progress(card):
+        return status
+    previous = db.scalar(select(Task.status).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
+                         .join(Week, Week.id == BoardTaskDetail.week_id)
+                         .where(BoardTaskDetail.board_task_id == card.id).order_by(Week.start_date.desc()).limit(1))
+    return percentage(previous) or "5%"
 
 
 def set_assignment_status(card: BoardTask, status: str | None):
@@ -268,13 +275,15 @@ def set_assignment_status(card: BoardTask, status: str | None):
     return False
 
 
-def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None):
+def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None, *, description: str | None = None):
     handoff = card.handoff or {}
     issue = card.review_issue
+    if description is None:
+        description = handoff.get("description", issue.title if issue else "")
     detail = Task(week_id=week.id, position=position, task_group=card.name,
                   category_name=card.category_name or None, priority=card.priority, status=status,
                   meeting_task_id=card.meeting_task_id, transferred_by=card.transferred_by,
-                  description=handoff.get("description", issue.title if issue else ""), notes=handoff.get("notes", ""),
+                  description=description, notes=handoff.get("notes", ""),
                   work_days=handoff.get("work_days", []))
     db.add(detail)
     db.flush()
@@ -343,4 +352,4 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
     put_at_top(db, card, data.state)
     card.revision += 1
     db.commit()
-    return card_json(card, current=detail is not None, historical=historical)
+    return card_json(card, current=detail is not None, historical=historical, status=detail.status if detail else None)

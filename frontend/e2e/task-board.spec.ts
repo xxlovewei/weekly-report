@@ -168,3 +168,50 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   await done.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(done.getByRole('article').last()).toBeInViewport()
 })
+
+test('进行中栏统一续做，电池显示各卡片的完成百分比', async ({ page }) => {
+  const start = '2026-11-16'
+  const tasks = [
+    { id: 1, name: '接口联调与验收', status: '30%', priority: '高', has_current_detail: false },
+    { id: 2, name: '采集数据清理', status: '70%', priority: '中', has_current_detail: false },
+    { id: 3, name: '本周已有明细', status: '90%', priority: '低', has_current_detail: true },
+  ].map((task, position) => ({ ...task, state: 'in_progress', category_name: '其他', position, revision: 0, has_other_details: false }))
+  const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
+  let requests = 0
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url())
+    if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
+    if (url.pathname.endsWith('/board-tasks')) return route.fulfill({ json: { current_week: start, tasks } })
+    if (url.pathname.endsWith(`/weeks/${start}`)) return route.fulfill({ json: { revision: 8, tasks: [] } })
+    if (url.pathname.endsWith(`/weeks/${start}/add-in-progress`)) {
+      expect(route.request().method()).toBe('POST')
+      expect(url.searchParams.get('revision')).toBe('8')
+      requests++
+      for (const task of tasks) task.has_current_detail = true
+      return route.fulfill({ json: { revision: 9, tasks: [] } })
+    }
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/task-board')
+  const ongoing = page.getByRole('region', { name: '进行中' })
+  const resume = ongoing.getByRole('button', { name: '继续本周工作', exact: true })
+  await expect(ongoing.getByRole('article').getByRole('button', { name: '继续本周工作' })).toHaveCount(0)
+  await expect(resume).toBeEnabled()
+  const meter = ongoing.getByRole('meter', { name: '完成状态' })
+  await expect(meter).toHaveText(['30%', '70%', '90%'])
+  await expect(meter.nth(1)).toHaveAttribute('aria-valuenow', '70')
+  const fillLayer = ongoing.locator('.board-charge-fill').nth(1)
+  await expect.poll(() => fillLayer.evaluate(el => getComputedStyle(el, '::before').animationName)).toMatch(/^board-charge-in/)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect.poll(() => fillLayer.evaluate(el => {
+    const fill = getComputedStyle(el, '::before')
+    return { width: Math.round(parseFloat(fill.width) / el.getBoundingClientRect().width * 100), animation: fill.animationName }
+  })).toEqual({ width: 70, animation: 'none' })
+  await resume.click()
+  await expect(page.getByRole('status').filter({ hasText: '已将进行中的任务加入本周工作' })).toBeVisible()
+  await expect(resume).toBeDisabled()
+  expect(requests).toBe(1)
+  await page.setViewportSize({ width: 390, height: 650 })
+  await meter.first().scrollIntoViewIfNeeded()
+  await expect(meter.first()).toBeInViewport()
+})
