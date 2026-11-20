@@ -18,10 +18,10 @@ interface SidebarTourOptions {
   onClosed: (completed: boolean) => void
 }
 
-function step(target: string, title: string, description: string): DriveStep {
+function step(target: string, title: string, description: string, side: 'right' | 'bottom' = 'right'): DriveStep {
   return {
-    element: `.sidebar [data-sidebar-tour="${target}"]`,
-    popover: { title, description, side: 'right', align: 'start' },
+    element: `[data-sidebar-tour="${target}"]`,
+    popover: { title, description, side, align: 'start' },
   }
 }
 
@@ -85,7 +85,7 @@ export function startSidebarTour(options: SidebarTourOptions) {
     step('previous-week', '上一周', '切换到所选周的前一周，工作区会显示那一周的数据。'),
     step('next-week', '下一周', '切换到所选周的后一周，跨月时会更新月份和周数。'),
   ]
-  if (options.showMeetingShortcut) steps.push(step('meeting-shortcut', '周会快捷入口', '在周报汇总中可新增当天周会记录。如果已有记录，点击即可编辑。'))
+  if (options.showMeetingShortcut) steps.push(step('meeting-shortcut', '周会快捷入口', '在周报汇总右上角可新增当天周会记录。如果已有记录，点击即可编辑。', 'bottom'))
   steps.push(
     step('password', '修改密码', '打开修改密码页面。'),
     step('logout', '退出登录', '退出当前账号并返回登录页面。'),

@@ -220,12 +220,20 @@ test('移动端不消耗首次机会，桌面跳过后只对新账号显示', as
   const tour = page.locator('.driver-popover')
   await expect(page.getByRole('button', { name: '打开或关闭导航' })).toBeVisible()
   await expect(tour).toHaveCount(0)
+  const reportActions = page.locator('.report-top .top-actions')
+  const meetingShortcut = reportActions.getByRole('button', { name: '新增会议记录' })
+  await expect(meetingShortcut).toHaveClass(/primary-button/)
+  await meetingShortcut.click()
+  const meetingDialog = page.getByRole('dialog', { name: '新增会议记录' })
+  await expect(meetingDialog.getByLabel('会议类型')).toHaveValue('周会')
+  await meetingDialog.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
 
   await page.setViewportSize({ width: 1280, height: 720 })
   await expect(tour).toHaveAccessibleName('收起侧栏', { timeout: 3000 })
   await tour.getByRole('button', { name: '收起侧栏' }).click()
   for (const title of ['查看版本更新内容', '本周工作', '周报汇总', '任务类型', '会议记录', '用户管理', '回到本周', '上一周', '下一周', '周会快捷入口']) {
     await expect(tour).toHaveAccessibleName(title)
+    if (title === '周会快捷入口') await expect(meetingShortcut).toHaveClass(/driver-active-element/)
     await tour.getByRole('button', { name: '下一步' }).click()
   }
   await tour.getByRole('button', { name: '跳过引导' }).click()
@@ -234,6 +242,10 @@ test('移动端不消耗首次机会，桌面跳过后只对新账号显示', as
   await page.reload()
   await page.getByRole('button', { name: '收起侧栏' }).click()
   await expect(tour).toHaveCount(0)
+  await page.getByRole('button', { name: '展开侧栏' }).click()
+  await page.setViewportSize({ width: 801, height: 720 })
+  await expect(meetingShortcut).toBeInViewport({ ratio: 1 })
+  await expect(reportActions.getByRole('button', { name: '消息中心' })).toBeInViewport({ ratio: 1 })
 
   admin.id += 1
   admin.must_change_password = true

@@ -17,7 +17,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 }
 /* 矮屏上给列表预留空间，页头超出时可以单独滚动。 */
 @media(max-height:480px){.shell .page-top{max-height:60%;overflow:auto}}
-.calendar-head .icon-btn{width:29px;height:29px;display:inline-grid;place-items:center;padding:0}.calendar-day{position:relative}.calendar-day.current::after{content:"";position:absolute;inset:0;background:rgba(0,217,255,.28);pointer-events:none}.week-check{position:absolute;right:-11px;top:11px;color:#008b43;font-size:12px;font-weight:900;line-height:1;z-index:1}.sidebar-meeting{width:100%;white-space:normal}
+.calendar-head .icon-btn{width:29px;height:29px;display:inline-grid;place-items:center;padding:0}.calendar-day{position:relative}.calendar-day.current::after{content:"";position:absolute;inset:0;background:rgba(0,217,255,.28);pointer-events:none}.week-check{position:absolute;right:-11px;top:11px;color:#008b43;font-size:12px;font-weight:900;line-height:1;z-index:1}
 .task-fields{grid-template-columns:82px 200px minmax(190px,1fr) 60px 180px minmax(150px,.65fr)}.task-fields .task-type select{width:82px;font-size:11px;padding:8px 2px}.task-fields .task-group input{width:200px;max-width:100%}.task-fields .task-status select{width:60px;font-size:10px;padding:8px 1px}.task-fields .work-days{width:180px}.task-fields .description textarea{resize:none;overflow:hidden}.task-fields .day-tags{flex-wrap:nowrap}
 .meetings-page{display:grid;gap:20px}.meeting-filters{max-width:none;display:flex;align-items:end;flex-wrap:wrap;gap:12px}.meeting-filters label{min-width:145px;flex:1}.meeting-filters button{align-self:end}.meeting-list{display:grid;gap:14px}.meeting-card{border:2px solid #000;box-shadow:4px 4px 0 #000;padding:18px}.meeting-card-head{display:flex;justify-content:space-between;align-items:start;gap:12px;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:12px}.meeting-card-head>div:first-child{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.meeting-card-head strong{font-size:20px}.meeting-card-head span{background:#00d9ff;padding:4px 7px;border:1px solid #000;font-size:12px;font-weight:900}.meeting-card p{font-size:13px;line-height:1.5;margin:0 0 12px}.meeting-tasks{border-top:1px solid #000;padding-top:10px;font-size:12px}.meeting-task-line{display:flex;justify-content:space-between;gap:12px;border-top:1px dashed #999;padding:8px 0}.meeting-task-line b{white-space:nowrap}.meeting-pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;font-size:12px}.meeting-modal{max-width:760px;max-height:calc(100vh - 40px);overflow:auto}.meeting-form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.meeting-followups{border:2px solid #000;padding:12px}.meeting-task-edit{display:grid;grid-template-columns:26px minmax(0,1fr) 105px auto;align-items:end;gap:8px;margin:10px 0}.meeting-task-edit>strong{align-self:center}.meeting-task-edit label{min-width:0}
 @media(max-width:1350px){.task-fields{grid-template-columns:82px minmax(150px,200px) minmax(180px,1fr)}.task-fields .description,.task-fields .notes{grid-column:auto}.task-fields .task-status select{width:60px}}
@@ -62,6 +62,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .tabs [role=tab]{cursor:grab}.tabs [role=tab]:active{cursor:grabbing}.tabs [role=tab].dragging{opacity:.45}
 /* 成员标签占据标题与操作按钮之间的空间，水平居中且底边对齐。 */
 .report-top .tabs{order:1;flex:1;min-width:0;width:auto;align-self:end;margin:0;padding:0}.report-top .tabs button:first-child{margin-left:auto}.report-top .tabs button:last-child{margin-right:auto}.report-top .top-actions{order:2}
+/* 页头展开且宽度不足时，将操作按钮换行并保持靠右。 */
+.report-top:not(.page-top-collapsed) .top-actions{max-width:100%;margin-inline-start:auto;justify-content:flex-end}
+@media(min-width:801px){.report-top:not(.page-top-collapsed){flex-wrap:wrap}}
 @media(max-width:800px){.report-top .tabs{width:100%;flex:none}}
 .font-size-controls{display:flex;align-items:center;gap:6px}.font-size-controls output{min-width:40px;text-align:center;font-size:12px;font-weight:900}.font-size-controls button:disabled{cursor:not-allowed}
 .page-top-leading { display: flex; align-items: flex-start; gap: 8px; }
@@ -127,7 +130,6 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   .sidebar-collapsed .calendar-head,.sidebar-collapsed .calendar-head>div{flex-direction:column}
   .sidebar-collapsed .calendar-head{gap:8px;margin-bottom:8px}
   .sidebar-collapsed .calendar-caption{margin:0;white-space:nowrap;font-size:12px}
-  .sidebar-collapsed .sidebar-meeting{width:40px;height:36px;align-self:center;padding:0}
   .sidebar-collapsed .sidebar-bottom{height:auto;padding-top:8px}
   .sidebar-collapsed .sidebar-user{height:auto;grid-template-columns:minmax(0,1fr);gap:6px;text-align:center}
   .sidebar-collapsed .identity{height:auto;grid-template-rows:auto}

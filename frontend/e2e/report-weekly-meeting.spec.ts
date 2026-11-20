@@ -9,7 +9,7 @@ test('周报汇总按当天周会记录显示新增或修改入口，并可重�
   await expect(page.getByRole('heading', { name: '本周工作' })).toBeVisible()
 
   await page.getByRole('button', { name: /周报汇总/ }).click()
-  const reportMeetingButton = page.locator('.sidebar-meeting')
+  const reportMeetingButton = page.locator('.report-top .top-actions').getByRole('button', { name: /^(新增|修改)会议记录$/ })
   await expect(reportMeetingButton).toBeEnabled()
   const hasMeeting = /修改会议记录/.test(await reportMeetingButton.innerText())
   await reportMeetingButton.click()

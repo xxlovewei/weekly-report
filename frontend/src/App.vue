@@ -769,9 +769,6 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
             <svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
             <span v-if="!compactSidebar">{{ item.label }}</span>
           </button>
-          <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
-            {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
-          </button>
         </nav>
       </div>
       <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="currentWorkWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
@@ -812,7 +809,28 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <p v-else-if="page === 'review-records'" class="date-range">{{ reviewDay }}</p>
         </div>
       </div>
-      <div class="top-actions"><button v-if="pageTopCollapsed && page === 'messages' && notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button><template v-if="page === 'work' || page === 'reports'"><div class="font-size-controls" role="group" aria-label="填写和选择项字号"><button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button><output aria-live="polite">{{ taskFontSize }}px</output><button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button></div><template v-if="page === 'work'"><button v-if="canManageOwnWork" class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button><button v-if="canManageOwnWork" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button></template><button v-else class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button></template><button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button><button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">审查总结</button></div>
+      <div class="top-actions">
+        <button v-if="pageTopCollapsed && page === 'messages' && notificationPermission === 'default'" class="mini-button" type="button" :disabled="requestingPermission" @click="enableNotifications">开启桌面通知</button>
+        <template v-if="page === 'work' || page === 'reports'">
+          <div class="font-size-controls" role="group" aria-label="填写和选择项字号">
+            <button class="mini-button" type="button" aria-label="缩小字号" title="缩小字号" :disabled="taskFontSize <= 12" @click="adjustTaskFontSize(-1)">A−</button>
+            <output aria-live="polite">{{ taskFontSize }}px</output>
+            <button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button>
+          </div>
+          <template v-if="page === 'work'">
+            <button v-if="canManageOwnWork" class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button>
+            <button v-if="canManageOwnWork" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button>
+          </template>
+          <template v-else>
+            <button class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button>
+            <button class="primary-button" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" @click="openMeeting(todayWeeklyMeeting)">
+              <span aria-hidden="true">{{ todayWeeklyMeeting ? '✎' : '＋' }}</span> {{ meetingActionLabel }}
+            </button>
+          </template>
+        </template>
+        <button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
+        <button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">审查总结</button>
+      </div>
       <div v-if="page === 'work' && isAdmin && workMembers.length" class="tabs work-member-tabs" role="tablist" aria-label="任务明细成员">
         <button v-for="member in workMembers" :key="member.id" type="button" role="tab" :disabled="workLoading" :aria-selected="(workMember ?? user.id) === member.id" :class="{ selected: (workMember ?? user.id) === member.id }" @click="chooseWorkMember(member.id)">{{ member.name }}<small v-if="member.id === user.id">（本人）</small><small v-else-if="!member.is_active">（已停用）</small></button>
       </div>
