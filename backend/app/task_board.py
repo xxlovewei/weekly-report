@@ -26,6 +26,28 @@ class CardMove(Input):
     week_start: date
 
 
+class CardPosition(Input):
+    revision: int = Field(ge=0)
+    week_start: date
+    before_id: int | None = None
+
+
+def column_cards(owner: int, state: str):
+    return select(BoardTask).where(BoardTask.user_id == owner, BoardTask.state == state)
+
+
+def position_at_edge(db: Session, owner: int, state: str, *, top: bool):
+    edge = func.min(BoardTask.position) if top else func.max(BoardTask.position)
+    current = db.scalar(column_cards(owner, state).with_only_columns(edge))
+    return (0 if current is None else current) + (-1 if top else 1)
+
+
+def put_at_top(db: Session, card: BoardTask, state: str):
+    if card.state != state:
+        card.position = position_at_edge(db, card.user_id, state, top=True)
+        card.state = state
+
+
 def board_detail(db: Session, card_id: int, week_id: int):
     return db.scalar(select(Task).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
                      .where(BoardTaskDetail.board_task_id == card_id, BoardTaskDetail.week_id == week_id))
@@ -48,7 +70,7 @@ def sync_card_from_detail(db: Session, week: Week, task_id: int, status: str | N
     if week.start_date == main.current_work_week():
         state = "done" if status == "已完成" else "in_progress" if status else "inbox"
         if removed or state != card.state:
-            card.state = state
+            put_at_top(db, card, state)
             card.revision += 1
     elif removed:
         # 删除历史关联可能解锁卡片编辑，通知使用旧版本的页面重新载入。
@@ -57,7 +79,8 @@ def sync_card_from_detail(db: Session, week: Week, task_id: int, status: str | N
 
 def card_json(card: BoardTask, *, current=False, historical=False):
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority,
-            "state": card.state, "revision": card.revision, "has_current_detail": current, "has_other_details": historical}
+            "state": card.state, "position": card.position, "revision": card.revision,
+            "has_current_detail": current, "has_other_details": historical}
 
 
 def detail_weeks(db: Session, card_id: int):
@@ -84,7 +107,7 @@ def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
     rows = db.execute(select(BoardTask, Week.start_date)
                       .outerjoin(BoardTaskDetail, BoardTaskDetail.board_task_id == BoardTask.id)
                       .outerjoin(Week, Week.id == BoardTaskDetail.week_id)
-                      .where(BoardTask.user_id == auth[0].id).order_by(BoardTask.id))
+                      .where(BoardTask.user_id == auth[0].id).order_by(BoardTask.position, BoardTask.id))
     cards = {}
     for card, linked_week in rows:
         payload = cards.setdefault(card.id, card_json(card))
@@ -104,7 +127,7 @@ def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idem
     if old is not None:
         return old
     validate_task_type(db, owner, data.category_name)
-    card = BoardTask(user_id=owner, **data.model_dump())
+    card = BoardTask(user_id=owner, position=position_at_edge(db, owner, "inbox", top=False), **data.model_dump())
     db.add(card)
     db.flush()
     return finish(db, owner, key, "board:add", card_json(card))
@@ -144,7 +167,8 @@ def duplicate_card(card_id: int, revision: int, week_start: date,
     if old is not None:
         return old
     source, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
-    card = BoardTask(user_id=owner, name=source.name, category_name=source.category_name, priority=source.priority)
+    card = BoardTask(user_id=owner, name=source.name, category_name=source.category_name, priority=source.priority,
+                     position=position_at_edge(db, owner, "inbox", top=False))
     db.add(card)
     db.flush()
     return finish(db, owner, key, operation, card_json(card))
@@ -175,6 +199,26 @@ def continued_status(db: Session, card_id: int, current_detail: Task | None):
     return previous if previous and previous.endswith("%") else "5%"
 
 
+@router.patch("/{card_id}/position")
+def reorder_card(card_id: int, data: CardPosition, auth=Depends(active_session), db: Session = Depends(get_db)):
+    owner = auth[0].id
+    lock_task_changes(db)
+    card, _ = checked_card(db, owner, card_id, data.revision, data.week_start)
+    ordered = list(db.scalars(column_cards(owner, card.state).order_by(BoardTask.position, BoardTask.id)))
+    peers = [item for item in ordered if item.id != card.id]
+    index = next((index for index, item in enumerate(peers) if item.id == data.before_id), None)
+    if data.before_id is not None and index is None:
+        raise HTTPException(409, "目标卡片已变化，请重新载入后排序")
+    peers.insert(len(peers) if index is None else index, card)
+    if peers != ordered:
+        # 只调整看板顺序，不触碰每周任务明细。以当前列为准处理并发排序。
+        for position, item in enumerate(peers):
+            item.position = position
+        card.revision += 1
+    db.commit()
+    return [{"id": item.id, "position": item.position, "revision": item.revision} for item in peers]
+
+
 @router.patch("/{card_id}/status")
 def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
@@ -200,7 +244,7 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
         elif detail.status != status:
             detail.status = status
             week.revision += 1
-    card.state = data.state
+    put_at_top(db, card, data.state)
     card.revision += 1
     db.commit()
     return card_json(card, current=detail is not None, historical=historical)

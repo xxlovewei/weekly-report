@@ -1,6 +1,7 @@
 import { expect, signIn, skipGuides, test } from './fixtures'
 
 test('个人看板拖拽与明细双向同步，管理员可以代管明细', async ({ page, browser, baseURL }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await signIn(page, 'alice')
@@ -8,7 +9,7 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   const inbox = page.getByRole('region', { name: '任务箱' })
   const ongoing = page.getByRole('region', { name: '进行中' })
   const completed = page.getByRole('region', { name: '已完成' })
-  const name = `临时看板任务 ${Date.now()}`
+  const name = '第一条看板卡片'
   await inbox.getByRole('button', { name: '添加任务' }).click()
   const add = page.getByRole('dialog', { name: '添加任务' })
   await add.getByLabel('任务名称').fill(name)
@@ -18,8 +19,26 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   await expect(inbox.getByText(name)).toBeVisible()
   const card = inbox.getByRole('article', { name: `${name}，优先级高` })
   await expect(card.getByRole('combobox')).toHaveCount(0)
-  await card.dragTo(ongoing)
+  const height = await card.evaluate(element => element.getBoundingClientRect().height)
+  const secondName = '第二条看板卡片'
+  await inbox.getByRole('button', { name: '添加任务' }).click()
+  await add.getByLabel('任务名称').fill(secondName)
+  await add.getByLabel('任务类型').selectOption('其他')
+  await add.getByRole('button', { name: '保存' }).click()
+  const second = inbox.getByRole('article', { name: `${secondName}，优先级低` })
+  await expect(second).toBeVisible()
+  expect(await card.evaluate(element => element.getBoundingClientRect().height)).toBe(height)
+  await second.dragTo(card, { targetPosition: { x: 25, y: 5 } })
+  await expect(inbox.getByRole('article').first()).toContainText(secondName)
+  await page.reload()
+  await expect(inbox.getByRole('article').first()).toContainText(secondName)
+  await second.dragTo(ongoing)
+  const secondInProgress = ongoing.getByRole('article', { name: `${secondName}，优先级低` })
+  await expect(secondInProgress).toBeVisible()
+  const targetHeight = await secondInProgress.evaluate(element => element.getBoundingClientRect().height)
+  await card.dragTo(secondInProgress, { targetPosition: { x: 25, y: targetHeight - 5 } })
   await expect(ongoing.getByText(name)).toBeVisible()
+  await expect(ongoing.getByRole('article').first()).toContainText(name)
 
   await page.getByRole('button', { name: '本周工作', exact: true }).click()
   const detail = page.locator('.task-row').last()

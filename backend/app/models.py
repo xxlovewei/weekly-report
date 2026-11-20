@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.hybrid import hybrid_method
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -93,6 +93,7 @@ class BoardTask(Base):
     priority: Mapped[str] = mapped_column(String(4))
     state: Mapped[str] = mapped_column(String(16), default="inbox")
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    position: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class BoardTaskDetail(Base):

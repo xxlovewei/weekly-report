@@ -116,6 +116,36 @@ def test_concurrent_move_creates_only_one_detail():
     assert detail["board_task_id"] == card["id"]
 
 
+def test_board_order_persists_and_cross_column_moves_insert_at_top():
+    alice = client("alice")
+    board = "/api/board-tasks"
+    week_start = str(current_week())
+    first, second, third = (alice.post(board, json={"name": name, "category_name": "其他", "priority": "低"}).json()
+                            for name in ("第一条", "第二条", "第三条"))
+    url = f"{board}/{third['id']}/position"
+    body = {"before_id": first["id"], "revision": third["revision"], "week_start": week_start}
+    assert alice.patch(url, json=body).status_code == 200
+    assert alice.patch(url, json=body).status_code == 409
+
+    def order(state):
+        return [card["id"] for card in alice.get(board).json()["tasks"] if card["state"] == state]
+
+    assert order("inbox") == [third["id"], first["id"], second["id"]]
+    for card in (first, second):
+        response = alice.patch(f"{board}/{card['id']}/status", json={
+            "state": "in_progress", "revision": card["revision"], "week_start": week_start,
+        })
+        assert response.status_code == 200, response.text
+    assert order("in_progress") == [second["id"], first["id"]]
+    assert alice.patch(url, json={**body, "revision": third["revision"] + 1}).status_code == 409
+    assert order("inbox") == [third["id"]]
+    returned = alice.patch(f"{board}/{first['id']}/status", json={
+        "state": "inbox", "revision": first["revision"] + 1, "week_start": week_start,
+    })
+    assert returned.status_code == 200, returned.text
+    assert order("inbox") == [first["id"], third["id"]]
+
+
 def test_copy_edit_and_delete_card_keep_independent_details():
     alice = client("alice")
     board_path = "/api/board-tasks"

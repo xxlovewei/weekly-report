@@ -15,6 +15,7 @@ interface Card extends CardFields {
   id: number
   state: State
   revision: number
+  position: number
   has_current_detail: boolean
   has_other_details: boolean
 }
@@ -25,6 +26,7 @@ const categories = ref<Category[]>([])
 const weekStart = ref('')
 const loading = ref(true), busy = ref(false), error = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
+const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低' })
 const formError = ref('')
@@ -32,7 +34,8 @@ let createRequest: { body: string; key: string } | null = null
 let copyRequest: { cardId: number; key: string } | null = null
 const options = computed(() => [...new Set([...sharedTaskTypes, ...categories.value.map(category => category.name)])])
 const grouped = computed(() => columns.map(column => ({
-  ...column, cards: cards.value.filter(card => card.state === column.state),
+  ...column, cards: cards.value.filter(card => card.state === column.state)
+    .sort((left, right) => left.position - right.position || left.id - right.id),
 })))
 
 function message(cause: unknown) {
@@ -131,17 +134,44 @@ function startDrag(event: DragEvent, card: Card) {
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('application/x-zhoubao-board-card', String(card.id))
 }
-function resetDrag() { dragged.value = null; hovered.value = null }
+function resetDrag() { dragged.value = null; hovered.value = null; dropBefore.value = null }
+function beforeCardAtPointer(event: DragEvent, cardId: number) {
+  const column = event.currentTarget as HTMLElement
+  // 用卡片中线区分插入该卡片之前或之后，拖动中的卡片不参与比较。
+  for (const element of Array.from(column.querySelectorAll<HTMLElement>('[data-card-id]'))) {
+    const id = Number(element.dataset.cardId)
+    if (id === cardId) continue
+    const rect = element.getBoundingClientRect()
+    if (event.clientY < rect.top + rect.height / 2) return id
+  }
+  return null
+}
+async function reorder(card: Card, beforeId: number | null) {
+  const positions = await api<Pick<Card, 'id' | 'position' | 'revision'>[]>(`/board-tasks/${card.id}/position`, 'PATCH', {
+    before_id: beforeId, revision: card.revision, week_start: weekStart.value,
+  })
+  const byId = new Map(positions.map(item => [item.id, item]))
+  for (const item of cards.value) {
+    const update = byId.get(item.id)
+    if (update) item.position = update.position
+    if (item.id === card.id && update) item.revision = update.revision
+  }
+}
 function dragOver(event: DragEvent, state: State) {
   if (busy.value || dragged.value === null) return
   event.preventDefault()
   hovered.value = state
+  const card = cards.value.find(item => item.id === dragged.value)
+  dropBefore.value = card?.state === state ? beforeCardAtPointer(event, card.id) : null
 }
 function drop(event: DragEvent, state: State) {
   event.preventDefault()
   const card = cards.value.find(item => item.id === dragged.value)
+  const beforeId = card?.state === state ? beforeCardAtPointer(event, card.id) : null
   resetDrag()
-  if (card) requestMove(card, state)
+  if (!card) return
+  if (card.state === state) void perform(() => reorder(card, beforeId))
+  else requestMove(card, state)
 }
 </script>
 
@@ -161,6 +191,7 @@ function drop(event: DragEvent, state: State) {
       </header>
       <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
       <article v-for="card in column.cards" :key="card.id" class="board-card" :data-priority="card.priority"
+        :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id }"
         :aria-label="`${card.name}，优先级${card.priority}`" :draggable="!busy"
         @dragstart="startDrag($event, card)" @dragend="resetDrag">
         <div class="board-card-content">
@@ -215,11 +246,12 @@ function drop(event: DragEvent, state: State) {
 
 <style scoped>
 .board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 16px; }
-.board-column { display: grid; gap: 12px; min-width: 0; min-height: 180px; padding: 14px; }
+.board-column { display: grid; align-content: start; gap: 12px; min-width: 0; min-height: 180px; padding: 14px; }
 .board-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; flex-wrap: wrap; }
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
+.board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card { --priority-glow: #2472ce; background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: inset 5px 0 12px -8px var(--priority-glow), -3px 0 7px -3px var(--priority-glow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card[data-priority="高"] { --priority-glow: #e13042; }
 .board-card[data-priority="中"] { --priority-glow: #db7500; }
