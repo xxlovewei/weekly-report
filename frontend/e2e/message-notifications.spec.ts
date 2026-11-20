@@ -7,7 +7,7 @@ test('消息中心在标题旁显示通知状态，并默认筛选未读消息',
   const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
   await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
   await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: 1 } }))
-  await page.route('**/api/notifications/stream', route => route.abort())
+  await page.route('**/api/notifications/stream*', route => route.abort())
   const created_at = '2026-11-16T01:30:00Z'
   const messages = [
     { id: 41, kind: '转交任务', title: '待查看的转交任务', is_read: false, created_at },
@@ -37,6 +37,32 @@ test('消息中心在标题旁显示通知状态，并默认筛选未读消息',
   await expect(rows.first().locator('.status-tag')).toHaveText(['代码审查', '已读'])
   await status.selectOption('')
   await expect(rows).toHaveCount(2)
+})
+
+test('版本更新提醒无需桌面授权，而且同版本只弹一次', async ({ page }) => {
+  const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
+  const message = '版本v99.0.0已更新🎉，请刷新页面🔄️体验吧'
+  const release = { version: '99.0.0', message }
+  await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { value: 'denied' }))
+  await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
+  await page.route('**/api/notifications?*', route => route.fulfill({ json: { items: [], total: 0 } }))
+  await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: 0 } }))
+  let deliveries = 0
+  await page.route('**/api/notifications/stream*', route => {
+    deliveries++
+    return route.fulfill({
+      contentType: 'text/event-stream',
+      body: `retry: 50\ndata: ${JSON.stringify({ release, count: 0, messages: [] })}\n\n`,
+    })
+  })
+  await page.goto('/messages')
+  const notice = page.getByRole('group', { name: '版本更新' })
+  await expect(notice.getByText(message, { exact: true })).toBeVisible()
+  await expect(notice.getByRole('button', { name: '刷新页面' })).toBeVisible()
+  const firstDelivery = deliveries
+  await notice.getByRole('button', { name: '稍后刷新' }).click()
+  await expect.poll(() => deliveries).toBeGreaterThan(firstDelivery)
+  await expect(notice).toBeHidden()
 })
 
 test('未读轮询和即时消息按权限选择提醒，点击桌面通知后标记已读', async ({ page }) => {
@@ -188,7 +214,7 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
   }
 
   try {
-    const ready = page.waitForResponse(response => response.url().endsWith('/api/notifications/stream') && response.ok())
+    const ready = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/api/notifications/stream') && response.ok())
     const bob = await login(page, 'bob')
     receiverHeaders = bob.headers
     await ready

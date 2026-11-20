@@ -297,6 +297,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   background: #fff;
 }
 .notification-permission p { margin: 6px 0 12px; font-size: 12px; line-height: 1.5; }
+.release-notice .notification-permission-actions { margin-top: 12px; }
 .notification-permission-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .unread-reminder-link span { font-size: 12px; }
 .unread-reminder-close {

@@ -8,6 +8,7 @@ from .db import engine
 
 logger = logging.getLogger(__name__)
 SCHEDULE_CHANGED = "schedule-changed"
+RELEASE_ANNOUNCED = "release-announced"
 
 # 一个 API 进程共享一个 PostgreSQL 监听连接，每个标签页只占用一个异步事件。
 subscribers: dict[asyncio.Event, tuple[int, bool]] = {}
@@ -24,7 +25,7 @@ async def listen_for_notifications(ready: asyncio.Event):
                     event.set()
                 async for message in conn.notifies():
                     for event, (user_id, admin) in subscribers.items():
-                        if message.payload in (SCHEDULE_CHANGED, str(user_id)) or admin:
+                        if message.payload in (RELEASE_ANNOUNCED, SCHEDULE_CHANGED, str(user_id)) or admin:
                             event.set()
         except Exception:
             logger.warning("消息监听连接暂不可用，稍后重连")

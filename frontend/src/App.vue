@@ -62,6 +62,7 @@ function workPath(suffix = '', revision = false) {
 }
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
 const showUnreadReminder = ref(false)
+const releaseNotice = ref(''), releaseRefreshing = ref(false)
 const notificationPermission = ref<ReturnType<typeof desktopNotificationPermission>>(desktopNotificationPermission())
 const showPermissionReminder = ref(false), requestingPermission = ref(false)
 const liveMessages = ref<LiveMessage[]>([])
@@ -124,13 +125,14 @@ async function jumpToMessage(item: LiveMessage) {
   const target = item.target
   const destination = item.kind === '代码审查'
     ? { name: 'review-records', query: { date: target?.date || todayShanghai() } }
-    : { name: 'work', query: { week: target?.week || mondayOf(todayShanghai()), task: target?.task } }
+    : item.kind === '系统通知' ? { name: 'messages' }
+      : { name: 'work', query: { week: target?.week || mondayOf(todayShanghai()), task: target?.task } }
   try {
     if (page.value === 'work' && hasPending()) {
       if (structuralPromise) await structuralPromise
       await flushPending()
     }
-    const sameReviewDay = page.value === 'review-records' && reviewDay.value === destination.query.date
+    const sameReviewDay = page.value === 'review-records' && reviewDay.value === destination.query?.date
     if (sameReviewDay && reviewRecords.value && !await reviewRecords.value.flushReview()) return
     const failure = await router.push(destination)
     const sameLocation = isNavigationFailure(failure, NavigationFailureType.duplicated)
@@ -294,6 +296,17 @@ function enqueue<T>(job: () => Promise<T>) {
 }
 function hasPending() { return drafts.size > 0 || !!flushPromise || !!structuralPromise || saveStatus.value === 'failed' || saveStatus.value === 'conflict' }
 function beforeUnload(event: BeforeUnloadEvent) { if (hasPending()) { event.preventDefault(); event.returnValue = '' } }
+
+async function refreshForRelease() {
+  releaseRefreshing.value = true
+  try {
+    if (structuralPromise) await structuralPromise
+    if (hasPending()) await flushPending()
+    if (reviewRecords.value && !await reviewRecords.value.flushReview()) return
+    window.location.reload()
+  } catch (error) { showError(error) }
+  finally { releaseRefreshing.value = false }
+}
 
 async function flushPending(): Promise<void> {
   if (timer) { clearTimeout(timer); timer = null }
@@ -693,6 +706,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   showUnreadReminder.value = false
   showPermissionReminder.value = false
   liveMessages.value = []
+  releaseNotice.value = ''
   unreadMessages.value = 0
   void refreshUnread()
   if (!account) return
@@ -722,7 +736,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   }, message => {
     // 合并多个即时提醒时保留最新三条，其余可在消息中心查看。
     liveMessages.value = [...liveMessages.value.slice(-2), message]
-  }, message => openLiveMessage(message))
+  }, message => openLiveMessage(message), message => { releaseNotice.value = message })
   // 配置或账号变更时，丢弃旧扫描尚未返回的结果。
   async function scanUnread() {
     if (checking) return
@@ -900,6 +914,13 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="modal.kind === 'delete' ? '确认删除任务' : '复制上周任务'"><span class="eyebrow">操作确认</span><h2>{{ modal.kind === 'delete' ? '删除这项任务？' : '本周已有任务' }}</h2><p>{{ modal.kind === 'delete' ? '删除后，该任务将从本周移除。' : '请选择覆盖本周任务，或将上周未完成任务追加到末尾。' }}</p><div class="modal-actions"><template v-if="modal.kind === 'delete'"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete((modal as { taskId: number }).taskId)">确认删除</button></template><template v-else><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="secondary-button" type="button" @click="carry('append')">新增</button><button class="primary-button" type="button" @click="carry('overwrite')">覆盖</button></template></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
     <div class="unread-reminder-region" aria-live="polite">
+      <div v-if="releaseNotice" class="notification-permission release-notice" role="group" aria-label="版本更新">
+        <strong>{{ releaseNotice }}</strong>
+        <div class="notification-permission-actions">
+          <button class="mini-button primary-button" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
+          <button class="mini-button" type="button" @click="releaseNotice = ''">稍后刷新</button>
+        </div>
+      </div>
       <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
         <strong>开启桌面通知</strong>
         <p v-if="notificationPermission === 'default'">授权后，未读消息将通过操作系统提醒。</p>

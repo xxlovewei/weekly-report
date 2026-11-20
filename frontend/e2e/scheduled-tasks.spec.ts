@@ -5,7 +5,7 @@ test('管理员可以保存定时任务设置，普通用户无法进入管理�
   const task = { key: 'unread-message-reminder', name: '未读消息提醒', enabled: true, interval_minutes: 5 }
   await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
   await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: 0 } }))
-  await page.route('**/api/notifications/stream', route => route.abort())
+  await page.route('**/api/notifications/stream*', route => route.abort())
   await page.route('**/api/scheduled-tasks', route => route.fulfill({ json: [task] }))
   await page.route(`**/api/scheduled-tasks/${task.key}`, route => {
     expect(route.request().method()).toBe('PUT')

@@ -154,6 +154,7 @@ class ReleaseRecord(Base):
     version: Mapped[str] = mapped_column(String(40), unique=True)
     description: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ReviewProject(Base):

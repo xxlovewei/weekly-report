@@ -1,15 +1,18 @@
+import { version } from '../package.json'
 import type { LiveMessage, ScheduleSettings } from './types'
 
 interface Snapshot {
   count: number
   messages: LiveMessage[]
   unread_reminder: ScheduleSettings
+  release?: { version: string; message: string } | null
 }
 
 const titles: Record<LiveMessage['kind'], string> = {
   转交任务: '来活了📝！请及时查收📩',
   会议指派: '收到会议指派📋',
   代码审查: '来bug了⚠️！请及时查收📩',
+  系统通知: '系统通知',
 }
 
 export function desktopNotificationPermission(): NotificationPermission | 'unsupported' {
@@ -22,11 +25,13 @@ export function subscribeToMessages(
   onSnapshot: (count: number, schedule: ScheduleSettings) => void,
   onNewMessage: (message: LiveMessage) => void,
   onClick: (message: LiveMessage) => Promise<void>,
+  onRelease: (message: string) => void,
 ) {
-  const stream = new EventSource(`${import.meta.env.BASE_URL}api/notifications/stream`)
+  const stream = new EventSource(`${import.meta.env.BASE_URL}api/notifications/stream?client_version=${version}`)
   const displayed = new Set<Notification>()
   let closed = false
   let lastMessageId = 0
+  let announcedVersion: string | undefined
   const key = `zhoubao.notification.${import.meta.env.BASE_URL}.${account}`
 
   function show(message: LiveMessage, unreadCount?: number) {
@@ -67,6 +72,11 @@ export function subscribeToMessages(
     if (closed) return
     const snapshot: Snapshot = JSON.parse(event.data)
     onSnapshot(snapshot.count, snapshot.unread_reminder)
+    if (snapshot.release && snapshot.release.version !== announcedVersion) {
+      // 断线重连或消息流刷新不会重新弹出已收到的同版本提醒。
+      announcedVersion = snapshot.release.version
+      onRelease(snapshot.release.message)
+    }
     for (const message of snapshot.messages) {
       // SSE 按消息编号递增发送，同一标签页只展示一次。
       if (message.id <= lastMessageId) continue

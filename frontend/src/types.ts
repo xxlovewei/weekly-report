@@ -22,7 +22,7 @@ export interface MeetingPage { items: Meeting[]; total: number; page: number; pa
 export interface MessageTarget { date?: string; week?: string; task?: number }
 export interface LiveMessage {
   id: number
-  kind: '转交任务' | '会议指派' | '代码审查'
+  kind: '转交任务' | '会议指派' | '代码审查' | '系统通知'
   title?: string
   is_read: boolean
   target?: MessageTarget | null

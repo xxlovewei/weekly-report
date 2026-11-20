@@ -14,6 +14,7 @@ from .db import SessionLocal, get_db
 from .main import Input, active_session
 from .models import Notification, Task, User, Week
 from .notification_events import notification_lifespan, subscribers
+from .release_announcement import VERSION, stream_release
 from .scheduled_tasks import UNREAD_REMINDER, task_settings
 
 router = APIRouter(prefix="/api/notifications", lifespan=notification_lifespan)
@@ -39,7 +40,7 @@ def notification_target(row, week, owner_id, user_id):
     return None
 
 
-def stream_snapshot(request, user_id, cursor):
+def stream_snapshot(request, user_id, cursor, client_version, legacy_reconnect, connected_at):
     with SessionLocal() as db:
         try:
             user, _ = active_session(request, db)
@@ -49,6 +50,7 @@ def stream_snapshot(request, user_id, cursor):
             return None
         if cursor is None:
             cursor = db.scalar(select(func.max(Notification.id)).where(Notification.user_id == user.id)) or 0
+        release = stream_release(db, user_id, client_version, legacy_reconnect, connected_at)
         rows = db.execute(select(Notification, Week.start_date, Week.user_id)
                           .outerjoin(Task, Task.id == Notification.task_id)
                           .outerjoin(Week, Week.id == Task.week_id)
@@ -57,12 +59,14 @@ def stream_snapshot(request, user_id, cursor):
         messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
                      "target": notification_target(row, week, owner_id, user_id)} for row, week, owner_id in rows]
         return {"count": count_unread(db, user_id), "messages": messages,
+                "release": release,
                 "unread_reminder": task_settings(db, UNREAD_REMINDER).model_dump(),
                 "cursor": messages[-1]["id"] if messages else cursor}
 
 
 @router.get("/stream")
-async def notification_stream(request: Request, last_event_id: str = Header(default="")):
+async def notification_stream(request: Request, last_event_id: str = Header(default=""),
+                              client_version: str | None = Query(default=None, max_length=40, pattern=VERSION.pattern)):
     def authenticate():
         with SessionLocal() as db:
             user, _ = active_session(request, db)
@@ -70,6 +74,8 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
 
     user_id, admin = await run_in_threadpool(authenticate)
     cursor = int(last_event_id) if last_event_id.isascii() and last_event_id.isdigit() and len(last_event_id) < 16 else None
+    legacy_reconnect = client_version is None and cursor is not None
+    connected_at = datetime.now(timezone.utc)
 
     async def events():
         nonlocal cursor
@@ -79,21 +85,25 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
             await request.app.state.notifications_ready.wait()
             previous_count = None
             previous_schedule = None
+            previous_release = None
             invalidate = True
             while True:
                 changed.clear()
-                snapshot = await run_in_threadpool(stream_snapshot, request, user_id, cursor)
+                snapshot = await run_in_threadpool(
+                    stream_snapshot, request, user_id, cursor, client_version, legacy_reconnect, connected_at,
+                )
                 if snapshot is None:
                     yield "event: session-ended\ndata: {}\n\n"
                     return
                 cursor = snapshot["cursor"]
                 if (invalidate or snapshot["messages"] or previous_count != snapshot["count"]
-                        or previous_schedule != snapshot["unread_reminder"]):
+                        or previous_schedule != snapshot["unread_reminder"] or previous_release != snapshot["release"]):
                     yield f"id: {cursor}\ndata: {json.dumps(jsonable_encoder(snapshot), ensure_ascii=False)}\n\n"
                 else:
                     yield ": heartbeat\n\n"
                 previous_count = snapshot["count"]
                 previous_schedule = snapshot["unread_reminder"]
+                previous_release = snapshot["release"]
                 if len(snapshot["messages"]) == 100:
                     continue
                 try:
@@ -113,7 +123,7 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
 @router.get("")
 def list_notifications(
     all_users: bool = False, day: date | None = None, is_read: bool | None = None,
-    kind: Literal["转交任务", "会议指派", "代码审查"] | None = None, page: int = Query(1, ge=1, le=1000000),
+    kind: Literal["转交任务", "会议指派", "代码审查", "系统通知"] | None = None, page: int = Query(1, ge=1, le=1000000),
     auth=Depends(active_session), db: Session = Depends(get_db),
 ):
     user = auth[0]

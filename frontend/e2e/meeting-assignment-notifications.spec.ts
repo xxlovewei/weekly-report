@@ -12,7 +12,7 @@ test('新增和编辑会议指派都会通知新增人员，消息和工作任�
   let meetingId: number | undefined
 
   try {
-    const stream = bob.waitForResponse(response => response.url().endsWith('/api/notifications/stream') && response.ok())
+    const stream = bob.waitForResponse(response => new URL(response.url()).pathname.endsWith('/api/notifications/stream') && response.ok())
     await signIn(bob, 'bob')
     await stream
     await expect(bob.getByRole('group', { name: '桌面通知权限' })).toBeVisible()

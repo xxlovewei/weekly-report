@@ -100,6 +100,14 @@ python scripts/prepare_release.py 1.2.6 --notes-file release-notes.txt
 
 准备完成后，按生产部署流程构建并部署 **API 和 Web 两个镜像**。API 启动依次执行数据库迁移、发版记录入库、启动服务；更新内容写入 `release_records` 表，唯一版本号确保重复启动不重复记录。以后每次生产发版都需要更新 API 镜像，使本次说明自动入库。仅更新 Web 镜像会遗漏新版本的发版记录。
 
+生产 API 和 Web 健康检查、页面版本及发版记录都核验通过后，在生产目录执行以下命令，向在线用户推送「版本v2.3.1已更新🎉，请刷新页面🔄️体验吧」。把示例版本替换为本次发布版本。
+
+```sh
+docker compose -p zhoubao-server -f compose.yaml -f compose.server.yaml exec -T api python -m app.release_announcement 2.3.1
+```
+
+命令可以安全重试，同一版本只发布一次。已经加载该版本的页面会跳过提示，短暂断线的旧页面可以在十分钟内补收。迁移 `0017_release_announcement` 保存实际通知时间。
+
 发版记录表由迁移 `0008_release_records` 创建。历史版本 `1.2.5` 的说明依据已有发版提交补录。测试环境使用独立数据库，也会在启动时导入随镜像提供的说明。
 
 ## 会议任务指派
