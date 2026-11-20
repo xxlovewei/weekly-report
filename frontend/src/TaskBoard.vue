@@ -143,12 +143,6 @@ function drop(event: DragEvent, state: State) {
   resetDrag()
   if (card) requestMove(card, state)
 }
-function selectColumn(event: Event, card: Card) {
-  const select = event.target as HTMLSelectElement
-  const column = columns.find(item => item.state === select.value)
-  select.value = ''
-  if (column) requestMove(card, column.state)
-}
 </script>
 
 <template>
@@ -187,11 +181,6 @@ function selectColumn(event: Event, card: Card) {
             :title="card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
           </button>
-          <select value="" aria-label="移动任务" title="移动任务" :disabled="busy" @change="selectColumn($event, card)">
-            <option value="" disabled>移动</option>
-            <option v-for="destination in columns.filter(item => item.state !== card.state)" :key="destination.state"
-              :value="destination.state">{{ destination.name }}</option>
-          </select>
         </div>
       </article>
     </section>
@@ -237,7 +226,6 @@ function selectColumn(event: Event, card: Card) {
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
-.board-card-actions select { width: auto; padding: 3px; }
 .board-dialog { margin: auto; }
 .board-dialog::backdrop { background: #0009; }
 .board-destructive { background: #ff8585; }

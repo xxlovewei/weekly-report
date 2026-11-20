@@ -16,7 +16,9 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   await add.getByLabel('优先级').selectOption('高')
   await add.getByRole('button', { name: '保存' }).click()
   await expect(inbox.getByText(name)).toBeVisible()
-  await inbox.getByRole('article', { name: `${name}，优先级高` }).dragTo(ongoing)
+  const card = inbox.getByRole('article', { name: `${name}，优先级高` })
+  await expect(card.getByRole('combobox')).toHaveCount(0)
+  await card.dragTo(ongoing)
   await expect(ongoing.getByText(name)).toBeVisible()
 
   await page.getByRole('button', { name: '本周工作', exact: true }).click()
@@ -48,7 +50,7 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
 
   await page.reload()
   await expect(ongoing.getByText(name)).toBeVisible()
-  await ongoing.getByRole('article', { name: `${name}，优先级高` }).getByLabel('移动任务').selectOption('inbox')
+  await ongoing.getByRole('article', { name: `${name}，优先级高` }).dragTo(inbox)
   await page.getByRole('button', { name: '确认移回' }).click()
   const returned = inbox.getByRole('article', { name: `${name}，优先级高` })
   await expect(returned).toBeVisible()
