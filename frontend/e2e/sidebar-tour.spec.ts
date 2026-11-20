@@ -23,6 +23,44 @@ async function mockWorkspace(page: Page, user: User, tasks: Task[] = []) {
 
 const member: User = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
 
+for (const [mode, width, height] of [['展开', 1280, 460], ['收起', 1024, 360], ['移动', 390, 620]] as const) {
+  test(`${mode}侧栏的账号区贴底，长列表可滚到最后一条`, async ({ page }) => {
+    const tasks: Task[] = Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1, position: index + 1, category_name: null, task_group: '',
+      description: `任务 ${index + 1}`, status: null, work_days: [], notes: '',
+    }))
+    await page.setViewportSize({ width, height })
+    await page.context().grantPermissions(['notifications'])
+    await mockWorkspace(page, { ...member, role: 'admin' }, tasks)
+    await page.addInitScript(id => {
+      localStorage.setItem(`zhoubao.sidebar-tour.v1.4.0.${id}`, '1')
+      localStorage.setItem(`zhoubao.task-actions-tour.${id}`, '1')
+    }, member.id)
+    await page.goto('/work')
+    const mobileToggle = page.getByRole('button', { name: '打开或关闭导航' })
+    if (mode === '移动') await mobileToggle.click()
+    if (mode === '收起') await page.getByRole('button', { name: '收起侧栏' }).click()
+
+    const footer = page.locator('.sidebar-bottom')
+    const sidebarBody = page.locator('.sidebar-body')
+    await expect(footer.getByRole('button', { name: '退出登录' })).toBeInViewport({ ratio: 1 })
+    const footerBox = (await footer.boundingBox())!
+    expect(height - footerBox.y - footerBox.height).toBeLessThanOrEqual(24)
+    await sidebarBody.hover()
+    await page.mouse.wheel(0, 5000)
+    await expect.poll(() => sidebarBody.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    expect((await footer.boundingBox())?.y).toBe(footerBox.y)
+    if (mode === '移动') await mobileToggle.click()
+
+    const lastNotes = page.locator('#work-task-12 .notes textarea')
+    await expect(lastNotes).not.toBeInViewport()
+    await page.locator('.work-area').hover()
+    await page.mouse.wheel(0, 10000)
+    await expect(lastNotes).toBeInViewport({ ratio: 1 })
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(height)
+  })
+}
+
 test('版本更新可按版本号前后切换，重新打开恢复当前版本', async ({ page }) => {
   await mockWorkspace(page, member)
   await page.goto('/categories')

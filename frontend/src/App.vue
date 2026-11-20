@@ -775,19 +775,19 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
         <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
           {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
         </button>
-        <div class="sidebar-bottom">
-          <div class="sidebar-user">
-            <div class="identity"><strong>{{ user.display_name }}</strong><small v-if="!compactSidebar">{{ user.username }}</small></div>
-            <div class="sidebar-actions">
-              <button class="mini-button" data-sidebar-tour="password" type="button" aria-label="修改密码" :title="compactSidebar ? '修改密码' : undefined" @click="navigate('password')">
-                <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 7a5 5 0 0 1-6.7 4.7L8 18H4v-4l6.3-6.3A5 5 0 1 1 21 7z M16 7h.01" /></svg>
-                <span v-else>修改密码</span>
-              </button>
-              <button class="mini-button" data-sidebar-tour="logout" type="button" aria-label="退出登录" :title="compactSidebar ? '退出登录' : undefined" @click="logout">
-                <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4v16h7 M9 12h12 M17 8l4 4-4 4" /></svg>
-                <span v-else>退出登录</span>
-              </button>
-            </div>
+      </div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-user">
+          <div class="identity"><strong :title="user.display_name">{{ user.display_name }}</strong><small v-if="!compactSidebar">{{ user.username }}</small></div>
+          <div class="sidebar-actions">
+            <button class="mini-button" data-sidebar-tour="password" type="button" aria-label="修改密码" :title="compactSidebar ? '修改密码' : undefined" @click="navigate('password')">
+              <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 7a5 5 0 0 1-6.7 4.7L8 18H4v-4l6.3-6.3A5 5 0 1 1 21 7z M16 7h.01" /></svg>
+              <span v-else>修改密码</span>
+            </button>
+            <button class="mini-button" data-sidebar-tour="logout" type="button" aria-label="退出登录" :title="compactSidebar ? '退出登录' : undefined" @click="logout">
+              <svg v-if="compactSidebar" class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4H4v16h7 M9 12h12 M17 8l4 4-4 4" /></svg>
+              <span v-else>退出登录</span>
+            </button>
           </div>
         </div>
       </div>
