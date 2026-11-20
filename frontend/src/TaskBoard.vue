@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
+import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, TaskPriority } from './types'
 
@@ -19,6 +20,7 @@ interface Card extends CardFields {
   has_current_detail: boolean
   has_other_details: boolean
   meeting_id?: number | null
+  review_issue_id?: number | null
   transferred_by?: string | null
   name_locked?: boolean
 }
@@ -34,6 +36,7 @@ const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低' })
 const formError = ref('')
+const openedIssue = ref<number | null>(null)
 let createRequest: { body: string; key: string } | null = null
 let copyRequest: { cardId: number; key: string } | null = null
 const options = computed(() => [...new Set([...sharedTaskTypes, ...categories.value.map(category => category.name)])])
@@ -211,13 +214,17 @@ function drop(event: DragEvent, state: State) {
           :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
           @dragstart="startDrag($event, card)" @dragend="resetDrag">
           <div class="board-card-content">
-            <strong>{{ card.name || '未命名任务' }}</strong>
-            <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
-              :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
-            <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
-              :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
-            <button v-if="card.state === 'inbox'" type="button" class="mini-button"
-              :disabled="busy" @click="requestMove(card, 'in_progress')">开始任务</button>
+            <div class="board-card-title">
+              <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
+                :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
+              <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
+                :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
+              <button v-if="card.review_issue_id" class="task-review-info" type="button" aria-haspopup="dialog"
+                title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = card.review_issue_id">
+                <span aria-hidden="true">i</span>
+              </button>
+              <strong>{{ card.name || '未命名任务' }}</strong>
+            </div>
             <button v-if="card.state === 'in_progress' && !card.has_current_detail" type="button" class="mini-button"
               :disabled="busy" @click="requestMove(card, 'in_progress')">继续本周工作</button>
           </div>
@@ -239,6 +246,7 @@ function drop(event: DragEvent, state: State) {
       </div>
     </section>
   </div>
+  <ReviewIssueDialog v-if="openedIssue !== null" :issue-id="openedIssue" @close="openedIssue = null" />
 
   <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null" @cancel="busy && $event.preventDefault()">
     <form v-if="action" class="stack-form" @submit.prevent="submit">
@@ -291,6 +299,9 @@ function drop(event: DragEvent, state: State) {
 .board-card.board-target { outline: 2px solid #2781b8; outline-offset: 2px; }
 .board-card { background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: var(--priority-edge-shadow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
+.board-card-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.board-card-title > :not(strong) { flex: none; }
+.board-card-title .task-review-info { width: 18px; height: 18px; }
 .board-card-content strong { white-space: pre-wrap; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }

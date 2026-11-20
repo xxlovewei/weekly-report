@@ -206,7 +206,7 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   for (const id of noteTimers.keys()) clearNoteTimer(id)
 })
-async function addToWork(issue: Issue) {
+async function addToBoard(issue: Issue) {
   adding.value = issue.id
   try {
     if (!await flushIssue(issue)) return
@@ -273,9 +273,11 @@ function toggleSeverity(level: string) {
       <ReviewIssueContent :issue="issue" :project-alias="data?.projects[issue.project_id]" :expanded="expandedIssues.has(issue.id)" collapsible @toggle="toggleIssue(issue.id)">
         <template #controls>
           <label class="review-card-status">完成状态<select v-model="draft[issue.id].status" aria-label="完成状态" :disabled="!issue.editable || adding === issue.id" @change="flushIssue(issue)">
-            <option value="">未开始</option><option v-for="status in [...taskStatuses, '忽略']" :key="status">{{ status }}</option>
+            <option value="">未开始</option><option>忽略</option><option v-for="status in taskStatuses" :key="status">{{ status }}</option>
           </select></label>
-          <button class="secondary-button review-issue-add" :disabled="adding !== null || issue.task_added" @click="addToWork(issue)">{{ issue.task_added ? '已添加到本周工作' : '添加到本周工作' }}</button>
+        </template>
+        <template #actions>
+          <button type="button" class="secondary-button review-issue-add" :disabled="adding !== null || issue.task_added || draft[issue.id].status === '忽略'" @click="addToBoard(issue)">{{ issue.task_added ? '已添加' : '添加到任务看板' }}</button>
         </template>
         <div class="review-issue-notes">
           <label>备注<textarea v-model="draft[issue.id].notes" aria-label="备注" rows="2" maxlength="5000" :disabled="!issue.editable || adding === issue.id" @input="queueNotes(issue)" @compositionend="queueNotes(issue)" /></label>
@@ -286,6 +288,7 @@ function toggleSeverity(level: string) {
           </div>
         </div>
       </ReviewIssueContent>
+      <p v-if="!expandedIssues.has(issue.id) && issueError[issue.id]" class="review-error" role="alert">{{ issueError[issue.id] }}</p>
     </article>
   </section>
   <dialog ref="dialog" class="review-dialog summary-dialog review-report-dialog" aria-labelledby="review-summary-title">

@@ -233,8 +233,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-results .review-issue { position: relative; }
 .review-issue-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .review-issue-title { flex: 1 1 300px; min-width: 0; }
-.review-card-head { justify-content: flex-start; align-items: center; gap: 8px; padding-left: 14px; }
-.review-card-head .review-issue-title { flex: 0 1 auto; }
+.review-card-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 8px; padding-left: 14px; }
 /* 角标与问题卡片共用左上边框，焦点描边留在按钮内部。 */
 .review-card-toggle { position: absolute; top: -2px; left: -2px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 2px solid #000; background: #fff; font-size: 17px; font-weight: 900; line-height: 1; }
 .review-card-toggle:hover { background: #ffff00; }
@@ -244,7 +243,12 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-card-title { min-width: 0; font-size: 14px; font-weight: 400; }
 .review-card-status { display: flex; align-items: center; gap: 6px; }
 .review-card-status select { width: auto; min-width: 90px; padding: 4px 6px; }
-.review-issue-add { margin-left: auto; }
+.review-issue-add { grid-column: 3; grid-row: 1; }
+@media (max-width: 620px) {
+  .review-card-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .review-card-status { grid-row: 2; }
+  .review-issue-add { grid-column: 2; }
+}
 .review-issue-body { display: grid; gap: 16px; min-width: 0; }
 .review-issue h2 { margin: 10px 0 0; font-size: 1.25rem; line-height: 1.4; }
 .review-project-name { font-size: 12px; font-weight: 700; }

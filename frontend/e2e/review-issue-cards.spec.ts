@@ -24,6 +24,20 @@ async function openReview(page: Page, issueCount = 1, projectCount = 1, override
       Object.assign(target, request.postDataJSON())
       return route.fulfill({ json: { status: target.status, notes: target.notes } })
     }
+    if (target && request.method() === 'GET') return route.fulfill({ json: { ...target, project_alias: '项目甲' } })
+    const added = issues.find(item => path.endsWith(`/reviews/issues/${item.id}/task`))
+    if (added && request.method() === 'POST') {
+      added.task_added = true
+      return route.fulfill({ json: { ok: true } })
+    }
+    if (path.endsWith('/board-tasks')) return route.fulfill({ json: {
+      current_week: '2026-11-23',
+      tasks: issues.filter(item => item.task_added).map(item => ({
+        id: item.id, name: `修改bugISSUE-${String(item.id).padStart(2, '0')}`, category_name: '改bug',
+        priority: '低', state: item.status ? 'done' : 'inbox', revision: 0, position: item.id,
+        review_issue_id: item.id, has_current_detail: !!item.status, has_other_details: false,
+      })),
+    } })
     if (path.endsWith('/notifications/unread')) return route.fulfill({ json: { count: 0 } })
     return route.fulfill({ json: [] })
   })
@@ -73,6 +87,9 @@ test('审查问题默认收起，展开后可修改状态和备注', async ({ pa
   expect((await toggle.boundingBox())?.x).toBe((await card.boundingBox())?.x)
   expect((await toggle.boundingBox())?.y).toBe((await card.boundingBox())?.y)
   await expect(tags).toHaveText('ISSUE-07 高危 项目甲 测试成员 未开始 检查空值', { useInnerText: true })
+  const addToBoard = card.getByRole('button', { name: '添加到任务看板' })
+  await expect(addToBoard).toBeVisible()
+  await expect(card.getByRole('button', { name: '添加到本周工作' })).toHaveCount(0)
   await expect(card.getByLabel('完成状态', { exact: true })).toBeHidden()
   await tags.getByText('项目甲').click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -83,6 +100,9 @@ test('审查问题默认收起，展开后可修改状态和备注', async ({ pa
   await expect(card.getByRole('heading', { name: '检查空值' })).toBeVisible()
   await expect(card.getByText('这里可能抛出异常。')).toBeVisible()
   const status = card.getByLabel('完成状态', { exact: true })
+  await expect(status.locator('option').first()).toHaveText('未开始')
+  await expect(status.locator('option').nth(1)).toHaveText('忽略')
+  await expect(status.locator('option').nth(2)).toHaveText('已完成')
   await status.selectOption('已完成')
   await expect.poll(() => issue.status).toBe('已完成')
   const notes = card.getByRole('textbox', { name: '备注' })
@@ -93,6 +113,18 @@ test('审查问题默认收起，展开后可修改状态和备注', async ({ pa
   await toggle.click()
   await expect(status).toHaveValue('已完成')
   await expect(notes).toHaveValue('已补上校验')
+  await toggle.click()
+  await addToBoard.click()
+  await expect(card.getByRole('button', { name: '已添加', exact: true })).toBeDisabled()
+  expect(issue.task_added).toBe(true)
+  await page.getByRole('navigation').getByRole('button', { name: '任务看板' }).click()
+  const boardCard = page.getByRole('region', { name: '已完成' }).getByRole('article', { name: /修改bugISSUE-07/ })
+  const source = boardCard.getByRole('button', { name: '点击可查看审查记录的内容' })
+  const sourceBox = (await source.boundingBox())!
+  const nameBox = (await boardCard.getByText('修改bugISSUE-07', { exact: true }).boundingBox())!
+  expect(sourceBox.x + sourceBox.width).toBeLessThan(nameBox.x)
+  await source.click()
+  await expect(page.getByRole('dialog', { name: '审查问题详情' }).getByText('ISSUE-07')).toBeVisible()
 })
 
 test('筛选栏可批量展开或收起问题，详情的四项元数据共用一行', async ({ page }) => {

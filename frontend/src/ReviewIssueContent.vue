@@ -39,6 +39,7 @@ const issueNumber = computed(() => `ISSUE-${String(props.issue.id).padStart(2, '
       <h2 v-if="!collapsible"><ReviewText :text="issue.title" /></h2>
     </div>
     <slot v-if="showDetails" name="controls" />
+    <slot name="actions" />
   </header>
   <div v-show="showDetails" :id="collapsible ? detailId : undefined" class="review-issue-body">
     <!-- 收起时延迟渲染详情，备注草稿仍由审查记录页面维护。 -->

@@ -1,5 +1,8 @@
+from datetime import datetime
+
 from .test_api import clean_db, client, mutate
 from .test_meeting_assignments import current_week
+from app.reviews import SHANGHAI
 
 
 def test_common_review_projects_are_shared_and_only_admin_can_change_them():
@@ -39,7 +42,9 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
              "severity": "高危", "sha": "abcd", "commit_message": "commit", "risk": "可能抛异常"}
     data = {"report_date": "2026-11-12", "commit_date": "2026-11-11", "model": "model", "duration_seconds": 14,
             "projects": [{"project_id": project_id, "alias": project["alias"], "commits": [], "positives": ["增加单元测试"]}],
-            "issues": [issue, {**issue, "fingerprint": "b" * 64, "author": "unknown", "severity": "低危"}]}
+            "issues": [issue, {**issue, "fingerprint": "b" * 64, "author": "unknown", "severity": "低危"},
+                       {**issue, "fingerprint": "c" * 64, "severity": "低危"},
+                       {**issue, "fingerprint": "d" * 64, "severity": "低危"}]}
     assert admin.post(f"{worker}/reports", json=data, headers=worker_headers).status_code == 200
     day = "/api/reviews/days/2026-11-12"
     marks = "/api/calendar/marks?year=2026&scope=review-records"
@@ -47,22 +52,31 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     assert admin.post(f"{worker}/reports", json=empty_report, headers=worker_headers).status_code == 200
     assert alice.get(f"{marks}&month=11").json() == ["2026-11-12", "2026-11-13"]
     assert alice.get(f"{marks}&month=11&include_issue_counts=true").json() == [
-        {"date": "2026-11-12", "issue_count": 2},
+        {"date": "2026-11-12", "issue_count": 4},
         {"date": "2026-11-13", "issue_count": 0},
     ]
     assert alice.get(f"{marks}&month=10&include_issue_counts=true").json() == []
     daily = alice.get(day).json()
     assert daily["summary"]["model"] == "model"
-    mine, unknown = daily["issues"]
+    mine, unknown, completed, ignored = daily["issues"]
     assert mine["mine"] and mine["author_name"] == "小王" and unknown["anonymous"]
     issue_path = f"/api/reviews/issues/{mine['id']}"
+    week = f"/api/weeks/{current_week()}"
+    board = "/api/board-tasks"
     assert alice.post(f"{issue_path}/task").status_code == 200
     assert bob.post(f"{issue_path}/task").status_code == 200
-    assert bob.get(f"/api/weeks/{current_week()}").json()["tasks"] == []
-    week = f"/api/weeks/{current_week()}"
+    assert bob.get(board).json()["tasks"] == []
+    assert alice.get(week).json()["tasks"] == []
+    assert bob.patch(issue_path, json={"status": "已完成"}).status_code == 403
+    card, = alice.get(board).json()["tasks"]
+    assert (card["state"], card["category_name"], card["name"], card["review_issue_id"]) == (
+        "inbox", "改bug", f"修改bugISSUE-{mine['id']:02d}", mine["id"])
+    move = f"{board}/{card['id']}/status"
+    assert alice.patch(move, json={"state": "in_progress", "revision": card["revision"],
+                                   "week_start": current_week().isoformat()}).status_code == 200
     weekly = alice.get(week).json()
     task, = weekly["tasks"]
-    assert (task["category_name"], task["task_group"], task["description"]) == ("开发相关", "修改代码审查问题", "检查空值")
+    assert (task["category_name"], task["task_group"], task["description"]) == ("改bug", card["name"], "检查空值")
     assert task["work_days"] == [] and task["review_issue_id"] == mine["id"]
     assert alice.patch(issue_path, json={"status": "忽略", "notes": "  "}).status_code == 422
     assert alice.patch(issue_path, json={"status": "忽略", "notes": "误报"}).status_code == 200
@@ -75,11 +89,23 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     data["issues"][0].update(title="检查缺少的空值判断", risk="缺少判空时会抛异常", suggestion="调用前先判断参数是否为空。")
     assert admin.post(f"{worker}/reports", json=data, headers=worker_headers).status_code == 200
     updated = alice.get(day).json()["issues"]
-    assert len(updated) == 2 and updated[0]["id"] == mine["id"] and updated[0]["status"] == "已完成"
+    assert len(updated) == 4 and updated[0]["id"] == mine["id"] and updated[0]["status"] == "已完成"
     assert updated[0]["notes"] == "追加备注" and updated[0]["task_added"]
     detail = alice.get(issue_path).json()
     assert detail == {**updated[0], "project_alias": project["alias"]}
     assert updated[0]["title"] == "检查缺少的空值判断" and updated[0]["suggestion"] == "调用前先判断参数是否为空。"
+    for entry, status, column in ((unknown, "40%", "in_progress"), (completed, "已完成", "done")):
+        path = f"/api/reviews/issues/{entry['id']}"
+        assert alice.patch(path, json={"status": status}).status_code == 200
+        for _ in range(2):
+            assert alice.post(f"{path}/task").status_code == 200
+        added_card, = (item for item in alice.get(board).json()["tasks"] if item["review_issue_id"] == entry["id"])
+        added_detail, = (item for item in alice.get(week).json()["tasks"] if item["board_task_id"] == added_card["id"])
+        assert added_card["state"] == column and added_card["has_current_detail"]
+        assert added_detail["status"] == status and added_detail["work_days"] == [datetime.now(SHANGHAI).isoweekday()]
+    ignored_path = f"/api/reviews/issues/{ignored['id']}"
+    assert alice.patch(ignored_path, json={"status": "忽略"}).status_code == 200
+    assert alice.post(f"{ignored_path}/task").status_code == 422
     alice_messages = alice.get("/api/notifications").json()["items"]
     assert len(alice_messages) == 1 and alice_messages[0]["target"] == {"date": "2026-11-12"}
     assert admin.patch(f"{projects}/{project_id}", json={"is_common": True}).status_code == 200

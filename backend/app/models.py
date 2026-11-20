@@ -108,6 +108,7 @@ class BoardTask(Base):
     meeting_task: Mapped["MeetingTask | None"] = relationship(back_populates="assignments")
     assignment_status: Mapped[str | None] = mapped_column(String(16))
     transferred_by: Mapped[str | None] = mapped_column(String(120))
+    review_issue: Mapped["ReviewIssue | None"] = relationship(back_populates="board_task")
     # 转交的明细暂存在任务箱，首次加入本周工作时恢复。
     handoff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -211,6 +212,9 @@ class ReviewIssue(Base):
     status: Mapped[str | None] = mapped_column(String(16))
     notes: Mapped[str] = mapped_column(Text, default="")
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"), unique=True)
+    # 来源关联独立于周明细，移回任务箱后仍可打开审查问题。
+    board_task_id: Mapped[int | None] = mapped_column(ForeignKey("board_tasks.id", ondelete="SET NULL"), unique=True)
+    board_task: Mapped[BoardTask | None] = relationship(back_populates="review_issue")
     task_added: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

@@ -108,7 +108,7 @@ export function startTaskActionsTour(onShown: () => void) {
       element: '.task-list .task-row',
       popover: {
         title: '任务卡片右键菜单',
-        description: '右键点击任意任务卡片，即可置顶、上移一行、下移一行或置底。高、中优先级的序号区域分别显示红色、橙色。转交后，接收人可在任务箱中开始任务，悬停灯泡可查看转交来源。',
+        description: '右键点击任意任务卡片，即可置顶、上移一行、下移一行或置底。高、中优先级的序号区域分别显示红色、橙色。接收人可将转交任务从任务箱拖到进行中，悬停灯泡可查看转交来源。',
         side: 'right',
       },
     }],

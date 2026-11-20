@@ -4,12 +4,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from . import main
 from .db import get_db
 from .main import Input, active_session, finish, idempotent, lock_task_changes, validate_task_type, week_row
-from .models import BoardTask, BoardTaskDetail, ReviewIssue, Task, Week
+from .models import BoardTask, BoardTaskDetail, Task, Week
 
 router = APIRouter(prefix="/api/board-tasks")
 
@@ -119,6 +119,7 @@ def card_json(card: BoardTask, *, current=False, historical=False):
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority,
             "state": card.state, "position": card.position, "revision": card.revision,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
+            "review_issue_id": card.review_issue.id if card.review_issue else None,
             "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),
             "has_current_detail": current, "has_other_details": historical}
 
@@ -147,7 +148,7 @@ def checked_card(db: Session, user_id: int, card_id: int, revision: int, week_st
 def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
     start = main.current_work_week()
     # 一条查询读取卡片及其关联周，避免并发更新造成同一次响应内的数据不一致。
-    rows = db.execute(select(BoardTask, Week.start_date)
+    rows = db.execute(select(BoardTask, Week.start_date).options(joinedload(BoardTask.review_issue))
                       .outerjoin(BoardTaskDetail, BoardTaskDetail.board_task_id == BoardTask.id)
                       .outerjoin(Week, Week.id == BoardTaskDetail.week_id)
                       .where(BoardTask.user_id == auth[0].id).order_by(BoardTask.position, BoardTask.id))
@@ -269,19 +270,18 @@ def set_assignment_status(card: BoardTask, status: str | None):
 
 def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None):
     handoff = card.handoff or {}
+    issue = card.review_issue
     detail = Task(week_id=week.id, position=position, task_group=card.name,
                   category_name=card.category_name or None, priority=card.priority, status=status,
                   meeting_task_id=card.meeting_task_id, transferred_by=card.transferred_by,
-                  description=handoff.get("description", ""), notes=handoff.get("notes", ""),
+                  description=handoff.get("description", issue.title if issue else ""), notes=handoff.get("notes", ""),
                   work_days=handoff.get("work_days", []))
     db.add(detail)
     db.flush()
     db.add(BoardTaskDetail(task_id=detail.id, board_task_id=card.id, week_id=week.id))
-    if issue_id := handoff.get("review_issue_id"):
-        issue = db.get(ReviewIssue, issue_id)
-        if issue and issue.task_id is None:
-            issue.task_id = detail.id
-            issue.status = status
+    if issue:
+        issue.task_id = detail.id
+        issue.status = status
     card.handoff = None
     return detail
 
@@ -326,6 +326,8 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
             delete_detail(db, detail)
             week.revision += 1
             detail = None
+            if card.review_issue:
+                card.review_issue.status = None
     else:
         status = "已完成" if data.state == "done" else progress_status(db, card, detail)
         if detail is None:
@@ -335,6 +337,8 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
         elif detail.status != status:
             detail.status = status
             week.revision += 1
+            if card.review_issue:
+                card.review_issue.status = status
         set_assignment_status(card, status)
     put_at_top(db, card, data.state)
     card.revision += 1

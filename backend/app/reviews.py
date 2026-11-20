@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from .credential_crypto import EncryptedCredentials, decrypt_credentials
 from .db import get_db
-from .main import Input, STATUSES, active_session, admin, lock_task_changes, week_row
-from .models import Notification, ReviewIssue, ReviewProject, ReviewRun, Task, User, Week
+from .main import BUG_TASK_TYPE, Input, STATUSES, active_session, admin, current_work_week, lock_task_changes, week_row
+from .models import BoardTask, Notification, ReviewIssue, ReviewProject, ReviewRun, Task, User, Week
+from .task_board import add_inbox_card, attach_detail, put_at_top, state_for_status, sync_card_from_detail
 
 router = APIRouter(prefix="/api/reviews")
 SHANGHAI = timezone(timedelta(hours=8))
@@ -322,7 +323,9 @@ def report_day(report_date: date, auth=Depends(active_session), db: Session = De
     if not run:
         return {"summary": None, "issues": [], "projects": projects, "common_project_ids": common_project_ids}
     names = {username.lower(): name for username, name in db.execute(select(User.username, User.display_name))}
-    rows = db.execute(select(ReviewIssue, Week.user_id).outerjoin(
+    rows = db.execute(select(ReviewIssue, func.coalesce(BoardTask.user_id, Week.user_id)).outerjoin(
+        BoardTask, BoardTask.id == ReviewIssue.board_task_id,
+    ).outerjoin(
         Task, Task.id == ReviewIssue.task_id,
     ).outerjoin(Week, Week.id == Task.week_id).where(ReviewIssue.report_date == report_date).order_by(ReviewIssue.id))
     issues = [issue_json(row, names, auth[0], owner) for row, owner in rows]
@@ -358,6 +361,12 @@ def get_issue(db, issue_id):
     return row
 
 
+def issue_task_owner(issue: ReviewIssue, task: Task | None):
+    if issue.board_task:
+        return issue.board_task.user_id
+    return task.week.user_id if task else None
+
+
 @router.get("/issues/{issue_id}")
 def review_issue_detail(issue_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
     issue = get_issue(db, issue_id)
@@ -367,7 +376,7 @@ def review_issue_detail(issue_id: int, auth=Depends(active_session), db: Session
     project = db.get(ReviewProject, issue.project_id)
     task = db.get(Task, issue.task_id) if issue.task_id else None
     # 与审查记录使用同一份问题数据，读取接口不修改任务或问题。
-    return {**issue_json(issue, names, auth[0], task.week.user_id if task else None), "project_alias": project.alias}
+    return {**issue_json(issue, names, auth[0], issue_task_owner(issue, task)), "project_alias": project.alias}
 
 
 @router.patch("/issues/{issue_id}")
@@ -375,7 +384,8 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
     lock_task_changes(db)
     issue = get_issue(db, issue_id)
     task = db.get(Task, issue.task_id) if issue.task_id else None
-    if task and task.week.user_id != auth[0].id and not auth[0].has_role("admin"):
+    owner = issue_task_owner(issue, task)
+    if owner is not None and owner != auth[0].id and not auth[0].has_role("admin"):
         raise HTTPException(403, "此问题已关联其他用户的任务")
     changes = data.model_dump(exclude_unset=True)
     status = changes.get("status", issue.status)
@@ -389,6 +399,8 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
     if task and "status" in changes and task.status != status:
         task.status = status
         task.week.revision += 1
+        if issue.board_task and task.week.start_date == current_work_week():
+            sync_card_from_detail(db, issue.board_task, task, {"status"})
     db.commit()
     return {"ok": True, "status": status, "notes": notes}
 
@@ -399,14 +411,20 @@ def create_issue_task(issue_id: int, auth=Depends(active_session), db: Session =
     issue = get_issue(db, issue_id)
     if issue.task_added:
         return {"ok": True}
-    today = datetime.now(SHANGHAI).date()
-    week = week_row(db, auth[0].id, today - timedelta(days=today.weekday()), create=True)
-    position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
-    task = Task(week_id=week.id, position=position + 1, category_name="开发相关", task_group="修改代码审查问题",
-                description=issue.title, status=issue.status, work_days=[], notes="")
-    db.add(task)
-    db.flush()
-    issue.task_id, issue.task_added = task.id, True
-    week.revision += 1
+    if issue.status == "忽略":
+        raise HTTPException(422, "已忽略的问题无法添加到任务看板")
+    owner = auth[0].id
+    card = add_inbox_card(db, owner, name=f"修改bugISSUE-{issue.id:02d}", category_name=BUG_TASK_TYPE)
+    card.review_issue = issue
+    issue.task_added = True
+    # 看板卡片和周明细一次提交，重复请求沿用同一条来源关联。
+    if issue.status:
+        today = datetime.now(SHANGHAI).date()
+        week = week_row(db, owner, today - timedelta(days=today.weekday()), create=True)
+        position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
+        detail = attach_detail(db, card, week, position + 1, issue.status)
+        detail.work_days = [today.isoweekday()]
+        put_at_top(db, card, state_for_status(issue.status))
+        week.revision += 1
     db.commit()
     return {"ok": True}

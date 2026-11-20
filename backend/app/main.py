@@ -18,7 +18,8 @@ from .credential_crypto import EncryptedCredentials, decrypt_credentials, public
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
 hasher = PasswordHash.recommended()
 STATUSES = {"已完成", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%", "5%"}
-SHARED_TYPES = {"开发相关", "联调联试", "数据处理", "运维相关", "开会", "其他"}
+BUG_TASK_TYPE = "改bug"
+SHARED_TYPES = {"开发相关", BUG_TASK_TYPE, "联调联试", "数据处理", "运维相关", "开会", "其他"}
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_PATH = os.getenv("COOKIE_PATH", "/")
 SESSION_LIFETIME = timedelta(days=7)
@@ -585,14 +586,19 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
         meeting_task.meeting.revision += 1
 
     name = task.task_group or (task.meeting_task.name if task.meeting_task else "") or task.description or "未命名任务"
-    issue_id = db.scalar(select(ReviewIssue.id).where(ReviewIssue.task_id == task.id))
+    issue = source_card.review_issue if source_card else None
+    if issue is None:
+        issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
     card = add_inbox_card(db, recipient.id, name=name[:200], category_name=task.category_name or "",
                           priority=task.priority or "低", meeting_task_id=task.meeting_task_id,
                           assignment_status=task.status if task.meeting_task_id else None,
                           transferred_by=sender.display_name, handoff={
                               "description": task.description, "notes": task.notes, "work_days": task.work_days,
-                              "status": task.status, "review_issue_id": issue_id,
+                              "status": task.status,
                           })
+    if issue:
+        issue.board_task = card
+        issue.task_id = None
     delete_detail(db, task)
     if source_card:
         db.delete(source_card)
