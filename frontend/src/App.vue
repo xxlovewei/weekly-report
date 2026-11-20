@@ -765,17 +765,17 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       </div>
       <div id="sidebar-body" class="sidebar-body">
         <nav v-if="!user.must_change_password" aria-label="主导航">
-          <button v-for="item in visibleNavItems" :key="item.name" :data-sidebar-tour="item.name" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
+          <button v-for="item in visibleNavItems" :key="item.name" :data-sidebar-tour="item.name" class="sidebar-link" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
             <svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
             <span v-if="!compactSidebar">{{ item.label }}</span>
           </button>
+          <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
+            {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
+          </button>
         </nav>
-        <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="currentWorkWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
-        <MonthCalendar v-else-if="page === 'review-records'" :selected="reviewDay" scope="review-records" :refresh-key="calendarKey + reviewRefresh" :compact="compactSidebar" @select="selectReviewDay" />
-        <button v-if="page === 'reports'" class="primary-button sidebar-meeting" data-sidebar-tour="meeting-shortcut" type="button" :disabled="todayWeeklyMeetingLoading" :aria-label="meetingActionLabel" :title="compactSidebar ? meetingActionLabel : undefined" @click="openMeeting(todayWeeklyMeeting)">
-          {{ todayWeeklyMeeting ? '✎' : '＋' }}<span v-if="!compactSidebar"> {{ meetingActionLabel }}</span>
-        </button>
       </div>
+      <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="currentWorkWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
+      <MonthCalendar v-else-if="page === 'review-records'" :selected="reviewDay" scope="review-records" :refresh-key="calendarKey + reviewRefresh" :compact="compactSidebar" @select="selectReviewDay" />
       <div class="sidebar-bottom">
         <div class="sidebar-user">
           <div class="identity"><strong :title="user.display_name">{{ user.display_name }}</strong><small v-if="!compactSidebar">{{ user.username }}</small></div>
