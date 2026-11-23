@@ -579,37 +579,47 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
     task = own_task(db, task_id, source.id)
     source_card = linked_card(db, task_id)
     ensure_no_task_history(db, source, source_card, current_work_week(), "转交")
-    recipient = db.scalar(transfer_recipients(sender.id).where(User.id == data.user_id).with_for_update())
+    hand_off_task(db, sender, data.user_id, source_card, task)
+    payload = work_week_json(db, source)
+    db.commit()
+    return payload
+
+
+def hand_off_task(db: Session, sender: User, recipient_id: int, source_card: BoardTask | None, task: Task | None):
+    recipient = db.scalar(transfer_recipients(sender.id).where(User.id == recipient_id).with_for_update())
     if recipient is None:
         raise HTTPException(422, "请选择其他可用的普通用户")
-    if task.meeting_task_id:
-        meeting_task = task.meeting_task
+    meeting_task = source_card.meeting_task if source_card else task.meeting_task
+    if meeting_task:
         if any(card.user_id == recipient.id for card in meeting_task.assignments):
             raise HTTPException(409, "接收人已被指派同一会议任务，请选择其他用户")
         meeting_task.meeting.revision += 1
 
-    name = task.task_group or (task.meeting_task.name if task.meeting_task else "") or task.description or "未命名任务"
+    name = ((task.task_group if task else source_card.name) or (meeting_task.name if meeting_task else "")
+            or (task.description if task else "") or "未命名任务")
     issue = source_card.review_issue if source_card else None
-    if issue is None:
+    if issue is None and task:
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
-    card = add_inbox_card(db, recipient.id, name=name[:200], category_name=task.category_name or "",
-                          priority=task.priority or "低", notes=task.notes, meeting_task_id=task.meeting_task_id,
-                          assignment_status=task.status if task.meeting_task_id else None,
-                          transferred_by=sender.display_name, handoff={
-                              "description": task.description, "work_days": task.work_days,
-                              "status": task.status,
-                          })
+    # 备注直接随卡片送达，进展和工作日待接收人开始任务后恢复到周报。
+    handoff = ({"description": task.description, "work_days": task.work_days, "status": task.status}
+               if task else source_card.handoff)
+    status = task.status if task else source_card.assignment_status
+    card = add_inbox_card(db, recipient.id, name=name[:200],
+                          category_name=(task.category_name if task else source_card.category_name) or "",
+                          priority=(task.priority if task else source_card.priority) or "低",
+                          notes=task.notes if task else source_card.notes,
+                          meeting_task_id=meeting_task.id if meeting_task else None,
+                          assignment_status=status if meeting_task else None,
+                          transferred_by=sender.display_name, handoff=handoff)
     if issue:
         issue.board_task = card
         issue.task_id = None
-    delete_detail(db, task)
+    if task:
+        delete_detail(db, task)
     if source_card:
         db.delete(source_card)
     db.add(Notification(user_id=recipient.id, kind="转交任务", board_task_id=card.id,
                         title=f"{sender.display_name} 转交了任务：{name}"[:500]))
-    payload = work_week_json(db, source)
-    db.commit()
-    return payload
 
 @app.put("/api/weeks/{week_start}/tasks/order")
 def reorder_tasks(week_start: str, revision: int, data: TaskOrderInput, auth=Depends(self_work_write), db: Session = Depends(get_db)):

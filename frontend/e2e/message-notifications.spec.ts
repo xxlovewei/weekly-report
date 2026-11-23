@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, skipGuides } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 import type { LiveMessage, WeekData } from '../src/types'
 
@@ -221,17 +221,28 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
     await ready
     // 等待初始消息游标建立，避免把本次转交当成历史消息。
     await expect(page.getByRole('group', { name: '桌面通知权限' })).toBeVisible()
+    await page.getByRole('button', { name: '任务看板', exact: true }).click()
+    await expect(page.getByRole('region', { name: '任务箱' })).toBeVisible()
     const alice = await login(senderPage, 'alice')
     senderHeaders = alice.headers
+    await skipGuides(senderPage)
     const original: WeekData = await (await sender.request.get(weekPath)).json()
     const created = await sender.request.post(`${weekPath}/tasks?revision=${original.revision}`, { headers: alice.headers })
     await expect(created).toBeOK()
     const updated: WeekData = await created.json()
-    taskId = updated.tasks[0].id
-    const transferred = await sender.request.post(`${weekPath}/tasks/${taskId}/transfer?revision=${updated.revision}`, {
-      headers: alice.headers, data: { user_id: bob.user.id },
-    })
-    await expect(transferred).toBeOK()
+    const task = updated.tasks[0]
+    taskId = task.id
+    const name = '看板接口交接'
+    await expect(await sender.request.patch(`${weekPath}/tasks/${taskId}?revision=${updated.revision}`, {
+      headers: alice.headers, data: { task_group: name, status: '30%' },
+    })).toBeOK()
+    await senderPage.goto('/task-board')
+    const sourceCard = senderPage.locator(`#board-task-${task.board_task_id}`)
+    await sourceCard.getByRole('button', { name: '转交任务' }).click()
+    const transfer = senderPage.getByRole('dialog', { name: '转交任务' })
+    await transfer.getByLabel('接收人').selectOption(String(bob.user.id))
+    await transfer.getByRole('button', { name: '确认转交' }).click()
+    await expect(sourceCard).toHaveCount(0)
     const toast = page.locator('.live-message-reminder').getByRole('button', { name: /转交任务/ })
     await expect(toast).toBeVisible()
     const read = page.waitForResponse(response => /\/api\/notifications\/\d+$/.test(response.url()) && response.request().method() === 'PATCH')
@@ -239,8 +250,14 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
     expect((await read).status()).toBe(200)
     await expect(page).toHaveURL(/\/task-board\?task=\d+$/)
     const target = page.getByRole('region', { name: '任务箱' }).locator('.board-target')
-    await expect(target).toBeFocused()
     boardTaskId = Number(await target.getAttribute('data-card-id'))
+    await expect(target).toBeFocused()
+    await expect(target).toContainText(name)
+    const arrival = target.getByRole('status').filter({ hasText: '转交给你的任务' })
+    await expect(arrival).toBeVisible()
+    await expect(arrival.locator('svg')).toHaveCSS('animation-name', /^board-arrival-envelope/)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(arrival.locator('svg')).toHaveCSS('animation-name', 'none')
   } finally {
     try {
       if (boardTaskId && receiverHeaders) {

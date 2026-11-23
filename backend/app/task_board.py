@@ -262,6 +262,27 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     return {"ok": True}
 
 
+@router.post("/{card_id}/transfer")
+def transfer_card(card_id: int, revision: int, week_start: date, data: main.TaskTransferInput,
+                  key: str | None = Header(default=None, alias="Idempotency-Key"),
+                  auth=Depends(active_session), db: Session = Depends(get_db)):
+    sender = auth[0]
+    lock_task_changes(db)
+    operation = f"board:transfer:{card_id}:{data.user_id}"
+    old = idempotent(db, sender.id, key, operation)
+    if old is not None:
+        return old
+    card, _ = checked_card(db, sender.id, card_id, revision, week_start, fields=True)
+    if card.state == "done":
+        raise HTTPException(409, "已完成的任务不可转交")
+    week = week_row(db, sender.id, week_start)
+    detail = board_detail(db, card.id, week.id) if week else None
+    main.hand_off_task(db, sender, data.user_id, card, detail)
+    if detail:
+        week.revision += 1
+    return finish(db, sender.id, key, operation, {"ok": True})
+
+
 def progress_status(db: Session, card: BoardTask, detail: Task | None = None):
     if detail is not None:
         return percentage(detail.status) or "5%"
