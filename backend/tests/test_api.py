@@ -146,7 +146,7 @@ def test_task_order_copy_revision_and_idempotency(monkeypatch):
     target = "/api/weeks/2026-10-12"
     monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 10, 12))
     carried = mutate(alice, "POST", f"{target}/carry-over", 0, {"mode":"append"}, key="carry1").json()
-    assert len(carried["tasks"]) == 2
+    assert [task["board_task_id"] for task in carried["tasks"]] == [changed["tasks"][0]["board_task_id"]]
     assert all(t["work_days"] == [] for t in carried["tasks"])
     assert mutate(alice, "POST", f"{target}/carry-over", 0, {"mode":"append"}, key="carry1").json() == carried
     repeated = mutate(alice, "POST", f"{target}/carry-over", 1, {"mode":"overwrite"}).json()

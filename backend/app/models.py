@@ -77,6 +77,7 @@ class TaskPlan(TaskFields, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
     applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    board_task_id: Mapped[int | None] = mapped_column(ForeignKey("board_tasks.id", ondelete="SET NULL"), index=True)
 
 class Task(TaskFields, Base):
     __tablename__ = "tasks"
@@ -99,6 +100,7 @@ class BoardTask(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
     category_name: Mapped[str] = mapped_column(String(100))
     priority: Mapped[str] = mapped_column(String(4))
     state: Mapped[str] = mapped_column(String(16), default="inbox")

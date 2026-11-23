@@ -11,7 +11,7 @@ const columns = [
   { state: 'done', name: '已完成' },
 ] as const
 type State = typeof columns[number]['state']
-interface CardFields { name: string; category_name: string; priority: TaskPriority }
+interface CardFields { name: string; category_name: string; priority: TaskPriority; notes: string }
 interface Card extends CardFields {
   id: number
   state: State
@@ -36,7 +36,7 @@ const continuationNotice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
-const form = reactive<CardFields>({ name: '', category_name: '', priority: '低' })
+const form = reactive<CardFields>({ name: '', category_name: '', priority: '低', notes: '' })
 const formError = ref('')
 const openedIssue = ref<number | null>(null)
 let createRequest: { body: string; key: string } | null = null
@@ -116,7 +116,7 @@ function open(nextAction: Dialog) {
   formError.value = ''
   if (nextAction.kind === 'edit') {
     const card = nextAction.card
-    Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低' })
+    Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低', notes: card?.notes ?? '' })
     createRequest = null
   }
   void nextTick(() => dialog.value?.showModal())
@@ -127,9 +127,10 @@ async function submit() {
   await perform(async () => {
     if (pending.kind === 'edit') {
       const fields = { ...form, name: form.name.trim() }
-      if (!fields.name && !pending.card?.name_locked) { throw new ApiError(422, '请输入任务名称。') }
+      if (!fields.name && !pending.card?.name_locked && !pending.card?.has_other_details) { throw new ApiError(422, '请输入任务名称。') }
       if (pending.card) {
-        saveCard(await api<Card>(path(pending.card), 'PATCH', fields))
+        const patch = pending.card.has_other_details ? { notes: fields.notes } : fields
+        saveCard(await api<Card>(path(pending.card), 'PATCH', patch))
       } else {
         const body = JSON.stringify(fields)
         if (createRequest?.body !== body) createRequest = { body, key: newIdempotencyKey() }
@@ -249,8 +250,8 @@ function drop(event: DragEvent, state: State) {
               :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
             </button>
-            <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy || card.has_other_details"
-              :title="card.has_other_details ? '已关联其他周的任务明细' : '修改任务'" @click="open({ kind: 'edit', card })">
+            <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy"
+              :title="card.has_other_details ? '修改备注' : '修改任务'" @click="open({ kind: 'edit', card })">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
             </button>
             <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
@@ -270,15 +271,16 @@ function drop(event: DragEvent, state: State) {
     <form v-if="action" class="stack-form" @submit.prevent="submit">
       <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : '移回任务箱' }}</h2>
       <template v-if="action.kind === 'edit'">
-        <label>任务类型<select v-model="form.category_name" :required="!!form.category_name || action.card?.category_name !== ''" :disabled="busy">
+        <label>任务类型<select v-model="form.category_name" :required="!!form.category_name || action.card?.category_name !== ''" :disabled="busy || action.card?.has_other_details">
           <option value="" disabled>{{ action.card?.category_name === '' ? '未选择' : '请选择任务类型' }}</option>
           <option v-if="form.category_name && !options.includes(form.category_name)" :value="form.category_name">{{ form.category_name }}（历史）</option>
           <option v-for="name in options" :key="name" :value="name">{{ name }}</option>
         </select></label>
-        <label>任务名称<input v-model="form.name" maxlength="200" required :disabled="busy || action.card?.name_locked" /></label>
-        <label>优先级<select v-model="form.priority" :disabled="busy">
+        <label>任务名称<textarea v-model="form.name" rows="2" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" /></label>
+        <label>优先级<select v-model="form.priority" :disabled="busy || action.card?.has_other_details">
           <option value="高">高</option><option value="中">中</option><option value="低">低</option>
         </select></label>
+        <label>备注<textarea v-model="form.notes" rows="3" maxlength="5000" :disabled="busy" /></label>
       </template>
       <p v-else-if="action.kind === 'return'">移回「{{ action.card.name }}」将删除它关联的本周任务明细。确认移回？</p>
       <p v-else>确认删除「{{ action.card.name }}」？<template v-if="action.card.has_current_detail"> 此操作也会删除它关联的本周任务明细。</template></p>
@@ -312,6 +314,7 @@ function drop(event: DragEvent, state: State) {
 .board-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; flex-wrap: wrap; }
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }
+.board-dialog textarea { width: 100%; overflow-wrap: anywhere; resize: vertical; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card.board-target { outline: 2px solid #2781b8; outline-offset: 2px; }

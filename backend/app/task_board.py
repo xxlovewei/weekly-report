@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, aliased, joinedload
 from . import main
 from .db import get_db
 from .main import Input, active_session, finish, idempotent, lock_task_changes, validate_task_type, week_row
-from .models import BoardTask, BoardTaskDetail, Task, Week
+from .models import BoardTask, BoardTaskDetail, Task, TaskPlan, Week
 
 router = APIRouter(prefix="/api/board-tasks")
 
@@ -18,10 +18,14 @@ class CardInput(Input):
     name: str = Field(min_length=1, max_length=200)
     category_name: str = Field(min_length=1, max_length=100)
     priority: Literal["高", "中", "低"]
+    notes: str = Field(default="", max_length=5000)
 
 class CardUpdate(CardInput):
     name: str = Field(max_length=200)
     category_name: str = Field(max_length=100)
+
+class CardNotesUpdate(Input):
+    notes: str = Field(max_length=5000)
 
 
 class CardMove(Input):
@@ -76,12 +80,10 @@ def state_for_status(status: str | None):
 
 
 def create_card_for_detail(db: Session, week: Week, task: Task):
-    # 周明细和独立的看板卡片在同一事务中创建，状态决定卡片所在列。
-    state = state_for_status(task.status)
-    card = BoardTask(user_id=week.user_id, name=task.task_group, category_name=task.category_name or "",
-                     priority=task.priority or "低", state=state,
-                     position=position_at_edge(db, week.user_id, state, top=False))
-    db.add_all([task, card])
+    # 新增和复制的明细各有一张独立任务箱卡片。
+    card = add_inbox_card(db, week.user_id, name=task.task_group, category_name=task.category_name or "",
+                          priority=task.priority or "低", notes=task.notes or "")
+    db.add(task)
     db.flush()
     db.add(BoardTaskDetail(task_id=task.id, board_task_id=card.id, week_id=week.id))
 
@@ -95,12 +97,13 @@ def delete_detail(db: Session, detail: Task):
         task.position = position
 
 
-def sync_card_from_detail(db: Session, card: BoardTask, task: Task, fields):
+def sync_card_from_detail(db: Session, card: BoardTask, task: Task | TaskPlan, fields):
     changed = False
     for field, attr, value in (
         ("task_group", "name", task.task_group),
         ("category_name", "category_name", task.category_name or ""),
         ("priority", "priority", task.priority or "低"),
+        ("notes", "notes", task.notes),
     ):
         if field in fields and getattr(card, attr) != value:
             setattr(card, attr, value)
@@ -126,7 +129,7 @@ def pending_progress(card: BoardTask):
 def card_json(card: BoardTask, *, current=False, historical=False, status: str | None = None):
     meeting = card.meeting_task.meeting if card.meeting_task else None
     status = (percentage(status) or "5%") if card.state == "in_progress" else "已完成" if card.state == "done" else None
-    return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority,
+    return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority, "notes": card.notes,
             "state": card.state, "status": status, "position": card.position, "revision": card.revision,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
             "review_issue_id": card.review_issue.id if card.review_issue else None,
@@ -157,6 +160,7 @@ def checked_card(db: Session, user_id: int, card_id: int, revision: int, week_st
 @router.get("")
 def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
     start = main.current_work_week()
+    main.apply_due_plans(db, auth[0].id, start)
     # 同时读取卡片和周明细，本周尚无明细时优先保留最近一次进度。
     rows = db.execute(select(BoardTask, Week.start_date, Task.status).options(joinedload(BoardTask.review_issue))
                       .outerjoin(BoardTaskDetail, BoardTaskDetail.board_task_id == BoardTask.id)
@@ -174,6 +178,7 @@ def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
             payload["has_current_detail"] = True
         elif linked_week is not None and linked_week < start:
             payload["has_other_details"] = True
+    db.commit()
     return {"current_week": start.isoformat(), "tasks": list(cards.values())}
 
 
@@ -191,12 +196,14 @@ def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idem
 
 
 @router.patch("/{card_id}")
-def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate,
+def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate | CardNotesUpdate,
               auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
     lock_task_changes(db)
-    card, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
-    changes = {key: value for key, value in data.model_dump().items() if getattr(card, key) != value}
+    card, historical = checked_card(db, owner, card_id, revision, week_start)
+    changes = {key: value for key, value in data.model_dump(exclude_unset=True).items() if getattr(card, key) != value}
+    if historical and not isinstance(data, CardNotesUpdate):
+        raise HTTPException(409, "卡片已关联其他周的任务明细，仅可修改备注、移列或续做")
     if "name" in changes and not changes["name"]:
         raise HTTPException(422, "请输入任务名称")
     if "category_name" in changes:
@@ -218,7 +225,8 @@ def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate,
         if detail:
             week.revision += 1
     db.commit()
-    return card_json(card, current=detail is not None, status=detail.status if detail else pending_progress(card))
+    status = detail.status if detail else pending_progress(card) or latest_detail_status(db, card)
+    return card_json(card, current=detail is not None, historical=historical, status=status)
 
 
 @router.post("/{card_id}/duplicate", status_code=201)
@@ -232,10 +240,8 @@ def duplicate_card(card_id: int, revision: int, week_start: date,
     if old is not None:
         return old
     source, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
-    card = BoardTask(user_id=owner, name=source.name, category_name=source.category_name, priority=source.priority,
-                     position=position_at_edge(db, owner, "inbox", top=False))
-    db.add(card)
-    db.flush()
+    card = add_inbox_card(db, owner, name=source.name, category_name=source.category_name,
+                          priority=source.priority, notes=source.notes)
     return finish(db, owner, key, operation, card_json(card))
 
 
@@ -261,10 +267,16 @@ def progress_status(db: Session, card: BoardTask, detail: Task | None = None):
         return percentage(detail.status) or "5%"
     if status := pending_progress(card):
         return status
-    previous = db.scalar(select(Task.status).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
-                         .join(Week, Week.id == BoardTaskDetail.week_id)
-                         .where(BoardTaskDetail.board_task_id == card.id).order_by(Week.start_date.desc()).limit(1))
-    return percentage(previous) or "5%"
+    return percentage(latest_detail_status(db, card)) or "5%"
+
+
+def latest_detail_status(db: Session, card: BoardTask, *, before: date | None = None):
+    query = (select(Task.status).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
+             .join(Week, Week.id == BoardTaskDetail.week_id)
+             .where(BoardTaskDetail.board_task_id == card.id))
+    if before is not None:
+        query = query.where(Week.start_date < before)
+    return db.scalar(query.order_by(Week.start_date.desc()).limit(1))
 
 
 def set_assignment_status(card: BoardTask, status: str | None):
@@ -275,7 +287,8 @@ def set_assignment_status(card: BoardTask, status: str | None):
     return False
 
 
-def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None, *, description: str | None = None):
+def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None, *,
+                  description: str | None = None, current: bool = True):
     handoff = card.handoff or {}
     issue = card.review_issue
     if description is None:
@@ -283,15 +296,16 @@ def attach_detail(db: Session, card: BoardTask, week: Week, position: int, statu
     detail = Task(week_id=week.id, position=position, task_group=card.name,
                   category_name=card.category_name or None, priority=card.priority, status=status,
                   meeting_task_id=card.meeting_task_id, transferred_by=card.transferred_by,
-                  description=description, notes=handoff.get("notes", ""),
+                  description=description, notes=card.notes,
                   work_days=handoff.get("work_days", []))
     db.add(detail)
     db.flush()
     db.add(BoardTaskDetail(task_id=detail.id, board_task_id=card.id, week_id=week.id))
-    if issue:
-        issue.task_id = detail.id
-        issue.status = status
-    card.handoff = None
+    if current:
+        if issue:
+            issue.task_id = detail.id
+            issue.status = status
+        card.handoff = None
     return detail
 
 
@@ -327,6 +341,7 @@ def reorder_card(card_id: int, data: CardPosition, auth=Depends(active_session),
 def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
     lock_task_changes(db)
+    main.apply_due_plans(db, owner, main.current_work_week())
     card, historical = checked_card(db, owner, card_id, data.revision, data.week_start)
     week = week_row(db, owner, data.week_start, create=data.state != "inbox")
     detail = board_detail(db, card.id, week.id) if week else None

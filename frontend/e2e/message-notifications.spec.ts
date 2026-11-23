@@ -227,7 +227,7 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
     const created = await sender.request.post(`${weekPath}/tasks?revision=${original.revision}`, { headers: alice.headers })
     await expect(created).toBeOK()
     const updated: WeekData = await created.json()
-    taskId = updated.tasks.at(-1)!.id
+    taskId = updated.tasks[0].id
     const transferred = await sender.request.post(`${weekPath}/tasks/${taskId}/transfer?revision=${updated.revision}`, {
       headers: alice.headers, data: { user_id: bob.user.id },
     })

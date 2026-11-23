@@ -379,7 +379,7 @@ async function structural(job: () => Promise<WeekData>) {
       const response = await enqueue(job)
       week.value = response
       calendarKey.value++
-      notice.value = response.no_source ? '没有可添加的进行中任务。' : ''
+      notice.value = response.no_source ? (futureWork.value ? '没有可复制的进行中任务。' : '没有可添加的进行中任务。') : ''
     } catch (error) { showError(error) } finally { mutating.value = false }
   })()
   try { await structuralPromise } finally { structuralPromise = null }
@@ -415,7 +415,8 @@ async function confirmDelete(id: number) {
   await structural(() => api(workPath(`/tasks/${id}`, true), 'DELETE'))
 }
 function addInProgress() {
-  void structural(() => api(workPath('/add-in-progress', true), 'POST', undefined, newIdempotencyKey()))
+  const suffix = futureWork.value ? '/plans/add-in-progress' : '/add-in-progress'
+  void structural(() => api(workPath(suffix, true), 'POST', undefined, newIdempotencyKey()))
 }
 
 async function loadPage() {
@@ -824,8 +825,8 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           </div>
           <template v-if="page === 'work'">
             <button v-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="secondary-button" type="button" :disabled="mutating" @click="selectWeek(addDays(currentWorkWeek, 7))">填写下周计划</button>
-            <button v-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="secondary-button" type="button" :disabled="mutating" @click="addInProgress">↖ 添加进行中的任务</button>
-            <button v-if="canManageOwnWork && (futureWork || selectedWeek === currentWorkWeek)" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ {{ futureWork ? '新增任务计划' : '新增任务' }}</button>
+            <button v-if="canManageOwnWork && !workReadonly && (futureWork || selectedWeek === currentWorkWeek)" class="secondary-button" type="button" :disabled="mutating" @click="addInProgress">↖ {{ futureWork ? '复制进行中的任务' : '添加进行中的任务' }}</button>
+            <button v-if="canManageOwnWork && !workReadonly && (futureWork || selectedWeek === currentWorkWeek)" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ {{ futureWork ? '新增任务计划' : '新增任务' }}</button>
           </template>
           <template v-else>
             <button class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button>
@@ -854,8 +855,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <div v-if="!workReadonly && !workLoading" class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
         <p v-if="workLoading" role="status">正在加载{{ futureWork ? '任务计划' : '任务明细' }}…</p>
-        <p v-else-if="futureWork" class="message">{{ workReadonly ? '可提前填写本人下一周的任务计划。' : '到达计划周后，任务将加入该周的工作明细，原计划转为只读历史。' }}</p>
-        <p v-else-if="workReadonly" class="message">仅当前周可编辑任务明细。</p>
+        <p v-else-if="workReadonly" class="message">{{ futureWork ? '可提前填写本人下一周的任务计划。' : '仅当前周可编辑任务明细。' }}</p>
         <TaskTable v-if="!workLoading" :key="selectedWeek + ':' + (workMember ?? user.id) + ':' + futureWork" :tasks="workTasks" :categories="categories" work-view :plan="futureWork" :readonly="workReadonly" :delegated="delegatedWork" :busy="mutating" :target-task="futureWork ? null : targetTask" :is-current-week="selectedWeek === currentWorkWeek" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
         <details v-if="!workLoading && !futureWork && week.plans?.length" class="work-plan-history">
           <summary>任务计划表（历史） · {{ week.plans.length }} 项</summary>
@@ -908,7 +908,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       </div>
     </main>
     <div v-if="reportExportOpen" class="modal-scrim" @click.self="reportExportOpen = false" @keydown.esc="reportExportOpen = false"><form class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="report-export-title" @submit.prevent="exportReports"><span class="eyebrow">周报汇总</span><h2 id="report-export-title">导出 Excel</h2><p>选择起止周，每位成员将单独生成一个工作表。</p><div class="export-weeks"><label>起始周<input ref="reportExportStartInput" v-model="reportExportStart" type="week" required /></label><label>结束周<input v-model="reportExportEnd" type="week" required /></label></div><p v-if="reportExportError" class="message error" role="alert">{{ reportExportError }}</p><div class="modal-actions"><button class="secondary-button" type="button" :disabled="reportExporting" @click="reportExportOpen = false">取消</button><button class="primary-button" type="submit" :disabled="reportExporting">{{ reportExporting ? '生成中…' : '确定并导出' }}</button></div></form></div>
-    <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="futureWork ? '确认删除任务计划' : '确认删除任务'"><h2>删除这项{{ futureWork ? '任务计划' : '任务' }}？</h2><p v-if="futureWork">该计划将从任务计划表移除。</p><p v-else-if="workTasks.some(task => task.id === modal?.taskId && task.board_task_id)">本周明细和看板任务都将删除。</p><p v-else>该任务将从本周移除。</p><div class="modal-actions"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete(modal.taskId)">确认删除</button></div></div></div>
+    <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="futureWork ? '确认删除任务计划' : '确认删除任务'"><h2>删除这项{{ futureWork ? '任务计划' : '任务' }}？</h2><p>{{ futureWork ? '该计划将从任务计划表移除。' : '该任务将从本周工作明细移除。' }}</p><div class="modal-actions"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete(modal.taskId)">确认删除</button></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
     <div class="unread-reminder-region" aria-live="polite">
       <div v-if="releaseNotice" class="notification-permission release-notice" role="group" aria-label="版本更新">

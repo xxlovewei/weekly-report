@@ -19,9 +19,12 @@ def test_next_week_plans_expire_and_leave_an_independent_work_detail(monkeypatch
     path = f"{plans}/{plan['id']}"
     assert mutate(bob, "PATCH", path, 0, {"task_group": "误修改"}).status_code == 404
     extras = mutate(alice, "POST", plans, added["revision"]).json()
-    removed = mutate(alice, "DELETE", f"{plans}/{extras['plans'][-1]['id']}", extras["revision"]).json()
+    new_plan, original_plan = extras["plans"]
+    assert new_plan["position"] == 1 and original_plan["id"] == plan["id"]
+    removed = mutate(alice, "DELETE", f"{plans}/{new_plan['id']}", extras["revision"]).json()
     edited = mutate(alice, "PATCH", path, removed["revision"], {
         "task_group": "下周联调\n确认发布计划", "description": "先核对清单", "work_days": [1, 3],
+        "status": "已完成", "category_name": "联调联试", "priority": "高",
     }).json()
     assert alice.get(week).json() == edited
     assert alice.get(f"/api/reports/{following}/users/2").json()["tasks"] == []
@@ -36,7 +39,53 @@ def test_next_week_plans_expire_and_leave_an_independent_work_detail(monkeypatch
     assert applied["plans"] == edited["plans"]
     detail, = applied["tasks"]
     assert detail["task_group"] == "下周联调\n确认发布计划" and detail["work_days"] == [1, 3]
+    assert (detail["status"], detail["description"]) == (None, "先核对清单")
+    card = next(card for card in alice.get("/api/board-tasks").json()["tasks"] if card["id"] == detail["board_task_id"])
+    assert (card["name"], card["category_name"], card["priority"], card["state"]) == (
+        "下周联调\n确认发布计划", "联调联试", "高", "inbox")
     assert alice.get(week).json() == applied
     changed = mutate(alice, "PATCH", f"{week}/tasks/{detail['id']}", applied["revision"], {"description": "联调已完成"}).json()
     assert changed["plans"] == edited["plans"]
     assert changed["tasks"][0]["description"] == "联调已完成"
+
+
+def test_copy_in_progress_reuses_card_and_rolls_over_latest_actual_status(monkeypatch):
+    current = date(2026, 11, 23)
+    following = current + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: current)
+    alice = client("alice")
+    board = "/api/board-tasks"
+    today, future = f"/api/weeks/{current}", f"/api/weeks/{following}"
+    created = mutate(alice, "POST", f"{today}/tasks", 0).json()
+    source, = created["tasks"]
+    detail_path = f"{today}/tasks/{source['id']}"
+    changed = mutate(alice, "PATCH", detail_path, created["revision"], {
+        "task_group": "跨周联调", "status": "40%", "description": "本周联调", "notes": "核对接口\n跟进反馈",
+    }).json()
+    card, = alice.get(board).json()["tasks"]
+    copy_path = f"{future}/plans/add-in-progress"
+    copied = mutate(alice, "POST", copy_path, 0, key="continue").json()
+    plan, = copied["plans"]
+    assert (plan["task_group"], plan["status"], plan["description"]) == ("跨周联调", "40%", "")
+    assert mutate(alice, "POST", copy_path, 0, key="continue").json() == copied
+    assert mutate(alice, "POST", copy_path, copied["revision"]).json() == {**copied, "no_source": True}
+    plan_path = f"{future}/plans/{plan['id']}"
+    planned = mutate(alice, "PATCH", plan_path, copied["revision"], {"status": "已完成"}).json()
+    assert alice.get(board).json()["tasks"] == [card]
+    assert mutate(alice, "PATCH", plan_path, planned["revision"], {
+        "priority": "高", "description": "继续联调\n跟进修复",
+    }).status_code == 200
+    assert alice.get(board).json()["tasks"][0]["priority"] == "高"
+    latest = alice.get(today).json()
+    assert latest["tasks"][0]["priority"] == "高"
+    assert latest["revision"] > changed["revision"]
+    assert mutate(alice, "PATCH", detail_path, latest["revision"], {"status": "70%"}).status_code == 200
+
+    current = following
+    active_card, = alice.get(board).json()["tasks"]
+    assert active_card["has_current_detail"] and active_card["id"] == card["id"]
+    week = alice.get(future).json()
+    detail, = week["tasks"]
+    assert (detail["status"], detail["description"], detail["notes"]) == ("70%", "继续联调\n跟进修复", "核对接口\n跟进反馈")
+    assert alice.get(future).json() == week
+    assert week["plans"][0]["status"] == "已完成"

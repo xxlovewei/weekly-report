@@ -10,7 +10,7 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
   await skipGuides(recipientPage)
   const bob = await signIn(recipientPage, 'bob')
   const weekPath = `/api/weeks/${mondayOf(todayShanghai())}`
-  const fixtureIds: number[] = []
+  const fixtureCards: number[] = []
   let receivedCard: number | undefined
   const names = ['甲', '乙', '丙'].map(name => `任务操作验证 ${Date.now()} ${name}`)
   const readWeek = async (request: APIRequestContext): Promise<WeekData> => {
@@ -20,17 +20,23 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
   }
   try {
     let week = await readWeek(page.request)
+    const baselineIds = week.tasks.map(task => task.id)
     const baseline = week.tasks.map(task => task.task_group)
+    const fixtureIds: number[] = []
     for (const task_group of names) {
       const created = await page.request.post(`${weekPath}/tasks?revision=${week.revision}`, { headers: alice.headers })
       await expect(created).toBeOK()
       week = await created.json()
-      const id = week.tasks.at(-1)!.id
+      const id = week.tasks[0].id
       fixtureIds.push(id)
+      fixtureCards.push(week.tasks[0].board_task_id!)
       const edited = await page.request.patch(`${weekPath}/tasks/${id}?revision=${week.revision}`, { headers: alice.headers, data: { task_group } })
       await expect(edited).toBeOK()
       week = await edited.json()
     }
+    await expect(await page.request.put(`${weekPath}/tasks/order?revision=${week.revision}`, {
+      headers: alice.headers, data: { task_ids: [...baselineIds, ...fixtureIds] },
+    })).toBeOK()
     const rows = page.locator('.task-row')
     const groups = page.getByRole('textbox', { name: '任务名称' })
     const assertOrder = (order: string[]) => expect.poll(() => groups.evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))).toEqual(order)
@@ -123,14 +129,12 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
           { headers: bob.headers },
         )).toBeOK()
       }
-      for (const [request, headers] of [[page.request, alice.headers], [bobContext.request, bob.headers]] as const) {
-        const week = await readWeek(request)
-        let revision = week.revision
-        for (const task of week.tasks.filter(item => fixtureIds.includes(item.id))) {
-          const removed = await request.delete(`${weekPath}/tasks/${task.id}?revision=${revision}`, { headers })
-          await expect(removed).toBeOK()
-          revision = (await removed.json()).revision
-        }
+      const board = await (await page.request.get('/api/board-tasks')).json()
+      for (const card of board.tasks.filter((item: { id: number }) => fixtureCards.includes(item.id))) {
+        await expect(await page.request.delete(
+          `/api/board-tasks/${card.id}?revision=${card.revision}&week_start=${board.current_week}`,
+          { headers: alice.headers },
+        )).toBeOK()
       }
     } finally {
       await bobContext.close()

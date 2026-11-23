@@ -24,13 +24,13 @@ def test_transfer_moves_one_task_to_inbox_and_restores_its_details_on_start():
     assert mutate(alice, "POST", f"{path}/transfer", 1, {"user_id": bob_id}).status_code == 409
     result = mutate(alice, "POST", f"{path}/transfer", source["revision"], {"user_id": bob_id})
     assert result.status_code == 200, result.text
-    assert result.json()["tasks"] == [{**source["tasks"][1], "position": 1}]
+    assert result.json()["tasks"] == [source["tasks"][0]]
     assert bob.get(week).json() == target
     message, = bob.get("/api/notifications").json()["items"]
     card = start_inbox_task(bob, card_id=message["target"]["board_task"])
     received = bob.get(week).json()
     assert received["tasks"] == [target["tasks"][0], {
-        **source["tasks"][0], "id": received["tasks"][1]["id"], "position": 2,
+        **source["tasks"][1], "id": received["tasks"][1]["id"], "position": 2,
         "transferred_by": "小王", "board_task_id": card["id"], "task_group": "转交测试",
     }]
     assert received["revision"] == target["revision"] + 1

@@ -513,8 +513,9 @@ def remove_category(category_id: int, auth=Depends(active_session), db: Session 
 
 @app.get("/api/weeks/{week_start}")
 def get_week(week_start: str, user_id: int | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
-    row = week_row(db, work_owner(db, auth[0], user_id), monday(week_start))
-    apply_current_plans(db, row)
+    owner, start = work_owner(db, auth[0], user_id), monday(week_start)
+    apply_due_plans(db, owner, start)
+    row = week_row(db, owner, start)
     payload = work_week_json(db, row)
     db.commit()
     return payload
@@ -526,7 +527,9 @@ def lock_task_changes(db: Session):
 def checked_week(db: Session, actor: User, week_start: str, expected: int, user_id: int | None = None):
     lock_task_changes(db)
     start = writable_week(actor, week_start)
-    row = week_row(db, work_owner(db, actor, user_id), start, create=True)
+    owner = work_owner(db, actor, user_id)
+    apply_due_plans(db, owner, start)
+    row = week_row(db, owner, start, create=True)
     bump(db, row, expected)
     return row
 
@@ -548,8 +551,8 @@ def add_task(week_start: str, revision: int, idempotency_key: str | None = Heade
     old = idempotent(db, auth[0].id, idempotency_key, operation)
     if old is not None: return old
     row = checked_week(db, auth[0], week_start, revision)
-    position = db.scalar(select(func.max(Task.position)).where(Task.week_id == row.id)) or 0
-    create_card_for_detail(db, row, Task(week_id=row.id, position=position + 1, task_group=""))
+    db.execute(update(Task).where(Task.week_id == row.id).values(position=Task.position + 1))
+    create_card_for_detail(db, row, Task(week_id=row.id, position=1, task_group=""))
     return finish(db, auth[0].id, idempotency_key, operation, work_week_json(db, row))
 
 def own_task(db: Session, task_id: int, week_id: int):
@@ -590,10 +593,10 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
     if issue is None:
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
     card = add_inbox_card(db, recipient.id, name=name[:200], category_name=task.category_name or "",
-                          priority=task.priority or "低", meeting_task_id=task.meeting_task_id,
+                          priority=task.priority or "低", notes=task.notes, meeting_task_id=task.meeting_task_id,
                           assignment_status=task.status if task.meeting_task_id else None,
                           transferred_by=sender.display_name, handoff={
-                              "description": task.description, "notes": task.notes, "work_days": task.work_days,
+                              "description": task.description, "work_days": task.work_days,
                               "status": task.status,
                           })
     if issue:
@@ -662,9 +665,9 @@ def remove_task(week_start: str, task_id: int, revision: int, user_id: int | Non
         raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     card = linked_card(db, task_id)
     ensure_no_task_history(db, row, card, current_work_week(), "删除")
-    delete_detail(db, task)
     if card:
-        db.delete(card)
+        card.revision += 1
+    delete_detail(db, task)
     db.flush(); payload = work_week_json(db, row); db.commit()
     return payload
 
@@ -699,6 +702,7 @@ def add_in_progress(week_start: str, revision: int, idempotency_key: str | None 
     if start != current_work_week():
         raise HTTPException(403, "只能将进行中的任务添加到当前周")
     owner = auth[0].id
+    apply_due_plans(db, owner, start)
     operation = f"board:import:{week_start}"
     old = idempotent(db, owner, idempotency_key, operation)
     if old is not None:
@@ -706,7 +710,9 @@ def add_in_progress(week_start: str, revision: int, idempotency_key: str | None 
     week = week_row(db, owner, start)
     cards = cards_missing_from_week(db, owner, week)
     if not cards:
-        return {**work_week_json(db, week), "no_source": True}
+        payload = {**work_week_json(db, week), "no_source": True}
+        db.commit()
+        return payload
     week = checked_week(db, auth[0], week_start, revision)
     position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
     for position, card in enumerate(cards, position + 1):
@@ -755,7 +761,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
     db.flush()
     meeting_copies = []
     for source, card in eligible:
-        copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id, transferred_by=source.transferred_by)
+        copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=card.notes if card else source.notes, meeting_task_id=source.meeting_task_id, transferred_by=source.transferred_by)
         db.add(copied)
         db.flush()
         if card:
@@ -796,8 +802,8 @@ def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db
     user = db.get(User, user_id)
     if not user or not user.has_role("user"):
         raise HTTPException(404, "用户不存在")
+    apply_due_plans(db, user_id, start)
     row = week_row(db, user_id, start)
-    apply_current_plans(db, row)
     payload = week_json(db, row)
     db.commit()
     return payload
@@ -1042,7 +1048,7 @@ from .scheduled_tasks import router as scheduled_tasks_router
 from .task_board import (add_inbox_card, attach_detail, board_detail, cards_missing_from_week, create_card_for_detail,
                          delete_detail, has_prior_detail, linked_card, prior_detail_exists, progress_status,
                          put_at_top, router as task_board_router, set_assignment_status, sync_card_from_detail)
-from .task_plans import apply_current_plans, plan_rows, router as task_plans_router
+from .task_plans import apply_due_plans, plan_rows, router as task_plans_router
 
 app.include_router(notifications_router)
 app.include_router(reviews_router)

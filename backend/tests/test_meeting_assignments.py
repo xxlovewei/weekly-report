@@ -202,8 +202,12 @@ def test_inbox_migration_preserves_existing_assignment_detail_and_message(monkey
     from .test_api import engine
 
     migration = import_module("migrations.versions.0018_task_plans_and_inbox")
+    sync_migration = import_module("migrations.versions.0020_task_plan_board_sync")
     with engine.begin() as connection:
-        monkeypatch.setattr(migration, "op", Operations(MigrationContext.configure(connection)))
+        operations = Operations(MigrationContext.configure(connection))
+        monkeypatch.setattr(migration, "op", operations)
+        monkeypatch.setattr(sync_migration, "op", operations)
+        sync_migration.downgrade()
         migration.downgrade()
         week_id = connection.scalar(text("INSERT INTO weeks (user_id, start_date, revision) VALUES (2, :start, 1) RETURNING id"),
                                     {"start": current_week()})
@@ -216,19 +220,21 @@ def test_inbox_migration_preserves_existing_assignment_detail_and_message(monkey
         """), {"meeting": meeting_id})
         task_id = connection.scalar(text("""
             INSERT INTO tasks (week_id, meeting_task_id, position, task_group, description, status, work_days, notes)
-            VALUES (:week, :meeting_task, 1, '历史指派', '已保存的个人进展', '50%', '[]', '') RETURNING id
+            VALUES (:week, :meeting_task, 1, '历史指派', '已保存的个人进展', '50%', '[]', '原备注') RETURNING id
         """), {"week": week_id, "meeting_task": meeting_task})
         connection.execute(text("""
             INSERT INTO notifications (user_id, kind, title, task_id, is_read)
             VALUES (2, '会议指派', '历史消息', :task, false)
         """), {"task": task_id})
         migration.upgrade()
+        sync_migration.upgrade()
 
     alice = client("alice")
     card, = alice.get("/api/board-tasks").json()["tasks"]
     detail, = alice.get(f"/api/weeks/{current_week()}").json()["tasks"]
     message, = alice.get("/api/notifications").json()["items"]
     assert card["meeting_id"] == meeting_id and card["state"] == "in_progress"
+    assert card["notes"] == "原备注"
     assert detail["id"] == task_id and detail["description"] == "已保存的个人进展"
     assert message["target"] == {"board_task": card["id"]}
 
