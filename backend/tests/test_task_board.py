@@ -84,6 +84,18 @@ def test_transfer_board_card_sends_one_notification_and_preserves_progress(state
     notification, = bob.get("/api/notifications").json()["items"]
     assert notification["kind"] == "转交任务"
     assert notification["target"] == {"board_task": received["id"]}
+    reminder = {"id": notification["id"], "card_id": received["id"], "kind": "转交任务"}
+    reminder_path = f"{board}/reminders/{notification['id']}"
+    assert alice.patch(reminder_path).status_code == 200
+    assert bob.get(board).json()["reminders"] == [reminder]
+    if state == "in_progress":
+        assert bob.patch(f"/api/notifications/{notification['id']}", json={"is_read": True}).status_code == 200
+        assert bob.get(board).json()["reminders"] == [reminder]
+    assert bob.patch(reminder_path).status_code == 200
+    assert bob.patch(reminder_path).status_code == 200
+    assert bob.get(board).json()["reminders"] == []
+    message, = bob.get("/api/notifications").json()["items"]
+    assert message["is_read"] == (state == "in_progress")
     if state == "in_progress":
         assert bob.patch(f"{board}/{received['id']}/status",
                          json={"state": state, "revision": received["revision"], "week_start": start}).status_code == 200

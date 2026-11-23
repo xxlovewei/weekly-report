@@ -26,6 +26,7 @@ interface Card extends CardFields {
   name_locked?: boolean
 }
 type Dialog = { kind: 'edit'; card?: Card } | { kind: 'remove' | 'return' | 'transfer'; card: Card }
+interface Reminder { id: number; card_id: number; kind: '转交任务' | '会议指派' }
 const dialogLabels = { edit: '保存', remove: '确认删除', return: '确认移回', transfer: '确认转交' }
 const props = defineProps<{ targetTask?: number | null; targetRefresh?: number }>()
 
@@ -41,7 +42,8 @@ const form = reactive<CardFields>({ name: '', category_name: '', priority: '低'
 const formError = ref('')
 const openedIssue = ref<number | null>(null)
 const people = ref<MeetingPerson[]>([]), peopleLoading = ref(false), recipientId = ref<number | null>(null)
-const arrival = ref(0), targetMissing = ref(false)
+const reminders = ref<Reminder[]>([]), targetMissing = ref(false)
+const shownReminders = new Set<number>()
 let createRequest: { body: string; key: string } | null = null
 let copyRequest: { cardId: number; key: string } | null = null
 let transferRequest: { recipient: number; key: string } | null = null
@@ -66,29 +68,55 @@ async function load() {
   } finally { loading.value = false }
 }
 async function refreshBoard() {
-  const board = await api<{ current_week: string; tasks: Card[] }>('/board-tasks')
+  const board = await api<{ current_week: string; tasks: Card[]; reminders?: Reminder[] }>('/board-tasks')
   cards.value = board.tasks
   weekStart.value = board.current_week
+  reminders.value = board.reminders ?? []
 }
 onMounted(load)
 watch([loading, () => props.targetTask, () => props.targetRefresh], async ([, target], [wasLoading], onCleanup) => {
   let active = true
-  onCleanup(() => { active = false })
+  let stop: (() => void) | undefined
+  onCleanup(() => { active = false; stop?.() })
   targetMissing.value = false
-  if (loading.value || !props.targetTask) return
-  // 看板已打开时，新收到的任务可能尚未进入当前列表。
-  if (!wasLoading && !cards.value.some(card => card.id === target)) {
+  if (loading.value || !weekStart.value) return
+  // 在已打开的看板上点击通知，重新读取卡片与尚未展示的引导。
+  if (!wasLoading && target) {
     try { await refreshBoard() }
     catch (cause) { if (active) error.value = message(cause); return }
     await nextTick()
   }
   if (!active) return
-  const card = document.getElementById(`board-task-${target}`)
-  if (!card) { targetMissing.value = !error.value; return }
-  arrival.value++
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  card.focus({ preventScroll: true })
-  card.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reducedMotion ? 'instant' : 'smooth' })
+  if (target) {
+    const element = document.getElementById(`board-task-${target}`)
+    targetMissing.value = !element
+    element?.focus({ preventScroll: true })
+    element?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+  }
+  const pending = [...reminders.value].sort((a, b) => Number(b.card_id === target) - Number(a.card_id === target))
+  const steps = pending.flatMap(reminder => {
+    const card = cards.value.find(item => item.id === reminder.card_id)
+    const element = document.getElementById(`board-task-${reminder.card_id}`)
+    if (!card || !element || shownReminders.has(reminder.id)) return []
+    const name = card.name || '未命名任务'
+    const transferred = reminder.kind === '转交任务'
+    const sender = card.transferred_by || '同事'
+    return [{
+      element,
+      title: transferred ? '收到转交任务' : '收到会议指派',
+      description: transferred ? `${sender}转交给你「${name}」。` : `会议指派给你「${name}」。`,
+      onShown: () => {
+        if (shownReminders.has(reminder.id)) return
+        shownReminders.add(reminder.id)
+        void api(`/board-tasks/reminders/${reminder.id}`, 'PATCH').catch(() => {
+          // 记录失败时保留服务端的待提醒状态，下次进入仍可查看。
+        })
+      },
+    }]
+  })
+  if (!steps.length) return
+  const module = await import('./sidebarTour').catch(() => undefined)
+  if (active && module) stop = module.startBoardTaskTour(steps)
 }, { flush: 'post' })
 
 function saveCard(card: Card) {
@@ -308,10 +336,6 @@ function drop(event: DragEvent, state: State) {
           </div>
           <span v-if="card.state === 'in_progress'" class="board-charge-value" role="meter" aria-label="完成状态"
             aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(card.status || '5%', 10)">{{ card.status || '5%' }}</span>
-          <div v-if="targetTask === card.id" :key="arrival" class="board-arrival" role="status">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>
-            <span>{{ card.transferred_by ? '转交给你的任务' : card.meeting_id ? '会议指派给你的任务' : '消息对应的任务' }}</span>
-          </div>
         </article>
       </div>
     </section>
@@ -380,34 +404,6 @@ function drop(event: DragEvent, state: State) {
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card.board-target { outline: 2px solid #13766a; outline-offset: 2px; }
-.board-arrival {
-  flex-basis: 100%; display: flex; align-items: center; gap: 7px;
-  padding: 4px 8px; border: 1px solid #abd9c7; border-radius: 4px;
-  background: linear-gradient(105deg, #e2f7ed, #f6fcf8); color: #164d43;
-  font-size: .8rem; font-weight: 700; line-height: 1.5; overflow: hidden;
-}
-.board-arrival svg {
-  inline-size: 17px; block-size: 17px; flex: none;
-  fill: #fff; stroke: #13766a; stroke-width: 1.7; stroke-linejoin: round;
-}
-/* 信封先落到卡片上，随后印出送达标记。动画在同一条带内完成。 */
-@media (prefers-reduced-motion: no-preference) {
-  .board-arrival { animation: board-arrival-stamp 620ms 140ms both; }
-  .board-arrival svg { animation: board-arrival-envelope 680ms cubic-bezier(.2,.8,.3,1) both; }
-  .board-arrival span { animation: board-arrival-label 400ms 260ms both; }
-}
-@keyframes board-arrival-envelope {
-  0% { opacity: 0; transform: translate(-20px, -12px) rotate(-32deg); }
-  62% { opacity: 1; transform: translate(3px, 2px) rotate(9deg); }
-  100% { transform: none; }
-}
-@keyframes board-arrival-stamp {
-  0%, 100% { box-shadow: inset 0 0 0 0 #32a88800; }
-  40% { box-shadow: inset 0 0 0 2px #32a88870; }
-}
-@keyframes board-arrival-label {
-  from { opacity: 0; transform: translateY(4px); }
-}
 .board-card { background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: var(--priority-edge-shadow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
 .board-card-title { display: flex; align-items: center; gap: 4px; min-width: 0; }

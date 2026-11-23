@@ -251,13 +251,12 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
     await expect(page).toHaveURL(/\/task-board\?task=\d+$/)
     const target = page.getByRole('region', { name: '任务箱' }).locator('.board-target')
     boardTaskId = Number(await target.getAttribute('data-card-id'))
-    await expect(target).toBeFocused()
     await expect(target).toContainText(name)
-    const arrival = target.getByRole('status').filter({ hasText: '转交给你的任务' })
-    await expect(arrival).toBeVisible()
-    await expect(arrival.locator('svg')).toHaveCSS('animation-name', /^board-arrival-envelope/)
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    await expect(arrival.locator('svg')).toHaveCSS('animation-name', 'none')
+    const guide = page.getByRole('dialog', { name: '收到转交任务' })
+    await expect(guide).toContainText(name)
+    await expect(target).toHaveClass(/driver-active-element/)
+    await guide.getByRole('button', { name: '完成' }).click()
+    await expect(guide).toHaveCount(0)
   } finally {
     try {
       if (boardTaskId && receiverHeaders) {

@@ -1,6 +1,54 @@
 import { expect, signIn, skipGuides, test } from './fixtures'
 import type { WeekData } from '../src/types'
 
+test('看板按条提示新任务，已提示的卡片再次进入时不重播', async ({ page }) => {
+  const tasks = ['接口交接 <待核对>', '会议安排', '资料转交'].map((name, index) => ({
+    id: index + 1, name, state: 'inbox', priority: '低', position: index,
+    transferred_by: index === 1 ? null : '小王',
+  }))
+  const pending = tasks.map(task => ({
+    id: task.id + 10, card_id: task.id, kind: task.id === 2 ? '会议指派' : '转交任务',
+  }))
+  const shown: number[] = []
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/auth/me')) return route.fulfill({ json: {
+      user: { id: 20, username: 'member', display_name: '测试成员', role: 'user', must_change_password: false },
+      csrf_token: 'test',
+    } })
+    if (path.endsWith('/board-tasks')) return route.fulfill({ json: {
+      current_week: '2026-11-23', tasks, reminders: pending.filter(item => !shown.includes(item.id)),
+    } })
+    if (path.includes('/board-tasks/reminders/')) {
+      shown.push(Number(path.split('/').at(-1)))
+      return route.fulfill({ json: { ok: true } })
+    }
+    return route.fulfill({ json: [] })
+  })
+
+  await page.goto('/task-board?task=2')
+  const meeting = page.getByRole('dialog', { name: '收到会议指派' })
+  await expect(meeting).toContainText('会议安排')
+  await expect(page.locator('#board-task-2')).toHaveClass(/driver-active-element/)
+  await expect.poll(() => [...shown]).toEqual([12])
+  await meeting.getByRole('button', { name: '关闭提醒' }).click()
+
+  await page.goto('/task-board')
+  const handoff = page.getByRole('dialog', { name: '收到转交任务' })
+  await expect(handoff).toContainText('接口交接 <待核对>')
+  await expect(page.locator('#board-task-1')).toHaveClass(/driver-active-element/)
+  await handoff.getByRole('button', { name: '下一条' }).click()
+  await expect(handoff).toContainText('资料转交')
+  await expect(page.locator('#board-task-3')).toHaveClass(/driver-active-element/)
+  await expect.poll(() => [...shown]).toEqual([12, 11, 13])
+  await handoff.getByRole('button', { name: '完成' }).click()
+
+  await page.goto('/task-board?task=2')
+  await expect(page.locator('#board-task-2')).toBeFocused()
+  await expect(meeting.or(handoff)).toHaveCount(0)
+  expect(shown).toEqual([12, 11, 13])
+})
+
 test('个人看板拖拽与明细双向同步，管理员可以代管明细', async ({ page, browser, baseURL }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const errors: string[] = []
