@@ -49,6 +49,47 @@ def test_board_move_and_week_status_sync():
     assert detail["status"] == "5%"
 
 
+@pytest.mark.parametrize("state", ["inbox", "in_progress"])
+def test_transfer_board_card_sends_one_notification_and_preserves_progress(state):
+    alice, bob = client("alice"), client("bob")
+    board = "/api/board-tasks"
+    start = alice.get(board).json()["current_week"]
+    week = f"/api/weeks/{start}"
+    bob_id = alice.get("/api/task-transfer-recipients").json()[0]["id"]
+    alice_id = bob.get("/api/task-transfer-recipients").json()[0]["id"]
+    card = alice.post(board, json={"name": "接口交接", "category_name": "其他", "priority": "高"}).json()
+    if state == "in_progress":
+        assert alice.patch(f"{board}/{card['id']}/status",
+                           json={"state": state, "revision": card["revision"], "week_start": start}).status_code == 200
+        source = alice.get(week).json()
+        detail, = source["tasks"]
+        assert mutate(alice, "PATCH", f"{week}/tasks/{detail['id']}", source["revision"], {
+            "description": "交接明细", "status": "50%", "work_days": [2],
+        }).status_code == 200
+        card, = alice.get(board).json()["tasks"]
+    source = alice.get(week).json()
+    path = f"{board}/{card['id']}/transfer?revision={card['revision']}&week_start={start}"
+    assert bob.post(path, json={"user_id": alice_id}).status_code == 404
+    assert alice.post(path, json={"user_id": alice_id}).status_code == 422
+    for _ in range(2):
+        result = alice.post(path, json={"user_id": bob_id}, headers={"Idempotency-Key": "transfer-card"})
+        assert result.status_code == 200, result.text
+    assert alice.get(board).json()["tasks"] == []
+    assert alice.get(week).json()["tasks"] == bob.get(week).json()["tasks"] == []
+    assert alice.get(week).json()["revision"] == source["revision"] + (state == "in_progress")
+    received, = bob.get(board).json()["tasks"]
+    assert (received["name"], received["state"], received["priority"], received["transferred_by"]) == (
+        "接口交接", "inbox", "高", "小王")
+    notification, = bob.get("/api/notifications").json()["items"]
+    assert notification["kind"] == "转交任务"
+    assert notification["target"] == {"board_task": received["id"]}
+    if state == "in_progress":
+        assert bob.patch(f"{board}/{received['id']}/status",
+                         json={"state": state, "revision": received["revision"], "week_start": start}).status_code == 200
+        detail, = bob.get(week).json()["tasks"]
+        assert (detail["description"], detail["status"], detail["work_days"]) == ("交接明细", "50%", [2])
+
+
 def test_week_add_copy_rename_and_delete_share_independent_cards():
     alice = client("alice")
     board = "/api/board-tasks"

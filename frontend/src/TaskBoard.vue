@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import { sharedTaskTypes } from './taskTypes'
-import type { Category, TaskPriority, WeekData } from './types'
+import type { Category, MeetingPerson, TaskPriority, WeekData } from './types'
 
 const columns = [
   { state: 'inbox', name: '任务箱' },
@@ -25,22 +25,26 @@ interface Card extends CardFields {
   transferred_by?: string | null
   name_locked?: boolean
 }
-type Dialog = { kind: 'edit'; card?: Card } | { kind: 'remove' | 'return'; card: Card }
+type Dialog = { kind: 'edit'; card?: Card } | { kind: 'remove' | 'return' | 'transfer'; card: Card }
+const dialogLabels = { edit: '保存', remove: '确认删除', return: '确认移回', transfer: '确认转交' }
 const props = defineProps<{ targetTask?: number | null; targetRefresh?: number }>()
 
 const cards = ref<Card[]>([])
 const categories = ref<Category[]>([])
 const weekStart = ref('')
 const loading = ref(true), busy = ref(false), error = ref('')
-const continuationNotice = ref('')
+const notice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低' })
 const formError = ref('')
 const openedIssue = ref<number | null>(null)
+const people = ref<MeetingPerson[]>([]), peopleLoading = ref(false), recipientId = ref<number | null>(null)
+const arrival = ref(0), targetMissing = ref(false)
 let createRequest: { body: string; key: string } | null = null
 let copyRequest: { cardId: number; key: string } | null = null
+let transferRequest: { recipient: number; key: string } | null = null
 const options = computed(() => [...new Set([...sharedTaskTypes, ...categories.value.map(category => category.name)])])
 const grouped = computed(() => columns.map(column => ({
   ...column, cards: cards.value.filter(card => card.state === column.state)
@@ -67,16 +71,24 @@ async function refreshBoard() {
   weekStart.value = board.current_week
 }
 onMounted(load)
-watch(() => [loading.value, props.targetTask, props.targetRefresh], () => {
+watch([loading, () => props.targetTask, () => props.targetRefresh], async ([, target], [wasLoading], onCleanup) => {
+  let active = true
+  onCleanup(() => { active = false })
+  targetMissing.value = false
   if (loading.value || !props.targetTask) return
-  const card = document.getElementById(`board-task-${props.targetTask}`)
-  if (!card) return
+  // 看板已打开时，新收到的任务可能尚未进入当前列表。
+  if (!wasLoading && !cards.value.some(card => card.id === target)) {
+    try { await refreshBoard() }
+    catch (cause) { if (active) error.value = message(cause); return }
+    await nextTick()
+  }
+  if (!active) return
+  const card = document.getElementById(`board-task-${target}`)
+  if (!card) { targetMissing.value = !error.value; return }
+  arrival.value++
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   card.focus({ preventScroll: true })
-  card.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'instant' : 'smooth' })
-  if (!reducedMotion) card.animate([
-    { backgroundColor: '#fff' }, { backgroundColor: '#f2ffac' }, { backgroundColor: '#fff' },
-  ], { duration: 800, iterations: 3 })
+  card.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reducedMotion ? 'instant' : 'smooth' })
 }, { flush: 'post' })
 
 function saveCard(card: Card) {
@@ -92,7 +104,7 @@ async function perform(job: () => Promise<void>, inDialog = false) {
   busy.value = true
   error.value = ''
   formError.value = ''
-  continuationNotice.value = ''
+  notice.value = ''
   try {
     await job()
     if (inDialog) dialog.value?.close()
@@ -107,7 +119,7 @@ function continueThisWeek() {
     const week = await api<WeekData>(weekPath)
     // 与本周工作共用批量续做接口，由服务端按卡片与周明细的关联去重。
     const result = await api<WeekData>(`${weekPath}/add-in-progress?revision=${week.revision}`, 'POST', undefined, newIdempotencyKey())
-    continuationNotice.value = result.no_source ? '进行中的任务均已加入本周工作。' : '已将进行中的任务加入本周工作。'
+    notice.value = result.no_source ? '进行中的任务均已加入本周工作。' : '已将进行中的任务加入本周工作。'
     await refreshBoard()
   })
 }
@@ -119,7 +131,29 @@ function open(nextAction: Dialog) {
     Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低' })
     createRequest = null
   }
+  if (nextAction.kind === 'transfer') {
+    people.value = []
+    recipientId.value = null
+    transferRequest = null
+    void loadRecipients()
+  }
   void nextTick(() => dialog.value?.showModal())
+}
+async function loadRecipients() {
+  const pending = action.value
+  peopleLoading.value = true
+  formError.value = ''
+  try {
+    const result = await api<MeetingPerson[]>('/task-transfer-recipients')
+    if (action.value === pending) people.value = result
+  } catch (cause) {
+    if (action.value === pending) formError.value = message(cause)
+  } finally {
+    if (action.value === pending) peopleLoading.value = false
+  }
+}
+function removeCard(id: number) {
+  cards.value = cards.value.filter(card => card.id !== id)
 }
 async function submit() {
   const pending = action.value
@@ -137,7 +171,14 @@ async function submit() {
       }
     } else if (pending.kind === 'remove') {
       await api(path(pending.card), 'DELETE')
-      cards.value = cards.value.filter(card => card.id !== pending.card.id)
+      removeCard(pending.card.id)
+    } else if (pending.kind === 'transfer') {
+      const person = people.value.find(item => item.id === recipientId.value)
+      if (!person) return
+      if (transferRequest?.recipient !== person.id) transferRequest = { recipient: person.id, key: newIdempotencyKey() }
+      await api(path(pending.card, '/transfer'), 'POST', { user_id: person.id }, transferRequest.key)
+      removeCard(pending.card.id)
+      notice.value = `已将「${pending.card.name || '未命名任务'}」送到 ${person.display_name} 的任务箱。`
     } else {
       await move(pending.card, 'inbox')
     }
@@ -212,7 +253,8 @@ function drop(event: DragEvent, state: State) {
   <div v-if="error" class="message error board-error" role="alert">
     {{ error }} <button type="button" class="mini-button" @click="load">重新载入</button>
   </div>
-  <p v-if="continuationNotice" class="message board-notice" role="status">{{ continuationNotice }}</p>
+  <p v-if="notice" class="message board-notice" role="status">{{ notice }}</p>
+  <p v-if="targetMissing" class="message board-notice" role="status">这条消息对应的任务已离开你的看板。</p>
   <div v-if="!loading && weekStart" class="board">
     <section v-for="column in grouped" :key="column.state" class="board-column panel"
       :class="{ 'board-drop-target': hovered === column.state }" :aria-label="column.name"
@@ -245,6 +287,11 @@ function drop(event: DragEvent, state: State) {
             </div>
           </div>
           <div class="board-card-actions">
+            <button v-if="card.state !== 'done'" type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
+              :disabled="busy || card.has_other_details" :title="card.has_other_details ? '已有历史周明细，无法转交' : '转交任务'"
+              @click="open({ kind: 'transfer', card })">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 15-3-7-8-3zM11 13l10-8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
             <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
               :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
@@ -260,6 +307,10 @@ function drop(event: DragEvent, state: State) {
           </div>
           <span v-if="card.state === 'in_progress'" class="board-charge-value" role="meter" aria-label="完成状态"
             aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(card.status || '5%', 10)">{{ card.status || '5%' }}</span>
+          <div v-if="targetTask === card.id" :key="arrival" class="board-arrival" role="status">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg>
+            <span>{{ card.transferred_by ? '转交给你的任务' : card.meeting_id ? '会议指派给你的任务' : '消息对应的任务' }}</span>
+          </div>
         </article>
       </div>
     </section>
@@ -268,7 +319,7 @@ function drop(event: DragEvent, state: State) {
 
   <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null" @cancel="busy && $event.preventDefault()">
     <form v-if="action" class="stack-form" @submit.prevent="submit">
-      <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : '移回任务箱' }}</h2>
+      <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : action.kind === 'transfer' ? '转交任务' : '移回任务箱' }}</h2>
       <template v-if="action.kind === 'edit'">
         <label>任务类型<select v-model="form.category_name" :required="!!form.category_name || action.card?.category_name !== ''" :disabled="busy">
           <option value="" disabled>{{ action.card?.category_name === '' ? '未选择' : '请选择任务类型' }}</option>
@@ -280,13 +331,24 @@ function drop(event: DragEvent, state: State) {
           <option value="高">高</option><option value="中">中</option><option value="低">低</option>
         </select></label>
       </template>
+      <template v-else-if="action.kind === 'transfer'">
+        <p>将「{{ action.card.name || '未命名任务' }}」送到接收人的任务箱。</p>
+        <p v-if="peopleLoading" role="status">正在加载接收人…</p>
+        <button v-else-if="!people.length && formError" type="button" class="secondary-button" @click="loadRecipients">重新加载接收人</button>
+        <p v-else-if="!people.length" role="status">暂无可转交的普通用户。</p>
+        <label v-else>接收人<select v-model="recipientId" :disabled="busy" required>
+          <option :value="null" disabled>请选择接收人</option>
+          <option v-for="person in people" :key="person.id" :value="person.id">{{ person.display_name }}（{{ person.username }}）</option>
+        </select></label>
+      </template>
       <p v-else-if="action.kind === 'return'">移回「{{ action.card.name }}」将删除它关联的本周任务明细。确认移回？</p>
       <p v-else>确认删除「{{ action.card.name }}」？<template v-if="action.card.has_current_detail"> 此操作也会删除它关联的本周任务明细。</template></p>
       <p v-if="formError" class="message error" role="alert">{{ formError }}</p>
       <div class="modal-actions">
         <button type="button" class="secondary-button" :disabled="busy" @click="dialog?.close()">取消</button>
-        <button type="submit" class="primary-button" :class="{ 'board-destructive': action.kind !== 'edit' }" :disabled="busy">
-          {{ action.kind === 'edit' ? '保存' : action.kind === 'return' ? '确认移回' : '确认删除' }}
+        <button type="submit" class="primary-button" :class="{ 'board-destructive': action.kind === 'remove' || action.kind === 'return' }"
+          :disabled="busy || (action.kind === 'transfer' && recipientId === null)">
+          {{ dialogLabels[action.kind] }}
         </button>
       </div>
     </form>
@@ -314,7 +376,35 @@ function drop(event: DragEvent, state: State) {
 .board-empty { padding: 14px 0; color: #555; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
-.board-card.board-target { outline: 2px solid #2781b8; outline-offset: 2px; }
+.board-card.board-target { outline: 2px solid #13766a; outline-offset: 2px; }
+.board-arrival {
+  flex-basis: 100%; display: flex; align-items: center; gap: 7px;
+  padding: 4px 8px; border: 1px solid #abd9c7; border-radius: 4px;
+  background: linear-gradient(105deg, #e2f7ed, #f6fcf8); color: #164d43;
+  font-size: .8rem; font-weight: 700; line-height: 1.5; overflow: hidden;
+}
+.board-arrival svg {
+  inline-size: 17px; block-size: 17px; flex: none;
+  fill: #fff; stroke: #13766a; stroke-width: 1.7; stroke-linejoin: round;
+}
+/* 信封先落到卡片上，随后印出送达标记。动画在同一条带内完成。 */
+@media (prefers-reduced-motion: no-preference) {
+  .board-arrival { animation: board-arrival-stamp 620ms 140ms both; }
+  .board-arrival svg { animation: board-arrival-envelope 680ms cubic-bezier(.2,.8,.3,1) both; }
+  .board-arrival span { animation: board-arrival-label 400ms 260ms both; }
+}
+@keyframes board-arrival-envelope {
+  0% { opacity: 0; transform: translate(-20px, -12px) rotate(-32deg); }
+  62% { opacity: 1; transform: translate(3px, 2px) rotate(9deg); }
+  100% { transform: none; }
+}
+@keyframes board-arrival-stamp {
+  0%, 100% { box-shadow: inset 0 0 0 0 #32a88800; }
+  40% { box-shadow: inset 0 0 0 2px #32a88870; }
+}
+@keyframes board-arrival-label {
+  from { opacity: 0; transform: translateY(4px); }
+}
 .board-card { background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: var(--priority-edge-shadow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
 .board-card-title { display: flex; align-items: center; gap: 4px; min-width: 0; }
