@@ -175,7 +175,8 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
     { id: 1, name: '接口联调与验收', status: '30%', priority: '高', has_current_detail: false },
     { id: 2, name: '采集数据清理', status: '70%', priority: '中', has_current_detail: false },
     { id: 3, name: '本周已有明细', status: '90%', priority: '低', has_current_detail: true },
-  ].map((task, position) => ({ ...task, state: 'in_progress', category_name: '其他', position, revision: 0, has_other_details: false }))
+    { id: 4, name: '接口联调与验收', status: null, priority: '高', has_current_detail: false },
+  ].map((task, position) => ({ ...task, state: task.status ? 'in_progress' : 'inbox', category_name: '其他', position, revision: 0, has_other_details: false }))
   const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
   let requests = 0
   await page.route('**/api/**', route => {
@@ -194,9 +195,15 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   })
   await page.goto('/task-board')
   const ongoing = page.getByRole('region', { name: '进行中' })
+  const inboxCard = page.getByRole('region', { name: '任务箱' }).getByRole('article').first()
+  const ongoingCard = ongoing.getByRole('article').first()
+  const expectSharedHeight = async () => {
+    expect((await ongoingCard.boundingBox())?.height).toBe((await inboxCard.boundingBox())?.height)
+  }
   const resume = ongoing.getByRole('button', { name: '继续本周工作', exact: true })
   await expect(ongoing.getByRole('article').getByRole('button', { name: '继续本周工作' })).toHaveCount(0)
   await expect(resume).toBeEnabled()
+  await expectSharedHeight()
   const meter = ongoing.getByRole('meter', { name: '完成状态' })
   await expect(meter).toHaveText(['30%', '70%', '90%'])
   await expect(meter.nth(1)).toHaveAttribute('aria-valuenow', '70')
@@ -214,4 +221,5 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   await page.setViewportSize({ width: 390, height: 650 })
   await meter.first().scrollIntoViewIfNeeded()
   await expect(meter.first()).toBeInViewport()
+  await expectSharedHeight()
 })

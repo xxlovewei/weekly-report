@@ -327,11 +327,6 @@ function drop(event: DragEvent, state: State) {
 .board-card-charging {
   position: relative;
   isolation: isolate;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  margin-inline-end: 5px;
-  padding-block-end: 20px;
   border-radius: 8px;
   color: #112d3e;
   background: #eaf1f6;
@@ -339,16 +334,16 @@ function drop(event: DragEvent, state: State) {
 .board-card-charging::after {
   content: '';
   position: absolute;
-  inset-inline-end: -6px;
+  inset-inline-end: -5px;
   inset-block-start: 50%;
   translate: 0 -50%;
-  inline-size: 5px;
+  inline-size: 4px;
   block-size: 23px;
   border-radius: 0 3px 3px 0;
   background: #426675;
   pointer-events: none;
 }
-.board-card-charging .icon-btn { padding-inline: 5px; }
+.board-card-charging .board-card-title strong { text-shadow: 0 0 3px #edf8f8, 0 0 5px #edf8f8; }
 /* 电量层独立于任务文字和操作区，拥有柔和的刻度与充电边缘。 */
 .board-charge-fill {
   position: absolute;
@@ -372,12 +367,16 @@ function drop(event: DragEvent, state: State) {
   transition: inline-size 430ms cubic-bezier(.2,.7,.25,1);
 }
 @keyframes board-charge-in { from { inline-size: 0; } }
+/* 百分比和填充层共用卡片背景，卡片高度由任务内容决定。 */
 .board-charge-value {
-  grid-column: 1 / -1;
-  justify-self: center;
-  translate: 0 -6px;
-  color: #174c5e;
-  font: 800 clamp(30px, 4vw, 42px)/1 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: #174c5e94;
+  font: 800 clamp(30px, 4vw, 38px)/1 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.075em;
   text-shadow: 0 1px #ffffffa8;
