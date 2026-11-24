@@ -90,7 +90,7 @@ hermes cron create "30 8 * * *" --name daily-open-code-review-zhoubao --script z
 
 ## 发布版本号
 
-登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停、点击或键盘聚焦侧栏版本号时，默认显示当前版本的更新说明。可用左右箭头按版本号查看历史，按 Esc 关闭。本次版本为 `2.3.1`。
+登录后的侧栏版本号读取 `frontend/package.json` 的 `version`。鼠标悬停、点击或键盘聚焦侧栏版本号时，默认显示当前版本的更新说明。可用左右箭头按版本号查看历史，按 Esc 关闭。本次版本为 `2.4.0`。
 
 发版说明省略引导功能相关的改动。每次生产发版先将变更描述写入一个 UTF-8 文本文件，再从仓库根目录执行：
 
@@ -102,10 +102,10 @@ python scripts/prepare_release.py 1.2.6 --notes-file release-notes.txt
 
 准备完成后，按生产部署流程构建并部署 **API 和 Web 两个镜像**。API 启动依次执行数据库迁移、发版记录入库、启动服务；更新内容写入 `release_records` 表，唯一版本号确保重复启动不重复记录。以后每次生产发版都需要更新 API 镜像，使本次说明自动入库。仅更新 Web 镜像会遗漏新版本的发版记录。
 
-生产 API 和 Web 健康检查、页面版本及发版记录都核验通过后，在生产目录执行以下命令，向在线用户推送「版本v2.3.1已更新🎉，请刷新页面🔄️体验吧」。把示例版本替换为本次发布版本。
+生产 API 和 Web 健康检查、页面版本及发版记录都核验通过后，在生产目录执行以下命令，向在线用户推送「版本v2.4.0已更新🎉，请刷新页面🔄️体验吧」。把示例版本替换为本次发布版本。
 
 ```sh
-docker compose -p zhoubao-server -f compose.yaml -f compose.server.yaml exec -T api python -m app.release_announcement 2.3.1
+docker compose -p zhoubao-server -f compose.yaml -f compose.server.yaml exec -T api python -m app.release_announcement 2.4.0
 ```
 
 命令可以安全重试，同一版本只发布一次。已经加载该版本的页面会跳过提示，短暂断线的旧页面可以在十分钟内补收。迁移 `0017_release_announcement` 保存实际通知时间。
