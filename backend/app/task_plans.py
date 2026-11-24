@@ -88,6 +88,17 @@ def checked_plan(db, actor, week_start, revision, plan_id=None):
     return week, plan
 
 
+def shift_plans_down(db: Session, week: Week):
+    db.execute(update(TaskPlan).where(TaskPlan.week_id == week.id).values(position=TaskPlan.position + 1))
+
+
+def add_card_plan(db: Session, week: Week, card: BoardTask, position: int):
+    # 复用原卡片，任务进展和工作日期留给下周计划填写。
+    status = progress_status(db, card) if card.state == "in_progress" else None
+    db.add(TaskPlan(week_id=week.id, board_task_id=card.id, position=position, task_group=card.name,
+                    category_name=card.category_name or None, priority=card.priority, status=status))
+
+
 @router.post("", status_code=201)
 def add_plan(week_start: str, revision: int, idempotency_key: str | None = Header(default=None),
              auth=Depends(main.self_work_write), db: Session = Depends(get_db)):
@@ -98,7 +109,7 @@ def add_plan(week_start: str, revision: int, idempotency_key: str | None = Heade
     if old is not None:
         return old
     week, _ = checked_plan(db, actor, week_start, revision)
-    db.execute(update(TaskPlan).where(TaskPlan.week_id == week.id).values(position=TaskPlan.position + 1))
+    shift_plans_down(db, week)
     card = add_inbox_card(db, actor.id, name="")
     db.add(TaskPlan(week_id=week.id, position=1, board_task_id=card.id))
     db.flush()
@@ -123,7 +134,9 @@ def copy_in_progress(week_start: str, revision: int, idempotency_key: str | None
     if not sources:
         return {**main.work_week_json(db, week), "no_source": True}
     week, _ = checked_plan(db, auth[0], week_start, revision)
-    append_card_plans(db, week, sources)
+    last_position = db.scalar(select(func.max(TaskPlan.position)).where(TaskPlan.week_id == week.id)) or 0
+    for position, card in enumerate(sources, last_position + 1):
+        add_card_plan(db, week, card, position)
     return main.finish(db, owner, idempotency_key, operation, main.work_week_json(db, week))
 
 
@@ -145,17 +158,10 @@ def add_plan_from_board(week_start: str, card_id: int, revision: int,
     if week and db.scalar(select(TaskPlan.id).where(TaskPlan.week_id == week.id, TaskPlan.board_task_id == card.id)):
         return main.work_week_json(db, week)
     week, _ = checked_plan(db, auth[0], week_start, revision)
-    append_card_plans(db, week, [card])
+    # 单张看板卡片加入时排在第一行，保留已有计划的相对顺序。
+    shift_plans_down(db, week)
+    add_card_plan(db, week, card, position=1)
     return main.finish(db, owner, idempotency_key, operation, main.work_week_json(db, week))
-
-
-def append_card_plans(db: Session, week: Week, cards: list[BoardTask]):
-    position = db.scalar(select(func.max(TaskPlan.position)).where(TaskPlan.week_id == week.id)) or 0
-    for position, card in enumerate(cards, position + 1):
-        # 复用原卡片，任务进展和工作日期留给下周计划填写。
-        status = progress_status(db, card) if card.state == "in_progress" else None
-        db.add(TaskPlan(week_id=week.id, board_task_id=card.id, position=position, task_group=card.name,
-                        category_name=card.category_name or None, priority=card.priority, status=status))
 
 
 @router.put("/order")

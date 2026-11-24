@@ -363,8 +363,8 @@ function open(nextAction: Dialog) {
   }
   void nextTick(() => dialog.value?.showModal())
 }
-function editInboxCard(event: MouseEvent, card: Card) {
-  if (planMode.value || card.state !== 'inbox' || (event.target instanceof Element && event.target.closest('button, a'))) return
+function editInboxCard(event: MouseEvent | KeyboardEvent, card: Card) {
+  if (card.state !== 'inbox' || (event.target instanceof Element && event.target.closest('button, a'))) return
   open({ kind: 'edit', card })
 }
 async function loadRecipients() {
@@ -549,10 +549,12 @@ function drop(event: DragEvent, state: State) {
             <article v-for="card in group.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
               tabindex="0" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state !== 'inbox' }"
               :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="canDrag(card)"
+              :aria-keyshortcuts="planMode && card.state === 'inbox' ? 'Enter' : undefined"
               :aria-describedby="previewId === card.id ? 'board-task-preview' : undefined"
               @pointerenter="schedulePreview($event, card)" @pointerleave="leavePreview"
               @focus="schedulePreview($event, card)" @focusout="leavePreview"
               @dblclick="editInboxCard($event, card)"
+              @keydown.enter.self="planMode && editInboxCard($event, card)"
               @dragstart="startDrag($event, card)" @dragend="resetDrag">
               <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true"
                 :class="{ 'board-charge-adjusting': progressDraft?.cardId === card.id }" :style="{ '--charge': chargeValue(card) }" />
@@ -720,9 +722,10 @@ function drop(event: DragEvent, state: State) {
 .board-plan .board-card-group { gap: 8px; }
 .board-plan .board-empty { padding: 0; }
 .board-plan .board-card {
-  /* 预留现有最大秒表和卡片内边距的高度，无工时的卡片也保持等高。 */
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; block-size: 90px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; block-size: 60px; padding-block: 4px;
 }
+/* 40px 宽的秒表符合原比例，能放进卡片的 50px 内容高度。 */
+.board-plan .board-card-estimate { max-inline-size: 40px; }
 .board-plan .board-card-content { justify-items: stretch; }
 .board-plan .board-card-title strong { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-plan .board-card[draggable="false"] { cursor: default; }

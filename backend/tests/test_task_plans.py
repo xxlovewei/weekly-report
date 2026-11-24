@@ -112,8 +112,13 @@ def test_add_plan_from_board_reuses_owned_active_card_once(monkeypatch):
     assert mutate(alice, "POST", path, added["revision"]).json() == added
     assert alice.get(board).json()["tasks"] == [card]
     assert alice.get(week).json() == added
+    newest = alice.post(board, json={"name": "优先安排", "category_name": "联调联试", "priority": "中"}).json()
+    latest = mutate(alice, "POST", f"{week}/plans/from-board/{newest['id']}", added["revision"]).json()
+    assert [(row["board_task_id"], row["position"]) for row in latest["plans"]] == [(newest["id"], 1), (card["id"], 2)]
+    assert mutate(alice, "POST", path, latest["revision"]).json() == latest
+    assert alice.get(week).json() == latest
     completed = alice.patch(f"{board}/{card['id']}/status", json={
         "state": "done", "revision": card["revision"], "week_start": current.isoformat(),
     })
     assert completed.status_code == 200
-    assert mutate(alice, "POST", path, added["revision"]).status_code == 404
+    assert mutate(alice, "POST", path, latest["revision"]).status_code == 404
