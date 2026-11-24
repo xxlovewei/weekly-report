@@ -1,6 +1,60 @@
 import { expect, signIn, skipGuides, test } from './fixtures'
 import type { WeekData } from '../src/types'
 
+test('看板延时展示任务详情，预估人天居中显示在秒表内', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: {
+      user: { id: 42, username: 'member', display_name: '测试成员', role: 'user', must_change_password: false },
+      csrf_token: 'test',
+    } })
+    if (pathname.endsWith('/board-tasks')) return route.fulfill({ json: {
+      current_week: '2026-11-23', tasks: [
+        { id: 1, name: '接口联调', state: 'in_progress', status: '60%', category_name: '联调联试', priority: '高', notes: '核对请求字段\n验证异常返回', estimated_days: '0.125', position: 0 },
+        { id: 2, name: '整理资料', state: 'done', completed_week: '2026-11-23', priority: '低', estimated_days: null, position: 0 },
+      ],
+    } })
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/task-board')
+  const card = page.getByRole('article', { name: '接口联调，优先级高' })
+  const done = page.getByRole('article', { name: '整理资料，优先级低' })
+  const estimate = card.getByRole('img', { name: '预估 0.125 人天' })
+  const preview = page.getByRole('tooltip').filter({ hasText: '任务类型' })
+  await expect(estimate).toHaveText('0.125')
+  await expect(done.getByRole('img')).toHaveCount(0)
+  expect(await estimate.evaluate(element => {
+    const image = element.querySelector('img')!
+    const number = element.querySelector('span')!
+    const face = image.getBoundingClientRect()
+    const text = number.getBoundingClientRect()
+    return image.naturalWidth > 0 && text.width >= number.scrollWidth &&
+      Math.abs(text.x + text.width / 2 - (face.x + face.width / 2)) < 1 &&
+      Math.abs(text.y + text.height / 2 - (face.y + face.height * 0.6)) < 1
+  })).toBe(true)
+
+  await card.hover()
+  await expect(preview).toBeHidden()
+  await done.hover()
+  await expect(preview).toBeHidden()
+  await expect(preview).toContainText('整理资料')
+  await expect(preview).not.toContainText('预估工时')
+  await card.hover()
+  // 在一秒阈值之前，详情仍应保持隐藏。
+  await page.waitForTimeout(500)
+  await expect(preview).toBeHidden()
+  await expect(preview).toContainText('接口联调')
+  await expect(preview).toContainText('联调联试')
+  await expect(preview).toContainText('进行中 · 60%')
+  await expect(preview).toContainText('0.125 人天')
+  await expect(preview).toContainText('核对请求字段\n验证异常返回')
+  await preview.hover()
+  await expect(preview).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(preview).toBeHidden()
+})
+
 test('看板按条提示新任务，已提示的卡片再次进入时不重播', async ({ page }) => {
   const tasks = ['接口交接 <待核对>', '会议安排', '资料转交'].map((name, index) => ({
     id: index + 1, name, state: 'inbox', priority: '低', position: index,
@@ -277,7 +331,7 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   await estimateField.fill('0.5')
   await save.click()
   const newCard = board.getByRole('article', { name: '预估工时示例，优先级低' })
-  await expect(newCard).toContainText('预估 0.5 人天')
+  await expect(newCard.getByRole('img', { name: '预估 0.5 人天' })).toHaveText('0.5')
   expect(submittedEstimates).toEqual(['0.5'])
   const buttonTop = (await addButton.boundingBox())!.y
   await lists.first().hover()

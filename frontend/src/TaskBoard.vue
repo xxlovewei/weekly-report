@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
+import stopwatch from './assets/task-stopwatch.png'
 import { addDays } from './dates'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import { sharedTaskTypes } from './taskTypes'
@@ -41,6 +42,12 @@ const loading = ref(true), busy = ref(false), error = ref('')
 const notice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
+const previewId = ref<number | null>(null)
+const previewPanel = ref<HTMLElement | null>(null)
+const previewStyle = ref<Record<string, string>>({})
+const previewCard = computed(() => cards.value.find(card => card.id === previewId.value))
+let previewTimer: number | undefined
+let previewAnchor: HTMLElement | null = null
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低', notes: '' })
 const estimatedDays = ref('')
@@ -82,6 +89,59 @@ function chargeValue(card: Card) {
   return card.state === 'done' ? '100%' : card.status || '5%'
 }
 
+function cancelPreviewTimer() { window.clearTimeout(previewTimer) }
+
+function closePreview() {
+  cancelPreviewTimer()
+  previewId.value = null
+  previewAnchor = null
+}
+
+function schedulePreview(event: PointerEvent | FocusEvent, card: Card) {
+  const anchor = event.currentTarget as HTMLElement
+  if (busy.value || dragged.value !== null || action.value || openedIssue.value !== null) return
+  if ('pointerType' in event ? event.pointerType === 'touch' : !anchor.matches(':focus-visible')) return
+  if (previewId.value === card.id) { cancelPreviewTimer(); return }
+  closePreview()
+  previewAnchor = anchor
+  previewTimer = window.setTimeout(() => {
+    if (!anchor.isConnected) { closePreview(); return }
+    // 固定定位避开看板列的滚动裁切，底部空间不足时在卡片上方展开。
+    const rect = anchor.getBoundingClientRect()
+    const { clientWidth, clientHeight } = document.documentElement
+    const width = Math.min(340, clientWidth - 16)
+    const below = clientHeight - rect.bottom - 8
+    const above = rect.top - 8
+    const upward = below < Math.min(260, above)
+    previewStyle.value = {
+      width: `${width}px`, left: `${Math.max(8, Math.min(rect.left, clientWidth - width - 8))}px`,
+      maxHeight: `${upward ? above : below}px`,
+      ...(upward ? { bottom: `${clientHeight - rect.top}px` } : { top: `${rect.bottom}px` }),
+    }
+    previewId.value = card.id
+  }, 1000)
+}
+
+function leavePreview(event: PointerEvent | FocusEvent) {
+  if (event.currentTarget !== previewAnchor && event.currentTarget !== previewPanel.value) return
+  if ('pointerType' in event && previewAnchor?.matches(':focus-visible')) return
+  if (event.relatedTarget instanceof Node &&
+    (previewPanel.value?.contains(event.relatedTarget) || previewAnchor?.contains(event.relatedTarget))) return
+  if (previewId.value === null) closePreview()
+  else {
+    cancelPreviewTimer()
+    previewTimer = window.setTimeout(closePreview, 120)
+  }
+}
+
+function dismissPreviewOutside(event: Event) {
+  if (!(event.target instanceof Node) || !previewPanel.value?.contains(event.target)) closePreview()
+}
+
+function escapePreview(event: KeyboardEvent) {
+  if (event.key === 'Escape') closePreview()
+}
+
 function stepEstimate(direction: 1 | -1) {
   const days = estimatedDayParts.value
   if (!days || (direction < 0 && !canDecreaseEstimate.value)) return
@@ -108,7 +168,20 @@ async function refreshBoard() {
   weekStart.value = board.current_week
   reminders.value = board.reminders ?? []
 }
-onMounted(load)
+onMounted(() => {
+  document.addEventListener('keydown', escapePreview)
+  document.addEventListener('scroll', dismissPreviewOutside, true)
+  document.addEventListener('pointerdown', dismissPreviewOutside, true)
+  window.addEventListener('resize', closePreview)
+  void load()
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', escapePreview)
+  document.removeEventListener('scroll', dismissPreviewOutside, true)
+  document.removeEventListener('pointerdown', dismissPreviewOutside, true)
+  window.removeEventListener('resize', closePreview)
+  closePreview()
+})
 watch([loading, () => props.targetTask, () => props.targetRefresh], async ([, target], [wasLoading], onCleanup) => {
   let active = true
   let stop: (() => void) | undefined
@@ -169,6 +242,7 @@ function path(card: Card, suffix = '') {
 }
 async function perform(job: () => Promise<void>, inDialog = false) {
   if (busy.value || loading.value) return
+  closePreview()
   busy.value = true
   error.value = ''
   formError.value = ''
@@ -192,6 +266,7 @@ function continueThisWeek() {
   })
 }
 function open(nextAction: Dialog) {
+  closePreview()
   action.value = nextAction
   formError.value = ''
   if (nextAction.kind === 'edit') {
@@ -279,6 +354,7 @@ function requestMove(card: Card, state: State) {
 }
 function startDrag(event: DragEvent, card: Card) {
   if (busy.value || !event.dataTransfer) { event.preventDefault(); return }
+  closePreview()
   dragged.value = card.id
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('application/x-zhoubao-board-card', String(card.id))
@@ -366,8 +442,11 @@ function drop(event: DragEvent, state: State) {
             <h3 v-if="group.label" class="board-week-heading">{{ group.label }}</h3>
             <p v-if="!group.cards.length" class="board-empty">暂无任务</p>
             <article v-for="card in group.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
-              tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state !== 'inbox' }"
+              tabindex="0" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state !== 'inbox' }"
               :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
+              :aria-describedby="previewId === card.id ? 'board-task-preview' : undefined"
+              @pointerenter="schedulePreview($event, card)" @pointerleave="leavePreview"
+              @focus="schedulePreview($event, card)" @focusout="leavePreview"
               @dragstart="startDrag($event, card)" @dragend="resetDrag">
               <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': chargeValue(card) }" />
               <div class="board-card-content">
@@ -380,9 +459,13 @@ function drop(event: DragEvent, state: State) {
                     title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = card.review_issue_id">
                     <span aria-hidden="true">i</span>
                   </button>
+                  <span v-if="card.estimated_days" class="board-card-estimate" role="img"
+                    :aria-label="`预估 ${card.estimated_days} 人天`" :style="{ '--estimate-length': card.estimated_days.length }">
+                    <img :src="stopwatch" alt="" draggable="false" />
+                    <span aria-hidden="true" :class="{ 'board-estimate-compact': card.estimated_days.length > 3 }">{{ card.estimated_days }}</span>
+                  </span>
                   <strong>{{ card.name || '未命名任务' }}</strong>
                 </div>
-                <small v-if="card.estimated_days" class="board-card-estimate">预估 {{ card.estimated_days }} 人天</small>
               </div>
               <div v-if="card.state !== 'done'" class="board-card-actions">
                 <button type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
@@ -411,6 +494,21 @@ function drop(event: DragEvent, state: State) {
       </div>
     </section>
   </div>
+  <Teleport to="body">
+    <div v-if="previewCard" id="board-task-preview" ref="previewPanel" class="board-task-preview" role="tooltip"
+      :style="previewStyle" @pointerenter="cancelPreviewTimer" @pointerleave="leavePreview">
+      <strong class="preline">{{ previewCard.name || '未命名任务' }}</strong>
+      <dl>
+        <dt>任务类型</dt><dd>{{ previewCard.category_name || '未选择' }}</dd>
+        <dt>优先级</dt><dd>{{ previewCard.priority }}</dd>
+        <dt>状态</dt><dd>{{ columns.find(column => column.state === previewCard?.state)?.name }}<template v-if="previewCard.state === 'in_progress'"> · {{ chargeValue(previewCard) }}</template></dd>
+        <template v-if="previewCard.completed_week"><dt>完成周</dt><dd>{{ previewCard.completed_week }}</dd></template>
+        <template v-if="previewCard.estimated_days"><dt>预估工时</dt><dd>{{ previewCard.estimated_days }} 人天</dd></template>
+        <template v-if="previewCard.transferred_by"><dt>转交人</dt><dd>{{ previewCard.transferred_by }}</dd></template>
+        <dt>备注</dt><dd class="preline">{{ previewCard.notes || '无' }}</dd>
+      </dl>
+    </div>
+  </Teleport>
   <ReviewIssueDialog v-if="openedIssue !== null" :issue-id="openedIssue" @close="openedIssue = null" />
 
   <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null" @cancel="busy && $event.preventDefault()">
@@ -511,7 +609,22 @@ function drop(event: DragEvent, state: State) {
 .board-card-title > :not(strong) { flex: none; }
 .board-card-title .task-review-info { width: 18px; height: 18px; }
 .board-card-content strong { white-space: pre-wrap; }
-.board-card-estimate { font-size: .75rem; }
+.board-card-estimate { position: relative; width: clamp(30px, calc(var(--estimate-length) * 6px), 54px); aspect-ratio: 116 / 144; }
+.board-card-estimate img { display: block; width: 100%; }
+/* 表盘圆心在素材高度的 60%，上部按钮不参与文字居中。 */
+.board-card-estimate > span {
+  position: absolute; inset: 60% auto auto 50%; translate: -50% -50%; max-width: 76%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #111; font: 700 11px/1 Arial, sans-serif;
+}
+.board-card-estimate > .board-estimate-compact { font-size: 8px; }
+.board-task-preview {
+  position: fixed; z-index: 19; overflow: auto; overscroll-behavior: contain;
+  padding: 12px; border: 2px solid #222; box-shadow: 4px 4px 0 #000; background: #fff;
+  color: #222; overflow-wrap: anywhere;
+}
+.board-task-preview dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 8px 0 0; font-size: .85rem; }
+.board-task-preview dt { font-weight: 700; }
+.board-task-preview dd { margin: 0; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .board-notice { margin: 0 0 8px; }
