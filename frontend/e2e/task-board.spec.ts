@@ -138,17 +138,28 @@ test('新增和复制周任务同步到看板，删除当周明细保留卡片',
 
 test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 780 })
-  await signIn(page, 'alice')
+  await page.context().grantPermissions(['notifications'])
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   const columns = ['任务箱', '进行中', '已完成']
+  const currentWeek = '2027-01-04'
+  // 覆盖无记录的旧卡片、跨年的上周和更早分组。
+  const completedWeeks = [null, '2026-12-21', '2026-12-28', ...Array<string>(21).fill(currentWeek)]
   const tasks = ['inbox', 'in_progress', 'done'].flatMap((state, column) =>
     Array.from({ length: 24 }, (_, position) => ({
       id: column * 24 + position + 1, name: `${columns[column]}任务 ${position + 1}`, state,
       category_name: '其他', priority: '低', position, revision: 0,
       has_current_detail: state !== 'inbox', has_other_details: false,
+      completed_week: state === 'done' ? completedWeeks[position] : null,
     })),
   )
-  await page.route('**/api/board-tasks', route => route.fulfill({ json: { current_week: '2026-11-23', tasks } }))
-  await page.getByRole('button', { name: '任务看板', exact: true }).click()
+  const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
+    if (pathname.endsWith('/board-tasks')) return route.fulfill({ json: { current_week: currentWeek, tasks } })
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/task-board')
   const board = page.locator('.board')
   const lists = board.locator('.board-card-list')
   await expect(lists).toHaveCount(3)
@@ -179,12 +190,34 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   const resized = await columnSizes()
   for (const [index, size] of resized.entries()) expect(size.height).toBeLessThan(original[index].height)
 
+  const done = board.getByRole('region', { name: '已完成', exact: true })
+  const thisWeek = done.getByRole('region', { name: '本周', exact: true })
+  const lastWeek = done.getByRole('region', { name: '上周', exact: true })
+  const earlier = done.getByRole('region', { name: '更早', exact: true })
+  const history = done.getByRole('button', { name: '展开更多（2）' })
+  await expect(thisWeek.getByRole('article')).toHaveCount(21)
+  await expect(lastWeek.getByRole('article')).toContainText('已完成任务 3')
+  await expect(earlier).toHaveCount(0)
+  const meters = thisWeek.getByRole('meter', { name: '完成状态' })
+  await expect(meters.first()).toHaveText('100%')
+  await expect(meters.first()).toHaveAttribute('aria-valuenow', '100')
+  expect(await thisWeek.locator('.board-charge-fill').first().evaluate(fill =>
+    Math.round(parseFloat(getComputedStyle(fill, '::before').width) / fill.getBoundingClientRect().width * 100),
+  )).toBe(100)
+  await history.click()
+  await expect(earlier.getByRole('article')).toHaveCount(2)
+  await done.getByRole('button', { name: '收起更早任务' }).click()
+  await expect(earlier).toHaveCount(0)
+
   await page.setViewportSize({ width: 390, height: 650 })
-  const done = board.getByRole('region', { name: '已完成' })
-  await done.getByRole('heading').scrollIntoViewIfNeeded()
-  await expect(done.getByRole('heading')).toBeInViewport()
+  const doneHeading = done.getByRole('heading', { name: '已完成', exact: true })
+  await doneHeading.scrollIntoViewIfNeeded()
+  await expect(doneHeading).toBeInViewport()
   await done.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(done.getByRole('article').last()).toBeInViewport()
+
+  await page.goto('/task-board?task=50')
+  await expect(earlier.getByRole('article', { name: '已完成任务 2，优先级低' })).toBeFocused()
 })
 
 test('进行中栏统一续做，电池显示各卡片的完成百分比', async ({ page }) => {

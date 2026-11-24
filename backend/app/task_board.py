@@ -54,6 +54,8 @@ def put_at_top(db: Session, card: BoardTask, state: str):
     if card.state != state:
         card.position = position_at_edge(db, card.user_id, state, top=True)
         card.state = state
+        # 只在状态转换时记录完成周，编辑和排序不会改写历史归属。
+        card.completed_week = main.current_work_week() if state == "done" else None
 
 
 def board_detail(db: Session, card_id: int, week_id: int):
@@ -131,6 +133,7 @@ def card_json(card: BoardTask, *, current=False, historical=False, status: str |
     status = (percentage(status) or "5%") if card.state == "in_progress" else "已完成" if card.state == "done" else None
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority, "notes": card.notes,
             "state": card.state, "status": status, "position": card.position, "revision": card.revision,
+            "completed_week": card.completed_week.isoformat() if card.completed_week else None,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
             "review_issue_id": card.review_issue.id if card.review_issue else None,
             "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),

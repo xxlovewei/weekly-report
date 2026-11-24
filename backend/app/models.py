@@ -104,6 +104,7 @@ class BoardTask(Base):
     category_name: Mapped[str] = mapped_column(String(100))
     priority: Mapped[str] = mapped_column(String(4))
     state: Mapped[str] = mapped_column(String(16), default="inbox")
+    completed_week: Mapped[date | None] = mapped_column(Date)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     position: Mapped[int] = mapped_column(BigInteger, default=0)
     meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", ondelete="CASCADE"))

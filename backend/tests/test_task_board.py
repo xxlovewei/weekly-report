@@ -23,7 +23,7 @@ def test_work_week_access_and_admin_member_edit():
     assert admin.delete(f"{week}/tasks/{task_id}?revision=2&user_id=2").status_code == 200
 
 
-def test_board_move_and_week_status_sync():
+def test_board_move_and_week_status_sync(monkeypatch):
     alice, bob = client("alice"), client("bob")
     board = "/api/board-tasks"
     week = f"/api/weeks/{current_week()}"
@@ -35,6 +35,7 @@ def test_board_move_and_week_status_sync():
     assert bob.patch(path, json=body).status_code == 404
     moved = alice.patch(path, json=body)
     assert moved.status_code == 200 and moved.json()["status"] == "已完成"
+    assert moved.json()["completed_week"] == str(current_week())
     assert alice.patch(path, json=body).status_code == 409
     detail, = (data := alice.get(week).json())["tasks"]
     assert (detail["task_group"], detail["status"], detail["board_task_id"]) == ("联调接口", "已完成", card["id"])
@@ -42,11 +43,26 @@ def test_board_move_and_week_status_sync():
     assert updated.status_code == 200
     card, = alice.get(board).json()["tasks"]
     assert card["state"] == "inbox" and card["has_current_detail"]
+    assert card["completed_week"] is None
     body.update(state="in_progress", revision=card["revision"])
     moved = alice.patch(path, json=body)
     assert moved.status_code == 200 and moved.json()["status"] == "5%"
-    detail, = alice.get(week).json()["tasks"]
+    detail, = (data := alice.get(week).json())["tasks"]
     assert detail["status"] == "5%"
+    updated = mutate(alice, "PATCH", f"{week}/tasks/{detail['id']}", data["revision"], {"status": "已完成"})
+    assert updated.status_code == 200
+    completed_week = current_week()
+    next_week = completed_week + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: next_week)
+    card, = alice.get(board).json()["tasks"]
+    edited = alice.patch(f"{board}/{card['id']}?revision={card['revision']}&week_start={next_week}", json={"notes": "跨周补记"})
+    assert edited.status_code == 200 and edited.json()["completed_week"] == str(completed_week)
+    body.update(state="in_progress", revision=edited.json()["revision"], week_start=str(next_week))
+    reopened = alice.patch(path, json=body)
+    assert reopened.status_code == 200 and reopened.json()["completed_week"] is None
+    body.update(state="done", revision=reopened.json()["revision"])
+    recompleted = alice.patch(path, json=body)
+    assert recompleted.status_code == 200 and recompleted.json()["completed_week"] == str(next_week)
 
 
 def test_week_add_copy_rename_and_delete_share_independent_cards():

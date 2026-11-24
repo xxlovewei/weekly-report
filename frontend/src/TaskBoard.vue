@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
+import { addDays } from './dates'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, TaskPriority, WeekData } from './types'
@@ -16,6 +17,7 @@ interface Card extends CardFields {
   id: number
   state: State
   status: string | null
+  completed_week: string | null
   revision: number
   position: number
   has_current_detail: boolean
@@ -31,6 +33,7 @@ const props = defineProps<{ targetTask?: number | null; targetRefresh?: number }
 const cards = ref<Card[]>([])
 const categories = ref<Category[]>([])
 const weekStart = ref('')
+const showHistory = ref(false)
 const loading = ref(true), busy = ref(false), error = ref('')
 const continuationNotice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
@@ -46,7 +49,22 @@ const grouped = computed(() => columns.map(column => ({
   ...column, cards: cards.value.filter(card => card.state === column.state)
     .sort((left, right) => left.position - right.position || left.id - right.id),
 })))
+const completedCards = computed(() => grouped.value.find(column => column.state === 'done')!.cards)
+const lastWeek = computed(() => weekStart.value ? addDays(weekStart.value, -7) : '')
+function completionGroup(card: Card) {
+  if (card.completed_week === weekStart.value) return '本周'
+  if (card.completed_week === lastWeek.value) return '上周'
+  return '更早'
+}
+const completedGroups = computed(() => ['本周', '上周', '更早'].map(label => ({
+  label, cards: completedCards.value.filter(card => completionGroup(card) === label),
+})))
+const historyCards = computed(() => completedGroups.value[2].cards)
 const canContinue = computed(() => cards.value.some(card => card.state === 'in_progress' && !card.has_current_detail))
+
+function chargeValue(card: Card) {
+  return card.state === 'done' ? '100%' : card.status || '5%'
+}
 
 function message(cause: unknown) {
   return cause instanceof ApiError ? cause.message : '操作失败，请重试。'
@@ -67,9 +85,15 @@ async function refreshBoard() {
   weekStart.value = board.current_week
 }
 onMounted(load)
-watch(() => [loading.value, props.targetTask, props.targetRefresh], () => {
+watch(() => [loading.value, props.targetTask, props.targetRefresh], async () => {
   if (loading.value || !props.targetTask) return
-  const card = document.getElementById(`board-task-${props.targetTask}`)
+  const targetId = props.targetTask
+  if (!showHistory.value && historyCards.value.some(card => card.id === targetId)) {
+    showHistory.value = true
+    await nextTick()
+  }
+  if (props.targetTask !== targetId) return
+  const card = document.getElementById(`board-task-${targetId}`)
   if (!card) return
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   card.focus({ preventScroll: true })
@@ -168,14 +192,24 @@ function startDrag(event: DragEvent, card: Card) {
   event.dataTransfer.setData('application/x-zhoubao-board-card', String(card.id))
 }
 function resetDrag() { dragged.value = null; hovered.value = null; dropBefore.value = null }
-function beforeCardAtPointer(event: DragEvent, cardId: number) {
+function beforeCardAtPointer(event: DragEvent, card: Card) {
   const column = event.currentTarget as HTMLElement
+  const group = card.state === 'done' ? (event.target as Element).closest<HTMLElement>('[data-completion-group]') : column
+  if (!group || (card.state === 'done' && group.dataset.completionGroup !== completionGroup(card))) return undefined
   // 用卡片中线区分插入该卡片之前或之后，拖动中的卡片不参与比较。
-  for (const element of Array.from(column.querySelectorAll<HTMLElement>('[data-card-id]'))) {
+  let lastPeerId: number | null = null
+  for (const element of Array.from(group.querySelectorAll<HTMLElement>('[data-card-id]'))) {
     const id = Number(element.dataset.cardId)
-    if (id === cardId) continue
+    if (id === card.id) continue
     const rect = element.getBoundingClientRect()
     if (event.clientY < rect.top + rect.height / 2) return id
+    lastPeerId = id
+  }
+  if (card.state === 'done') {
+    if (lastPeerId === null) return undefined
+    // 组尾插入最后一个同组卡片之后，保留其他周卡片的相对顺序。
+    const peers = completedCards.value.filter(item => item.id !== card.id)
+    return peers[peers.findIndex(item => item.id === lastPeerId) + 1]?.id ?? null
   }
   return null
 }
@@ -195,15 +229,18 @@ function dragOver(event: DragEvent, state: State) {
   event.preventDefault()
   hovered.value = state
   const card = cards.value.find(item => item.id === dragged.value)
-  dropBefore.value = card?.state === state ? beforeCardAtPointer(event, card.id) : null
+  const beforeId = card?.state === state ? beforeCardAtPointer(event, card) : null
+  const target = cards.value.find(item => item.id === beforeId)
+  dropBefore.value = card?.state === 'done' && target && completionGroup(target) !== completionGroup(card)
+    ? null : beforeId ?? null
 }
 function drop(event: DragEvent, state: State) {
   event.preventDefault()
   const card = cards.value.find(item => item.id === dragged.value)
-  const beforeId = card?.state === state ? beforeCardAtPointer(event, card.id) : null
+  const beforeId = card?.state === state ? beforeCardAtPointer(event, card) : null
   resetDrag()
   if (!card) return
-  if (card.state === state) void perform(() => reorder(card, beforeId))
+  if (card.state === state && beforeId !== undefined) void perform(() => reorder(card, beforeId))
   else requestMove(card, state)
 }
 </script>
@@ -226,42 +263,52 @@ function drop(event: DragEvent, state: State) {
           :disabled="busy || !canContinue" @click="continueThisWeek">继续本周工作</button>
       </header>
       <div class="board-card-list">
-        <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
-        <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
-          tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state === 'in_progress' }"
-          :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
-          @dragstart="startDrag($event, card)" @dragend="resetDrag">
-          <div v-if="card.state === 'in_progress'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': card.status || '5%' }" />
-          <div class="board-card-content">
-            <div class="board-card-title">
-              <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
-                :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
-              <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
-                :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
-              <button v-if="card.review_issue_id" class="task-review-info" type="button" aria-haspopup="dialog"
-                title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = card.review_issue_id">
-                <span aria-hidden="true">i</span>
-              </button>
-              <strong>{{ card.name || '未命名任务' }}</strong>
-            </div>
-          </div>
-          <div class="board-card-actions">
-            <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
-              :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
-            </button>
-            <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy"
-              :title="card.has_other_details ? '修改备注' : '修改任务'" @click="open({ kind: 'edit', card })">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
-            </button>
-            <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
-              :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
-            </button>
-          </div>
-          <span v-if="card.state === 'in_progress'" class="board-charge-value" role="meter" aria-label="完成状态"
-            aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(card.status || '5%', 10)">{{ card.status || '5%' }}</span>
-        </article>
+        <template v-for="group in column.state === 'done' ? completedGroups : [{ label: '', cards: column.cards }]" :key="group.label">
+          <button v-if="group.label === '更早' && historyCards.length" type="button" class="mini-button board-history-toggle"
+            :aria-expanded="showHistory" @click="showHistory = !showHistory">
+            {{ showHistory ? '收起更早任务' : `展开更多（${historyCards.length}）` }}
+          </button>
+          <section v-if="group.label !== '更早' || (showHistory && historyCards.length)" class="board-card-group"
+            :aria-label="group.label || undefined" :data-completion-group="group.label || undefined">
+            <h3 v-if="group.label" class="board-week-heading">{{ group.label }}</h3>
+            <p v-if="!group.cards.length" class="board-empty">暂无任务</p>
+            <article v-for="card in group.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
+              tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state !== 'inbox' }"
+              :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
+              @dragstart="startDrag($event, card)" @dragend="resetDrag">
+              <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': chargeValue(card) }" />
+              <div class="board-card-content">
+                <div class="board-card-title">
+                  <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
+                    :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
+                  <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
+                    :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
+                  <button v-if="card.review_issue_id" class="task-review-info" type="button" aria-haspopup="dialog"
+                    title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = card.review_issue_id">
+                    <span aria-hidden="true">i</span>
+                  </button>
+                  <strong>{{ card.name || '未命名任务' }}</strong>
+                </div>
+              </div>
+              <div class="board-card-actions">
+                <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
+                  :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
+                </button>
+                <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy"
+                  :title="card.has_other_details ? '修改备注' : '修改任务'" @click="open({ kind: 'edit', card })">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
+                </button>
+                <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
+                  :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
+                </button>
+              </div>
+              <span v-if="card.state !== 'inbox'" class="board-charge-value" role="meter" aria-label="完成状态"
+                aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(chargeValue(card), 10)">{{ chargeValue(card) }}</span>
+            </article>
+          </section>
+        </template>
       </div>
     </section>
   </div>
@@ -311,6 +358,10 @@ function drop(event: DragEvent, state: State) {
   display: grid; align-content: start; gap: 12px; min-height: 0; overflow-y: auto;
   margin: -4px; padding: 4px;
 }
+.board-card-group { display: grid; gap: 12px; min-width: 0; }
+.board-week-heading { margin: 0; padding: 0 0 6px; border-bottom: 1px solid #d9e2e8; color: #334b5a; font-size: .875rem; }
+.board-week-heading + .board-empty { padding: 0 0 4px; font-size: .875rem; }
+.board-history-toggle { justify-self: start; }
 .board-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; flex-wrap: wrap; }
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }
