@@ -34,7 +34,9 @@ interface Card extends CardFields {
 type Dialog = { kind: 'edit'; card?: Card } | { kind: 'remove' | 'return' | 'transfer'; card: Card }
 interface Reminder { id: number; card_id: number; kind: '转交任务' | '会议指派' }
 const dialogLabels = { edit: '保存', remove: '确认删除', return: '确认移回', transfer: '确认转交' }
-const props = defineProps<{ targetTask?: number | null; targetRefresh?: number }>()
+const props = defineProps<{ targetTask?: number | null; targetRefresh?: number; plannedIds?: Set<number>; planBusy?: boolean }>()
+const emit = defineEmits<{ 'add-plan': [id: number]; 'plan-drag': [id: number | null] }>()
+const planMode = computed(() => props.plannedIds !== undefined)
 
 const cards = ref<Card[]>([])
 const categories = ref<Category[]>([])
@@ -76,6 +78,7 @@ const grouped = computed(() => columns.map(column => ({
   ...column, cards: cards.value.filter(card => card.state === column.state)
     .sort((left, right) => left.position - right.position || left.id - right.id),
 })))
+const visibleColumns = computed(() => planMode.value ? grouped.value.filter(column => column.state !== 'done') : grouped.value)
 const completedCards = computed(() => grouped.value.find(column => column.state === 'done')!.cards)
 const lastWeek = computed(() => weekStart.value ? addDays(weekStart.value, -7) : '')
 function completionGroup(card: Card) {
@@ -263,7 +266,7 @@ watch([loading, () => props.targetTask, () => props.targetRefresh], async ([, ta
   let stop: (() => void) | undefined
   onCleanup(() => { active = false; stop?.() })
   targetMissing.value = false
-  if (loading.value || !weekStart.value) return
+  if (planMode.value || loading.value || !weekStart.value) return
   // 在已打开的看板上点击通知，重新读取卡片与尚未展示的引导。
   if (!wasLoading && target) {
     try { await refreshBoard() }
@@ -342,7 +345,7 @@ function continueThisWeek() {
   })
 }
 function open(nextAction: Dialog) {
-  if (busy.value) return
+  if (busy.value || props.planBusy) return
   closePreview()
   action.value = nextAction
   formError.value = ''
@@ -361,7 +364,7 @@ function open(nextAction: Dialog) {
   void nextTick(() => dialog.value?.showModal())
 }
 function editInboxCard(event: MouseEvent, card: Card) {
-  if (card.state !== 'inbox' || (event.target instanceof Element && event.target.closest('button, a'))) return
+  if (planMode.value || card.state !== 'inbox' || (event.target instanceof Element && event.target.closest('button, a'))) return
   open({ kind: 'edit', card })
 }
 async function loadRecipients() {
@@ -436,14 +439,29 @@ function requestMove(card: Card, state: State) {
   if (state === 'inbox' && card.has_current_detail) open({ kind: 'return', card })
   else void perform(() => move(card, state))
 }
+function canDrag(card: Card) {
+  return !busy.value && !props.planBusy && !props.plannedIds?.has(card.id)
+}
 function startDrag(event: DragEvent, card: Card) {
-  if (busy.value || progressDraft.value || !event.dataTransfer) { event.preventDefault(); return }
+  if (!canDrag(card) || progressDraft.value || !event.dataTransfer) { event.preventDefault(); return }
   closePreview()
+  if (planMode.value) {
+    // 引用原任务生成计划，和看板内部的移列、排序使用不同的拖拽类型。
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData('application/x-zhoubao-board-plan', String(card.id))
+    emit('plan-drag', card.id)
+    return
+  }
   dragged.value = card.id
   event.dataTransfer.effectAllowed = 'move'
   event.dataTransfer.setData('application/x-zhoubao-board-card', String(card.id))
 }
-function resetDrag() { dragged.value = null; hovered.value = null; dropBefore.value = null }
+function resetDrag() {
+  if (planMode.value) emit('plan-drag', null)
+  dragged.value = null
+  hovered.value = null
+  dropBefore.value = null
+}
 function beforeCardAtPointer(event: DragEvent, card: Card) {
   const column = event.currentTarget as HTMLElement
   const group = card.state === 'done' ? (event.target as Element).closest<HTMLElement>('[data-completion-group]') : column
@@ -487,6 +505,7 @@ function dragOver(event: DragEvent, state: State) {
     ? null : beforeId ?? null
 }
 function drop(event: DragEvent, state: State) {
+  if (planMode.value) return
   event.preventDefault()
   const card = cards.value.find(item => item.id === dragged.value)
   const beforeId = card?.state === state ? beforeCardAtPointer(event, card) : null
@@ -504,15 +523,17 @@ function drop(event: DragEvent, state: State) {
   </div>
   <p v-if="notice" class="message board-notice" role="status">{{ notice }}</p>
   <p v-if="targetMissing" class="message board-notice" role="status">这条消息对应的任务已离开你的看板。</p>
-  <div v-if="!loading && weekStart" class="board">
-    <section v-for="column in grouped" :key="column.state" class="board-column panel"
+  <div v-if="!loading && weekStart" class="board" :class="{ 'board-plan': planMode }">
+    <section v-for="column in visibleColumns" :key="column.state" class="board-column panel"
       :class="{ 'board-drop-target': hovered === column.state }" :aria-label="column.name"
       @dragover="dragOver($event, column.state)" @drop="drop($event, column.state)">
       <header class="board-heading">
         <h2>{{ column.name }}</h2>
-        <button v-if="column.state === 'inbox'" type="button" class="primary-button"
+        <button v-if="planMode && column.state === 'inbox'" type="button" class="icon-btn" aria-label="添加任务" aria-haspopup="dialog"
+          :disabled="busy || planBusy" @click="open({ kind: 'edit' })">＋</button>
+        <button v-else-if="column.state === 'inbox'" type="button" class="primary-button"
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
-        <button v-else-if="column.state === 'in_progress'" type="button" class="secondary-button"
+        <button v-else-if="!planMode && column.state === 'in_progress'" type="button" class="secondary-button"
           :disabled="busy || !canContinue" @click="continueThisWeek">添加到本周工作</button>
       </header>
       <div class="board-card-list">
@@ -527,7 +548,7 @@ function drop(event: DragEvent, state: State) {
             <p v-if="!group.cards.length" class="board-empty">暂无任务</p>
             <article v-for="card in group.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
               tabindex="0" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id, 'board-card-charging': card.state !== 'inbox' }"
-              :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
+              :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="canDrag(card)"
               :aria-describedby="previewId === card.id ? 'board-task-preview' : undefined"
               @pointerenter="schedulePreview($event, card)" @pointerleave="leavePreview"
               @focus="schedulePreview($event, card)" @focusout="leavePreview"
@@ -537,7 +558,7 @@ function drop(event: DragEvent, state: State) {
                 :class="{ 'board-charge-adjusting': progressDraft?.cardId === card.id }" :style="{ '--charge': chargeValue(card) }" />
               <div class="board-card-content">
                 <div class="board-card-title">
-                  <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
+                  <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link" :draggable="planMode ? false : undefined"
                     :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
                   <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
                     :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
@@ -553,7 +574,12 @@ function drop(event: DragEvent, state: State) {
                   <strong>{{ card.name || '未命名任务' }}</strong>
                 </div>
               </div>
-              <div v-if="card.state !== 'done'" class="board-card-actions">
+              <div v-if="planMode" class="board-card-actions">
+                <button type="button" class="mini-button board-plan-add" :aria-disabled="!canDrag(card)"
+                  :aria-label="`${plannedIds?.has(card.id) ? '已加入计划' : '加入计划'}：${card.name || '未命名任务'}`"
+                  @click="canDrag(card) && emit('add-plan', card.id)">{{ plannedIds?.has(card.id) ? '已加入' : '加入计划' }}</button>
+              </div>
+              <div v-else-if="card.state !== 'done'" class="board-card-actions">
                 <button type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
                   :disabled="busy || card.has_other_details" :title="card.has_other_details ? '已有历史周明细，无法转交' : '转交任务'"
                   @click="open({ kind: 'transfer', card })">
@@ -572,8 +598,8 @@ function drop(event: DragEvent, state: State) {
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
                 </button>
               </div>
-              <span v-if="card.state === 'done'" class="board-charge-value" role="meter" aria-label="完成状态"
-                aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">100%</span>
+              <span v-if="card.state === 'done' || (planMode && card.state === 'in_progress')" class="board-charge-value" role="meter" aria-label="完成状态"
+                aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(chargeValue(card))">{{ chargeValue(card) }}</span>
               <template v-else-if="card.state === 'in_progress'">
                 <span class="board-charge-value" aria-hidden="true">{{ chargeValue(card) }}</span>
                 <span class="board-charge-handle" role="slider" aria-label="完成状态" tabindex="0"
@@ -609,7 +635,8 @@ function drop(event: DragEvent, state: State) {
   <ReviewIssueDialog v-if="openedIssue !== null" :issue-id="openedIssue" @close="openedIssue = null" />
 
   <!-- 原生弹窗统一处理 Esc，保存过程中保留弹窗以便显示请求结果。 -->
-  <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null" @cancel="busy && $event.preventDefault()">
+  <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null"
+    @cancel="busy && $event.preventDefault()" @keydown.esc.stop>
     <form v-if="action" class="stack-form" @submit.prevent="submit">
       <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : action.kind === 'transfer' ? '转交任务' : '移回任务箱' }}</h2>
       <template v-if="action.kind === 'edit'">
@@ -675,6 +702,13 @@ function drop(event: DragEvent, state: State) {
   min-width: 0; min-height: 180px; min-height: min(180px, 100cqh);
   max-height: 100dvh; max-height: 100cqh; padding: 14px;
 }
+.board-plan {
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr));
+  align-items: stretch; gap: 12px;
+}
+.board-plan .board-column { min-height: 0; max-height: none; box-shadow: none; }
+.board-plan .board-card[draggable="false"] { cursor: default; }
+.board-plan-add[aria-disabled="true"] { cursor: default; color: #555; background: #f4f4f4; box-shadow: none; transform: none; }
 .board-card-list {
   display: grid; align-content: start; gap: 12px; min-height: 0; overflow-y: auto;
   margin: -4px; padding: 4px;

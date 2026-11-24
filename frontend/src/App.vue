@@ -410,7 +410,9 @@ function allowPlanDrop(event: DragEvent) {
   planDropActive.value = true
 }
 function leavePlanDrop(event: DragEvent) {
-  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) planDropActive.value = false
+  if (!(event.relatedTarget instanceof Node) || !(event.currentTarget as HTMLElement).contains(event.relatedTarget)) {
+    planDropActive.value = false
+  }
 }
 function dropPlanCard(event: DragEvent) {
   const id = draggedPlanCard.value
@@ -880,24 +882,27 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
         <button v-for="member in workMembers" :key="member.id" type="button" role="tab" :disabled="workLoading" :aria-selected="(workMember ?? user.id) === member.id" :class="{ selected: (workMember ?? user.id) === member.id }" @click="chooseWorkMember(member.id)">{{ member.name }}<small v-if="member.id === user.id">（本人）</small><small v-else-if="!member.is_active">（已停用）</small></button>
       </div>
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
-      <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board' }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
+      <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board', 'plan-work-area': planBoardOpen }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
       <ScheduledTasks v-else-if="page === 'scheduled-tasks' && isAdmin" :key="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
       <TaskBoard v-else-if="page === 'task-board'" :key="user.id" :target-task="targetTask" :target-refresh="boardTargetRefresh" />
-      <div v-else-if="page === 'work'" @dragover="allowPlanDrop" @dragleave="leavePlanDrop" @drop="dropPlanCard">
+      <div v-else-if="page === 'work'" :role="futureWork ? 'region' : undefined" :aria-label="futureWork ? '任务计划表' : undefined"
+        :class="{ 'plan-list-drop-area': planBoardOpen, 'plan-list-drop-active': planDropActive }"
+        @dragover="allowPlanDrop" @dragleave="leavePlanDrop" @drop="dropPlanCard">
         <div class="section-head">
           <strong>{{ futureWork ? '任务计划表' : '任务明细' }} <span v-if="!workLoading">{{ workTasks.length }}</span></strong>
           <div v-if="!workReadonly && !workLoading" class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
         <p v-if="workLoading" role="status">正在加载{{ futureWork ? '任务计划' : '任务明细' }}…</p>
         <p v-else-if="workReadonly" class="message">{{ futureWork ? '可提前填写本人下一周的任务计划。' : '仅当前周可编辑任务明细。' }}</p>
-        <p v-if="planBoardOpen" class="plan-drop-hint" :class="{ 'plan-drop-active': planDropActive }">将任务拖到这里添加到计划</p>
+        <p v-if="planBoardOpen" class="plan-drop-hint">将看板卡片拖到任务计划表</p>
         <TaskTable v-if="!workLoading" :key="selectedWeek + ':' + (workMember ?? user.id) + ':' + futureWork" :tasks="workTasks" :categories="categories" work-view :plan="futureWork" :readonly="workReadonly" :delegated="delegatedWork" :busy="mutating" :target-task="futureWork ? null : targetTask" :is-current-week="selectedWeek === currentWorkWeek" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
         <Teleport v-if="planBoardOpen" to="body">
-          <PlanTaskBoard :planned-ids="plannedCardIds" :busy="mutating" @drag="setPlanCardDrag" @add="addPlanCard" @close="closePlanBoard()" />
+          <PlanTaskBoard :planned-ids="plannedCardIds" :busy="mutating" :dragging="draggedPlanCard !== null"
+            @drag="setPlanCardDrag" @add="addPlanCard" @close="closePlanBoard()" />
         </Teleport>
         <details v-if="!workLoading && !futureWork && week.plans?.length" class="work-plan-history">
           <summary>任务计划表（历史） · {{ week.plans.length }} 项</summary>
