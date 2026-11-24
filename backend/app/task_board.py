@@ -21,14 +21,12 @@ class CardInput(Input):
     category_name: str = Field(min_length=1, max_length=100)
     priority: Literal["高", "中", "低"]
     notes: str = Field(default="", max_length=5000)
+    estimated_days: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+
 
 class CardUpdate(CardInput):
     name: str = Field(max_length=200)
     category_name: str = Field(max_length=100)
-
-class CardCreate(CardInput):
-    estimated_days: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
-
 
 class CardNotesUpdate(Input):
     notes: str = Field(max_length=5000)
@@ -210,7 +208,7 @@ def acknowledge_reminder(notification_id: int, auth=Depends(active_session), db:
 
 
 @router.post("", status_code=201)
-def add_card(data: CardCreate, key: str | None = Header(default=None, alias="Idempotency-Key"),
+def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idempotency-Key"),
              auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
     lock_task_changes(db)
@@ -244,12 +242,13 @@ def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate | 
         main.rename_meeting_task(db, card.meeting_task, changes["name"], skip_week_id=week.id if week else None)
     for key, value in changes.items():
         setattr(card, key, value)
-        if detail:
+        # 预估工时属于看板卡片，周报明细只同步现有字段。
+        if detail and key != "estimated_days":
             setattr(detail, "task_group" if key == "name" else key, value)
     if changes:
         if not meeting_rename:
             card.revision += 1
-        if detail:
+        if detail and changes.keys() - {"estimated_days"}:
             week.revision += 1
     db.commit()
     status = detail.status if detail else pending_progress(card) or latest_detail_status(db, card)

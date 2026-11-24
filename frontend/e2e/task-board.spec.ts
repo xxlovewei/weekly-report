@@ -95,7 +95,8 @@ test('看板按条提示新任务，已提示的卡片再次进入时不重播',
   await expect(handoff).toContainText('资料转交')
   await expect(page.locator('#board-task-3')).toHaveClass(/driver-active-element/)
   await expect.poll(() => [...shown]).toEqual([12, 11, 13])
-  await handoff.getByRole('button', { name: '完成' }).click()
+  await page.keyboard.press('Escape')
+  await expect(handoff).toHaveCount(0)
 
   await page.goto('/task-board?task=2')
   await expect(page.locator('#board-task-2')).toBeFocused()
@@ -234,7 +235,11 @@ test('新增和复制周任务同步到看板，删除当周明细保留卡片',
   await expect(page.getByRole('region', { name: '进行中' })).toBeVisible()
   await expect(cards).toHaveCount(1)
   await expect(copiedCard).toHaveCount(1)
-  for (const card of [cards, copiedCard]) {
+  const inbox = page.getByRole('region', { name: '任务箱' })
+  await cards.dragTo(inbox)
+  await expect(cards).toHaveCount(0)
+  for (const id of [original.board_task_id, copied.board_task_id]) {
+    const card = inbox.locator(`#board-task-${id}`)
     await card.getByRole('button', { name: '删除任务' }).click()
     await page.getByRole('button', { name: '确认删除' }).click()
     await expect(card).toHaveCount(0)
@@ -255,10 +260,12 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
       category_name: '其他', priority: '低', position, revision: 0,
       has_current_detail: state !== 'inbox', has_other_details: false,
       completed_week: state === 'done' ? completedWeeks[position] : null,
+      review_issue_id: state === 'inbox' && position === 0 ? 1 : null,
     })),
   )
   const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
   const submittedEstimates: unknown[] = []
+  const submittedEdits: unknown[] = []
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url())
     if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
@@ -266,10 +273,16 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
       if (route.request().method() === 'POST') {
         const fields = route.request().postDataJSON()
         submittedEstimates.push(fields.estimated_days)
-        return route.fulfill({ status: 201, json: { ...tasks[0], ...fields, id: 100, position: 24 } })
+        return route.fulfill({ status: 201, json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: 24 } })
       }
       return route.fulfill({ json: { current_week: currentWeek, tasks } })
     }
+    if (pathname.endsWith('/board-tasks/100') && route.request().method() === 'PATCH') {
+      const fields = route.request().postDataJSON()
+      submittedEdits.push(fields.estimated_days)
+      return route.fulfill({ json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: 24, revision: 1 } })
+    }
+    if (pathname.endsWith('/reviews/issues/1')) return route.fulfill({ status: 404, json: { detail: '审查问题不存在' } })
     return route.fulfill({ json: [] })
   })
   await page.goto('/task-board')
@@ -291,6 +304,10 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   const addButton = board.getByRole('button', { name: '添加任务' })
   await addButton.click()
   const addDialog = page.getByRole('dialog', { name: '添加任务' })
+  await expect(addDialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(addDialog).toHaveCount(0)
+  await addButton.click()
   const nameHint = '用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。'
   const nameField = addDialog.getByRole('textbox', { name: '任务名称', exact: true })
   await expect(nameField).toHaveAttribute('placeholder', nameHint)
@@ -308,6 +325,8 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   const estimateBox = (await estimateField.boundingBox())!
   const priorityBox = (await priorityField.boundingBox())!
   const increaseBox = (await increase.boundingBox())!
+  expect(estimateBox.height).toBe(38)
+  expect(priorityBox.height).toBe(38)
   expect(estimateBox.y).toBe(priorityBox.y)
   expect(estimateBox.x + estimateBox.width).toBeLessThan(priorityBox.x)
   expect(increaseBox.x + increaseBox.width).toBeLessThan(estimateBox.x + estimateBox.width)
@@ -333,8 +352,52 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   const newCard = board.getByRole('article', { name: '预估工时示例，优先级低' })
   await expect(newCard.getByRole('img', { name: '预估 0.5 人天' })).toHaveText('0.5')
   expect(submittedEstimates).toEqual(['0.5'])
-  const buttonTop = (await addButton.boundingBox())!.y
+  const inbox = board.getByRole('region', { name: '任务箱' })
+  const ongoing = board.getByRole('region', { name: '进行中' })
+  await newCard.getByText('预估工时示例', { exact: true }).dblclick()
+  const edit = page.getByRole('dialog', { name: '修改任务' })
+  const editEstimate = edit.getByRole('textbox', { name: '预估工时（人天）', exact: true })
+  const editPriority = edit.getByLabel('优先级')
+  await expect(editEstimate).toHaveValue('0.5')
+  const editEstimateBox = (await editEstimate.boundingBox())!
+  const editPriorityBox = (await editPriority.boundingBox())!
+  expect(editEstimateBox.height).toBe(38)
+  expect(editEstimateBox.y).toBe(editPriorityBox.y)
+  expect(editEstimateBox.x).toBeLessThan(editPriorityBox.x)
+  await editEstimate.fill('4')
+  await editEstimate.press('Escape')
+  await expect(edit).toHaveCount(0)
+  await newCard.getByRole('button', { name: '修改任务' }).click()
+  await expect(editEstimate).toHaveValue('0.5')
+  await edit.getByRole('button', { name: '增加 1 人天' }).click()
+  await edit.getByRole('button', { name: '保存' }).click()
+  await expect(newCard.getByRole('img', { name: '预估 1.5 人天' })).toHaveText('1.5')
+  expect(submittedEdits).toEqual(['1.5'])
+  for (const name of ['删除任务', '转交任务']) {
+    await newCard.getByRole('button', { name }).click()
+    const modal = page.getByRole('dialog', { name, exact: true })
+    await expect(modal).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(modal).toHaveCount(0)
+  }
+  await inbox.getByRole('button', { name: '点击可查看审查记录的内容' }).first().click()
+  const review = page.getByRole('dialog', { name: '审查问题详情' })
+  await expect(review).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(review).toHaveCount(0)
+  const ongoingCard = ongoing.getByRole('article').first()
+  for (const name of ['复制任务', '修改任务', '删除任务']) {
+    await expect(ongoingCard.getByRole('button', { name })).toHaveCount(0)
+  }
+  await expect(ongoingCard.getByRole('button', { name: '转交任务' })).toBeVisible()
+  await ongoingCard.dragTo(addButton)
+  const returnDialog = page.getByRole('dialog', { name: '移回任务箱' })
+  await expect(returnDialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(returnDialog).toHaveCount(0)
   await lists.first().hover()
+  await expect(addButton).toHaveCSS('transform', 'none')
+  const buttonTop = (await addButton.boundingBox())!.y
   await page.mouse.wheel(0, 600)
   await expect.poll(() => lists.first().evaluate(list => list.scrollTop)).toBeGreaterThan(0)
   expect(await lists.evaluateAll(elements => elements.slice(1).map(list => list.scrollTop))).toEqual([0, 0])
@@ -405,15 +468,22 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   })
   await page.goto('/task-board')
   const ongoing = page.getByRole('region', { name: '进行中' })
-  const inboxCard = page.getByRole('region', { name: '任务箱' }).getByRole('article').first()
   const ongoingCard = ongoing.getByRole('article').first()
-  const expectSharedHeight = async () => {
-    expect((await ongoingCard.boundingBox())?.height).toBe((await inboxCard.boundingBox())?.height)
+  const expectChargeDoesNotChangeHeight = async () => {
+    const sizes = await ongoingCard.evaluate(element => {
+      const overlays = element.querySelectorAll<HTMLElement>('.board-charge-fill, .board-charge-value')
+      const height = element.getBoundingClientRect().height
+      overlays.forEach(overlay => { overlay.style.display = 'none' })
+      const withoutCharge = element.getBoundingClientRect().height
+      overlays.forEach(overlay => overlay.style.removeProperty('display'))
+      return { height, withoutCharge }
+    })
+    expect(sizes.height).toBe(sizes.withoutCharge)
   }
   const resume = ongoing.getByRole('button', { name: '添加到本周工作', exact: true })
   await expect(ongoing.getByRole('article').getByRole('button', { name: '添加到本周工作' })).toHaveCount(0)
   await expect(resume).toBeEnabled()
-  await expectSharedHeight()
+  await expectChargeDoesNotChangeHeight()
   const meter = ongoing.getByRole('meter', { name: '完成状态' })
   await expect(meter).toHaveText(['30%', '70%', '90%'])
   await expect(meter.nth(1)).toHaveAttribute('aria-valuenow', '70')
@@ -431,5 +501,5 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   await page.setViewportSize({ width: 390, height: 650 })
   await meter.first().scrollIntoViewIfNeeded()
   await expect(meter.first()).toBeInViewport()
-  await expectSharedHeight()
+  await expectChargeDoesNotChangeHeight()
 })

@@ -82,6 +82,19 @@ def test_board_estimated_days_are_optional_positive_and_copied():
     assert card["estimated_days"] == "0.125"
     copied = alice.post(f"{board}/{card['id']}/duplicate?revision={card['revision']}&week_start={data['current_week']}")
     assert copied.status_code == 201 and copied.json()["estimated_days"] == "0.125"
+    start = data["current_week"]
+    path = f"{board}/{card['id']}"
+    moved = alice.patch(f"{path}/status", json={"state": "in_progress", "revision": card["revision"], "week_start": start}).json()
+    week = f"/api/weeks/{start}"
+    revision = alice.get(week).json()["revision"]
+    edit = f"{path}?revision={moved['revision']}&week_start={start}"
+    assert alice.patch(edit, json={**fields, "estimated_days": 0}).status_code == 422
+    updated = alice.patch(edit, json={**fields, "estimated_days": "1.125"})
+    assert updated.status_code == 200 and updated.json()["estimated_days"] == "1.125"
+    cleared = alice.patch(f"{path}?revision={updated.json()['revision']}&week_start={start}",
+                          json={**fields, "estimated_days": None})
+    assert cleared.status_code == 200 and cleared.json()["estimated_days"] is None
+    assert alice.get(week).json()["revision"] == revision
 
 
 @pytest.mark.parametrize("state", ["inbox", "in_progress"])

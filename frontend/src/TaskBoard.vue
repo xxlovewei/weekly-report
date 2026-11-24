@@ -266,13 +266,14 @@ function continueThisWeek() {
   })
 }
 function open(nextAction: Dialog) {
+  if (busy.value) return
   closePreview()
   action.value = nextAction
   formError.value = ''
   if (nextAction.kind === 'edit') {
     const card = nextAction.card
     Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低', notes: card?.notes ?? '' })
-    estimatedDays.value = ''
+    estimatedDays.value = card?.estimated_days ?? ''
     createRequest = null
   }
   if (nextAction.kind === 'transfer') {
@@ -282,6 +283,10 @@ function open(nextAction: Dialog) {
     void loadRecipients()
   }
   void nextTick(() => dialog.value?.showModal())
+}
+function editInboxCard(event: MouseEvent, card: Card) {
+  if (card.state !== 'inbox' || (event.target instanceof Element && event.target.closest('button, a'))) return
+  open({ kind: 'edit', card })
 }
 async function loadRecipients() {
   const pending = action.value
@@ -306,16 +311,16 @@ async function submit() {
     if (pending.kind === 'edit') {
       const fields = { ...form, name: form.name.trim() }
       if (!fields.name && !pending.card?.name_locked && !pending.card?.has_other_details) { throw new ApiError(422, '请输入任务名称。') }
+      const estimate = estimatedDays.value
+      // 保留小数原文，提交前校验格式和正值，避免浮点转换丢失精度。
+      if (estimate && (!estimatedDayParts.value || !/[1-9]/.test(estimate))) {
+        throw new ApiError(422, '预估工时须为大于 0 的整数或小数。')
+      }
+      const data = { ...fields, estimated_days: estimate || null }
       if (pending.card) {
-        const patch = pending.card.has_other_details ? { notes: fields.notes } : fields
+        const patch = pending.card.has_other_details ? { notes: fields.notes } : data
         saveCard(await api<Card>(path(pending.card), 'PATCH', patch))
       } else {
-        const estimate = estimatedDays.value
-        // 保留小数原文，提交前校验格式和正值，避免浮点转换丢失精度。
-        if (estimate && (!estimatedDayParts.value || !/[1-9]/.test(estimate))) {
-          throw new ApiError(422, '预估工时须为大于 0 的整数或小数。')
-        }
-        const data = { ...fields, estimated_days: estimate || null }
         const body = JSON.stringify(data)
         if (createRequest?.body !== body) createRequest = { body, key: newIdempotencyKey() }
         saveCard(await api<Card>('/board-tasks', 'POST', data, createRequest.key))
@@ -447,6 +452,7 @@ function drop(event: DragEvent, state: State) {
               :aria-describedby="previewId === card.id ? 'board-task-preview' : undefined"
               @pointerenter="schedulePreview($event, card)" @pointerleave="leavePreview"
               @focus="schedulePreview($event, card)" @focusout="leavePreview"
+              @dblclick="editInboxCard($event, card)"
               @dragstart="startDrag($event, card)" @dragend="resetDrag">
               <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': chargeValue(card) }" />
               <div class="board-card-content">
@@ -473,15 +479,15 @@ function drop(event: DragEvent, state: State) {
                   @click="open({ kind: 'transfer', card })">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 15-3-7-8-3zM11 13l10-8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
-                <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
+                <button v-if="card.state === 'inbox'" type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
                   :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
                 </button>
-                <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy"
+                <button v-if="card.state === 'inbox'" type="button" class="icon-btn" aria-label="修改任务" :disabled="busy"
                   :title="card.has_other_details ? '修改备注' : '修改任务'" @click="open({ kind: 'edit', card })">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
                 </button>
-                <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
+                <button v-if="card.state === 'inbox'" type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
                   :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
                 </button>
@@ -511,6 +517,7 @@ function drop(event: DragEvent, state: State) {
   </Teleport>
   <ReviewIssueDialog v-if="openedIssue !== null" :issue-id="openedIssue" @close="openedIssue = null" />
 
+  <!-- 原生弹窗统一处理 Esc，保存过程中保留弹窗以便显示请求结果。 -->
   <dialog ref="dialog" class="modal board-dialog" aria-labelledby="board-dialog-title" @close="action = null" @cancel="busy && $event.preventDefault()">
     <form v-if="action" class="stack-form" @submit.prevent="submit">
       <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : action.kind === 'transfer' ? '转交任务' : '移回任务箱' }}</h2>
@@ -521,17 +528,17 @@ function drop(event: DragEvent, state: State) {
           <option v-for="name in options" :key="name" :value="name">{{ name }}</option>
         </select></label>
         <label>任务名称
-          <textarea v-model="form.name" :placeholder="action.card ? undefined : '用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。'"
-            :rows="action.card ? 2 : 3" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
+          <textarea v-model="form.name" placeholder="用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。"
+            rows="3" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
         </label>
-        <div :class="{ 'board-estimate-row': !action.card }">
-          <div v-if="!action.card" class="board-estimate-field">
+        <div class="board-estimate-row">
+          <div class="board-estimate-field">
             <label for="board-estimated-days">预估工时（人天）</label>
             <div class="board-estimate-input">
-              <input id="board-estimated-days" v-model.trim="estimatedDays" type="text" inputmode="decimal" :disabled="busy" />
+              <input id="board-estimated-days" v-model.trim="estimatedDays" type="text" inputmode="decimal" :disabled="busy || action.card?.has_other_details" />
               <div class="board-estimate-steppers">
-                <button type="button" aria-label="增加 1 人天" :disabled="busy || !estimatedDayParts" @click="stepEstimate(1)">▲</button>
-                <button type="button" aria-label="减少 1 人天" :disabled="busy || !canDecreaseEstimate" @click="stepEstimate(-1)">▼</button>
+                <button type="button" aria-label="增加 1 人天" :disabled="busy || action.card?.has_other_details || !estimatedDayParts" @click="stepEstimate(1)">▲</button>
+                <button type="button" aria-label="减少 1 人天" :disabled="busy || action.card?.has_other_details || !canDecreaseEstimate" @click="stepEstimate(-1)">▼</button>
               </div>
             </div>
           </div>
@@ -594,6 +601,7 @@ function drop(event: DragEvent, state: State) {
 .board-estimate-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .board-estimate-field { display: grid; gap: 7px; }
 .board-estimate-input { position: relative; }
+.board-estimate-input input, .board-estimate-row select { height: 38px; }
 .board-estimate-input input { padding-inline-end: 42px; }
 .board-estimate-steppers { position: absolute; inset-block: 2px; inset-inline-end: 2px; display: grid; grid-template-rows: repeat(2, 1fr); }
 .board-estimate-steppers button { width: 32px; padding: 0; border: 0; border-inline-start: 1px solid #222; background: #fff; font-size: 10px; }
