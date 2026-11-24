@@ -706,7 +706,25 @@ function drop(event: DragEvent, state: State) {
   grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr));
   align-items: stretch; gap: 12px;
 }
-.board-plan .board-column { min-height: 0; max-height: none; box-shadow: none; }
+.board-plan .board-column {
+  min-height: 0; max-height: none; padding: 0; gap: 0;
+  border: 1px solid #000; box-shadow: none;
+}
+.board-plan .board-heading {
+  min-height: 36px; padding: 4px 8px; flex-wrap: nowrap;
+  border-bottom: 1px solid #000; background: #ccff00;
+}
+.board-plan .board-heading h2 { font-size: 15px; }
+.board-plan .board-heading .icon-btn { padding: 1px 6px; }
+.board-plan .board-card-list { margin: 0; padding: 8px; }
+.board-plan .board-card-group { gap: 8px; }
+.board-plan .board-empty { padding: 0; }
+.board-plan .board-card {
+  /* 预留现有最大秒表和卡片内边距的高度，无工时的卡片也保持等高。 */
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; block-size: 90px;
+}
+.board-plan .board-card-content { justify-items: stretch; }
+.board-plan .board-card-title strong { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-plan .board-card[draggable="false"] { cursor: default; }
 .board-plan-add[aria-disabled="true"] { cursor: default; color: #555; background: #f4f4f4; box-shadow: none; transform: none; }
 .board-card-list {

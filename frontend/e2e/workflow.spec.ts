@@ -1,6 +1,47 @@
 import { test, expect } from './fixtures'
 import { addDays, mondayOf, todayShanghai } from '../src/dates'
 
+test('下周计划侧栏栏目沿用原样式，长任务名和按钮同一行', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const longName = '这是一个需要保留完整名称的长任务'.repeat(8)
+  const cards = ['inbox', 'in_progress'].flatMap((state, index) => [
+    { id: index * 2 + 1, state, position: 1, name: '短任务', priority: '低' },
+    { id: index * 2 + 2, state, position: 2, name: longName, priority: '高', estimated_days: '12.3456789' },
+  ])
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: {
+      user: { id: 42, username: 'member', display_name: '测试成员', role: 'user', must_change_password: false }, csrf_token: 'test',
+    } })
+    if (pathname.endsWith('/work-context')) return route.fulfill({ json: { current_week: '2026-11-23', members: [] } })
+    if (pathname.includes('/weeks/')) return route.fulfill({ json: { revision: 0, tasks: [] } })
+    if (pathname.endsWith('/board-tasks')) return route.fulfill({ json: { current_week: '2026-11-23', tasks: cards } })
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/work')
+  await page.getByRole('button', { name: '填写下周计划' }).click()
+  await page.getByRole('button', { name: /新增任务计划/ }).click()
+  const board = page.getByRole('complementary', { name: '任务看板' })
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 800 })
+    for (const label of ['任务箱', '进行中']) {
+      const column = board.getByRole('region', { name: label, exact: true })
+      await expect(column.getByRole('heading').locator('..')).toHaveCSS('background-color', 'rgb(204, 255, 0)')
+      const short = column.getByRole('article', { name: /^短任务，/ })
+      const long = column.getByRole('article', { name: `${longName}，优先级高`, exact: true })
+      const title = long.getByText(longName, { exact: true })
+      const button = long.getByRole('button', { name: /^加入计划/ })
+      await expect(title).toHaveCSS('text-overflow', 'ellipsis')
+      const nameWidths = await title.evaluate(el => ({ visible: el.clientWidth, full: el.scrollWidth }))
+      expect(nameWidths.full, JSON.stringify(nameWidths)).toBeGreaterThan(nameWidths.visible)
+      expect((await long.boundingBox())!.height).toBe((await short.boundingBox())!.height)
+      const nameBox = (await title.boundingBox())!, buttonBox = (await button.boundingBox())!
+      expect(buttonBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width)
+      expect(Math.abs((nameBox.y + nameBox.height / 2) - (buttonBox.y + buttonBox.height / 2))).toBeLessThan(1)
+    }
+  }
+})
+
 test('管理员与普通用户完成周报流程', async ({ page, context }) => {
   const errors: string[] = []
   const loginBodies: string[] = []
