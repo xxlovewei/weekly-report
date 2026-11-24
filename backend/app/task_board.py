@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -24,6 +25,10 @@ class CardInput(Input):
 class CardUpdate(CardInput):
     name: str = Field(max_length=200)
     category_name: str = Field(max_length=100)
+
+class CardCreate(CardInput):
+    estimated_days: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+
 
 class CardNotesUpdate(Input):
     notes: str = Field(max_length=5000)
@@ -135,6 +140,7 @@ def card_json(card: BoardTask, *, current=False, historical=False, status: str |
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority, "notes": card.notes,
             "state": card.state, "status": status, "position": card.position, "revision": card.revision,
             "completed_week": card.completed_week.isoformat() if card.completed_week else None,
+            "estimated_days": format(card.estimated_days, "f") if card.estimated_days is not None else None,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
             "review_issue_id": card.review_issue.id if card.review_issue else None,
             "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),
@@ -204,7 +210,7 @@ def acknowledge_reminder(notification_id: int, auth=Depends(active_session), db:
 
 
 @router.post("", status_code=201)
-def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idempotency-Key"),
+def add_card(data: CardCreate, key: str | None = Header(default=None, alias="Idempotency-Key"),
              auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
     lock_task_changes(db)
@@ -262,7 +268,7 @@ def duplicate_card(card_id: int, revision: int, week_start: date,
         return old
     source, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
     card = add_inbox_card(db, owner, name=source.name, category_name=source.category_name,
-                          priority=source.priority, notes=source.notes)
+                          priority=source.priority, notes=source.notes, estimated_days=source.estimated_days)
     return finish(db, owner, key, operation, card_json(card))
 
 

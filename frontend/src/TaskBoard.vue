@@ -15,6 +15,7 @@ type State = typeof columns[number]['state']
 interface CardFields { name: string; category_name: string; priority: TaskPriority; notes: string }
 interface Card extends CardFields {
   id: number
+  estimated_days?: string | null
   state: State
   status: string | null
   completed_week: string | null
@@ -42,6 +43,7 @@ const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低', notes: '' })
+const estimatedDays = ref('')
 const formError = ref('')
 const openedIssue = ref<number | null>(null)
 const people = ref<MeetingPerson[]>([]), peopleLoading = ref(false), recipientId = ref<number | null>(null)
@@ -180,6 +182,7 @@ function open(nextAction: Dialog) {
   if (nextAction.kind === 'edit') {
     const card = nextAction.card
     Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低', notes: card?.notes ?? '' })
+    estimatedDays.value = ''
     createRequest = null
   }
   if (nextAction.kind === 'transfer') {
@@ -217,9 +220,15 @@ async function submit() {
         const patch = pending.card.has_other_details ? { notes: fields.notes } : fields
         saveCard(await api<Card>(path(pending.card), 'PATCH', patch))
       } else {
-        const body = JSON.stringify(fields)
+        const estimate = estimatedDays.value
+        // 保留小数原文，提交前校验格式和正值，避免浮点转换丢失精度。
+        if (estimate && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(estimate) || !/[1-9]/.test(estimate))) {
+          throw new ApiError(422, '预估工时须为大于 0 的整数或小数。')
+        }
+        const data = { ...fields, estimated_days: estimate || null }
+        const body = JSON.stringify(data)
         if (createRequest?.body !== body) createRequest = { body, key: newIdempotencyKey() }
-        saveCard(await api<Card>('/board-tasks', 'POST', fields, createRequest.key))
+        saveCard(await api<Card>('/board-tasks', 'POST', data, createRequest.key))
       }
     } else if (pending.kind === 'remove') {
       await api(path(pending.card), 'DELETE')
@@ -358,6 +367,7 @@ function drop(event: DragEvent, state: State) {
                   </button>
                   <strong>{{ card.name || '未命名任务' }}</strong>
                 </div>
+                <small v-if="card.estimated_days" class="board-card-estimate">预估 {{ card.estimated_days }} 人天</small>
               </div>
               <div v-if="card.state !== 'done'" class="board-card-actions">
                 <button type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
@@ -397,17 +407,16 @@ function drop(event: DragEvent, state: State) {
           <option v-if="form.category_name && !options.includes(form.category_name)" :value="form.category_name">{{ form.category_name }}（历史）</option>
           <option v-for="name in options" :key="name" :value="name">{{ name }}</option>
         </select></label>
-        <label>
-          <span>
-            <span id="board-task-name-label">任务名称</span>
-            <span v-if="!action.card" id="board-task-name-hint" class="board-name-hint">用尽量简短的一句话描述任务。包括哪些工作内容可放在备注中。</span>
-          </span>
-          <textarea v-model="form.name" aria-labelledby="board-task-name-label" :aria-describedby="action.card ? undefined : 'board-task-name-hint'"
-            rows="2" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
+        <label>任务名称
+          <textarea v-model="form.name" :placeholder="action.card ? undefined : '用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。'"
+            :rows="action.card ? 2 : 3" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
         </label>
         <label>优先级<select v-model="form.priority" :disabled="busy || action.card?.has_other_details">
           <option value="高">高</option><option value="中">中</option><option value="低">低</option>
         </select></label>
+        <label v-if="!action.card">预估工时
+          <span class="board-estimate-input"><input v-model.trim="estimatedDays" type="text" inputmode="decimal" :disabled="busy" /><span>人天</span></span>
+        </label>
         <label>备注<textarea v-model="form.notes" rows="3" maxlength="5000" :disabled="busy" /></label>
       </template>
       <template v-else-if="action.kind === 'transfer'">
@@ -458,7 +467,9 @@ function drop(event: DragEvent, state: State) {
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }
 .board-dialog textarea { width: 100%; overflow-wrap: anywhere; resize: vertical; }
-.board-name-hint { margin-inline-start: 8px; color: #b42318; font-size: .875rem; font-weight: normal; }
+.board-dialog textarea::placeholder { color: #656b73; }
+.board-dialog textarea:focus::placeholder { color: transparent; }
+.board-estimate-input { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card.board-target { outline: 2px solid #13766a; outline-offset: 2px; }
@@ -468,6 +479,7 @@ function drop(event: DragEvent, state: State) {
 .board-card-title > :not(strong) { flex: none; }
 .board-card-title .task-review-info { width: 18px; height: 18px; }
 .board-card-content strong { white-space: pre-wrap; }
+.board-card-estimate { font-size: .75rem; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .board-notice { margin: 0 0 8px; }

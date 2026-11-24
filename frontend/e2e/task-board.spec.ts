@@ -204,10 +204,18 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
     })),
   )
   const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
+  const submittedEstimates: unknown[] = []
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url())
     if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
-    if (pathname.endsWith('/board-tasks')) return route.fulfill({ json: { current_week: currentWeek, tasks } })
+    if (pathname.endsWith('/board-tasks')) {
+      if (route.request().method() === 'POST') {
+        const fields = route.request().postDataJSON()
+        submittedEstimates.push(fields.estimated_days)
+        return route.fulfill({ status: 201, json: { ...tasks[0], ...fields, id: 100, position: 24 } })
+      }
+      return route.fulfill({ json: { current_week: currentWeek, tasks } })
+    }
     return route.fulfill({ json: [] })
   })
   await page.goto('/task-board')
@@ -229,11 +237,29 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   const addButton = board.getByRole('button', { name: '添加任务' })
   await addButton.click()
   const addDialog = page.getByRole('dialog', { name: '添加任务' })
-  const nameHint = '用尽量简短的一句话描述任务。包括哪些工作内容可放在备注中。'
-  await expect(addDialog.getByText(nameHint, { exact: true })).toBeVisible()
-  await expect(addDialog.getByText(nameHint, { exact: true })).toHaveCSS('color', 'rgb(180, 35, 24)')
-  await expect(addDialog.getByRole('textbox', { name: '任务名称', exact: true })).toHaveAccessibleDescription(nameHint)
-  await addDialog.getByRole('button', { name: '取消' }).click()
+  const nameHint = '用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。'
+  const nameField = addDialog.getByRole('textbox', { name: '任务名称', exact: true })
+  await expect(nameField).toHaveAttribute('placeholder', nameHint)
+  const hintColor = () => nameField.evaluate(element => getComputedStyle(element, '::placeholder').color)
+  expect(await hintColor()).toBe('rgb(101, 107, 115)')
+  await nameField.click()
+  expect(await hintColor()).toBe('rgba(0, 0, 0, 0)')
+  await nameField.fill('预估工时示例')
+  await addDialog.getByLabel('任务类型').selectOption('其他')
+  const estimateField = addDialog.getByRole('textbox', { name: /预估工时/ })
+  await expect(addDialog.getByText('人天', { exact: true })).toBeVisible()
+  const save = addDialog.getByRole('button', { name: '保存' })
+  for (const invalid of ['0', '-1', '无效', '1e2']) {
+    await estimateField.fill(invalid)
+    await save.click()
+    await expect(addDialog.getByRole('alert')).toHaveText('预估工时须为大于 0 的整数或小数。')
+    expect(submittedEstimates).toEqual([])
+  }
+  await estimateField.fill('0.5')
+  await save.click()
+  const newCard = board.getByRole('article', { name: '预估工时示例，优先级低' })
+  await expect(newCard).toContainText('预估 0.5 人天')
+  expect(submittedEstimates).toEqual(['0.5'])
   const buttonTop = (await addButton.boundingBox())!.y
   await lists.first().hover()
   await page.mouse.wheel(0, 600)

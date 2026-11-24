@@ -1,5 +1,6 @@
 from datetime import date, datetime
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Table, Text, UniqueConstraint, func
+from decimal import Decimal
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Table, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.hybrid import hybrid_method
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -105,6 +106,7 @@ class BoardTask(Base):
     priority: Mapped[str] = mapped_column(String(4))
     state: Mapped[str] = mapped_column(String(16), default="inbox")
     completed_week: Mapped[date | None] = mapped_column(Date)
+    estimated_days: Mapped[Decimal | None] = mapped_column(Numeric)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     position: Mapped[int] = mapped_column(BigInteger, default=0)
     meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", ondelete="CASCADE"))

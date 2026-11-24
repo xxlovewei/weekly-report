@@ -65,6 +65,25 @@ def test_board_move_and_week_status_sync(monkeypatch):
     assert recompleted.status_code == 200 and recompleted.json()["completed_week"] == str(next_week)
 
 
+def test_board_estimated_days_are_optional_positive_and_copied():
+    alice = client("alice")
+    board = "/api/board-tasks"
+    fields = {"name": "核对预估工时", "category_name": "其他", "priority": "低"}
+    for value in (0, "0.00", -1, "-0.1", "无效", "NaN", "Infinity", True):
+        assert alice.post(board, json={**fields, "estimated_days": value}).status_code == 422
+    assert alice.get(board).json()["tasks"] == []
+    assert alice.post(board, json=fields).json()["estimated_days"] is None
+    assert alice.post(board, json={**fields, "estimated_days": 2}).json()["estimated_days"] == "2"
+    created = alice.post(board, json={**fields, "estimated_days": "0.125"}, headers={"Idempotency-Key": "estimate"})
+    assert created.status_code == 201, created.text
+    assert alice.post(board, json={**fields, "estimated_days": "0.125"}, headers={"Idempotency-Key": "estimate"}).json() == created.json()
+    data = alice.get(board).json()
+    card = next(card for card in data["tasks"] if card["id"] == created.json()["id"])
+    assert card["estimated_days"] == "0.125"
+    copied = alice.post(f"{board}/{card['id']}/duplicate?revision={card['revision']}&week_start={data['current_week']}")
+    assert copied.status_code == 201 and copied.json()["estimated_days"] == "0.125"
+
+
 @pytest.mark.parametrize("state", ["inbox", "in_progress"])
 def test_transfer_board_card_sends_one_notification_and_preserves_progress(state):
     alice, bob = client("alice"), client("bob")
@@ -73,7 +92,8 @@ def test_transfer_board_card_sends_one_notification_and_preserves_progress(state
     week = f"/api/weeks/{start}"
     bob_id = alice.get("/api/task-transfer-recipients").json()[0]["id"]
     alice_id = bob.get("/api/task-transfer-recipients").json()[0]["id"]
-    card = alice.post(board, json={"name": "接口交接", "category_name": "其他", "priority": "高", "notes": "看板交接备注"}).json()
+    card = alice.post(board, json={"name": "接口交接", "category_name": "其他", "priority": "高",
+                                  "notes": "看板交接备注", "estimated_days": "1.5"}).json()
     if state == "in_progress":
         assert alice.patch(f"{board}/{card['id']}/status",
                            json={"state": state, "revision": card["revision"], "week_start": start}).status_code == 200
@@ -97,6 +117,7 @@ def test_transfer_board_card_sends_one_notification_and_preserves_progress(state
     assert (received["name"], received["state"], received["priority"], received["transferred_by"]) == (
         "接口交接", "inbox", "高", "小王")
     assert received["notes"] == "看板交接备注"
+    assert received["estimated_days"] == "1.5"
     notification, = bob.get("/api/notifications").json()["items"]
     assert notification["kind"] == "转交任务"
     assert notification["target"] == {"board_task": received["id"]}

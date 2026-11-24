@@ -600,7 +600,7 @@ def hand_off_task(db: Session, sender: User, recipient_id: int, source_card: Boa
     issue = source_card.review_issue if source_card else None
     if issue is None and task:
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
-    # 备注直接随卡片送达，进展和工作日待接收人开始任务后恢复到周报。
+    # 备注和预估工时随卡片送达，进展和工作日待接收人开始任务后恢复到周报。
     handoff = ({"description": task.description, "work_days": task.work_days, "status": task.status}
                if task else source_card.handoff)
     status = task.status if task else source_card.assignment_status
@@ -608,6 +608,7 @@ def hand_off_task(db: Session, sender: User, recipient_id: int, source_card: Boa
                           category_name=(task.category_name if task else source_card.category_name) or "",
                           priority=(task.priority if task else source_card.priority) or "低",
                           notes=task.notes if task else source_card.notes,
+                          estimated_days=source_card.estimated_days if source_card else None,
                           meeting_task_id=meeting_task.id if meeting_task else None,
                           assignment_status=status if meeting_task else None,
                           transferred_by=sender.display_name, handoff=handoff)
