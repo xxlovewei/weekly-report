@@ -397,7 +397,14 @@ function drop(event: DragEvent, state: State) {
           <option v-if="form.category_name && !options.includes(form.category_name)" :value="form.category_name">{{ form.category_name }}（历史）</option>
           <option v-for="name in options" :key="name" :value="name">{{ name }}</option>
         </select></label>
-        <label>任务名称<textarea v-model="form.name" rows="2" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" /></label>
+        <label>
+          <span>
+            <span id="board-task-name-label">任务名称</span>
+            <span v-if="!action.card" id="board-task-name-hint" class="board-name-hint">用尽量简短的一句话描述任务。包括哪些工作内容可放在备注中。</span>
+          </span>
+          <textarea v-model="form.name" aria-labelledby="board-task-name-label" :aria-describedby="action.card ? undefined : 'board-task-name-hint'"
+            rows="2" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
+        </label>
         <label>优先级<select v-model="form.priority" :disabled="busy || action.card?.has_other_details">
           <option value="高">高</option><option value="中">中</option><option value="低">低</option>
         </select></label>
@@ -451,6 +458,7 @@ function drop(event: DragEvent, state: State) {
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }
 .board-dialog textarea { width: 100%; overflow-wrap: anywhere; resize: vertical; }
+.board-name-hint { margin-inline-start: 8px; color: #b42318; font-size: .875rem; font-weight: normal; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card.board-target { outline: 2px solid #13766a; outline-offset: 2px; }

@@ -227,6 +227,13 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   }
 
   const addButton = board.getByRole('button', { name: '添加任务' })
+  await addButton.click()
+  const addDialog = page.getByRole('dialog', { name: '添加任务' })
+  const nameHint = '用尽量简短的一句话描述任务。包括哪些工作内容可放在备注中。'
+  await expect(addDialog.getByText(nameHint, { exact: true })).toBeVisible()
+  await expect(addDialog.getByText(nameHint, { exact: true })).toHaveCSS('color', 'rgb(180, 35, 24)')
+  await expect(addDialog.getByRole('textbox', { name: '任务名称', exact: true })).toHaveAccessibleDescription(nameHint)
+  await addDialog.getByRole('button', { name: '取消' }).click()
   const buttonTop = (await addButton.boundingBox())!.y
   await lists.first().hover()
   await page.mouse.wheel(0, 600)
