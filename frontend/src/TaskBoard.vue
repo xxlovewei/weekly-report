@@ -329,7 +329,7 @@ function drop(event: DragEvent, state: State) {
         <button v-if="column.state === 'inbox'" type="button" class="primary-button"
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
         <button v-else-if="column.state === 'in_progress'" type="button" class="secondary-button"
-          :disabled="busy || !canContinue" @click="continueThisWeek">继续本周工作</button>
+          :disabled="busy || !canContinue" @click="continueThisWeek">添加到本周工作</button>
       </header>
       <div class="board-card-list">
         <template v-for="group in column.state === 'done' ? completedGroups : [{ label: '', cards: column.cards }]" :key="group.label">
@@ -359,8 +359,8 @@ function drop(event: DragEvent, state: State) {
                   <strong>{{ card.name || '未命名任务' }}</strong>
                 </div>
               </div>
-              <div class="board-card-actions">
-                <button v-if="card.state !== 'done'" type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
+              <div v-if="card.state !== 'done'" class="board-card-actions">
+                <button type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
                   :disabled="busy || card.has_other_details" :title="card.has_other_details ? '已有历史周明细，无法转交' : '转交任务'"
                   @click="open({ kind: 'transfer', card })">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 15-3-7-8-3zM11 13l10-8" stroke-linecap="round" stroke-linejoin="round"/></svg>

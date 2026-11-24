@@ -100,12 +100,15 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   await expect(detail.getByLabel('完成状态')).toHaveValue('5%')
   await detail.getByLabel('完成状态').selectOption('已完成')
   await expect(page.getByText('✓ 已保存')).toBeVisible()
+  const boardLoaded = page.waitForResponse(response =>
+    response.request().method() === 'GET' && new URL(response.url()).pathname === '/api/board-tasks')
   await page.getByRole('button', { name: '任务看板', exact: true }).click()
-  await expect(completed.getByText(name)).toBeVisible()
-  await completed.getByRole('article', { name: `${name}，优先级高` }).getByRole('button', { name: '修改任务' }).click()
-  const edit = page.getByRole('dialog', { name: '修改任务' })
-  await expect(edit.getByLabel('备注')).toHaveValue('明细修改备注')
-  await edit.getByRole('button', { name: '取消' }).click()
+  // 已完成卡片隐藏操作按钮，备注同步通过看板接口确认。
+  const { tasks } = await (await boardLoaded).json()
+  expect(tasks).toContainEqual(expect.objectContaining({ name, state: 'done', notes: '明细修改备注' }))
+  const completedCard = completed.getByRole('article', { name: `${name}，优先级高` })
+  await expect(completedCard).toBeVisible()
+  await expect(completedCard.locator('.board-card-actions')).toHaveCount(0)
   await page.reload()
   await expect(completed.getByText(name)).toBeVisible()
 
@@ -247,6 +250,7 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   await expect(lastWeek.getByRole('article')).toContainText('已完成任务 3')
   await expect(earlier).toHaveCount(0)
   const meters = thisWeek.getByRole('meter', { name: '完成状态' })
+  await expect(done.locator('.board-card-actions')).toHaveCount(0)
   await expect(meters.first()).toHaveText('100%')
   await expect(meters.first()).toHaveAttribute('aria-valuenow', '100')
   expect(await thisWeek.locator('.board-charge-fill').first().evaluate(fill =>
@@ -254,6 +258,7 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   )).toBe(100)
   await history.click()
   await expect(earlier.getByRole('article')).toHaveCount(2)
+  await expect(earlier.locator('.board-card-actions')).toHaveCount(0)
   await done.getByRole('button', { name: '收起更早任务' }).click()
   await expect(earlier).toHaveCount(0)
 
@@ -299,8 +304,8 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   const expectSharedHeight = async () => {
     expect((await ongoingCard.boundingBox())?.height).toBe((await inboxCard.boundingBox())?.height)
   }
-  const resume = ongoing.getByRole('button', { name: '继续本周工作', exact: true })
-  await expect(ongoing.getByRole('article').getByRole('button', { name: '继续本周工作' })).toHaveCount(0)
+  const resume = ongoing.getByRole('button', { name: '添加到本周工作', exact: true })
+  await expect(ongoing.getByRole('article').getByRole('button', { name: '添加到本周工作' })).toHaveCount(0)
   await expect(resume).toBeEnabled()
   await expectSharedHeight()
   const meter = ongoing.getByRole('meter', { name: '完成状态' })
