@@ -34,7 +34,9 @@ async function openReview(page: Page, issueCount = 1, projectCount = 1, override
       current_week: '2026-11-23',
       tasks: issues.filter(item => item.task_added).map(item => ({
         id: item.id, name: `修改bugISSUE-${String(item.id).padStart(2, '0')}`, category_name: '改bug',
-        priority: '低', state: item.status ? 'done' : 'inbox', revision: 0, position: item.id,
+        // 已完成卡片通过完成周归入「本周」，与实际接口一致。
+        priority: '低', state: item.status === '已完成' ? 'done' : item.status?.endsWith('%') ? 'in_progress' : 'inbox',
+        status: item.status, completed_week: item.status === '已完成' ? '2026-11-23' : null, revision: 0, position: item.id,
         review_issue_id: item.id, has_current_detail: !!item.status, has_other_details: false,
       })),
     } })
