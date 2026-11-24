@@ -44,6 +44,14 @@ const dropBefore = ref<number | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null), action = ref<Dialog | null>(null)
 const form = reactive<CardFields>({ name: '', category_name: '', priority: '低', notes: '' })
 const estimatedDays = ref('')
+const estimatedDayParts = computed(() => {
+  const match = /^(\d*)(\.\d+)?$/.exec(estimatedDays.value)
+  return match ? { whole: BigInt(match[1] || '0'), fraction: match[2] || '' } : null
+})
+const canDecreaseEstimate = computed(() => {
+  const days = estimatedDayParts.value
+  return days !== null && (days.whole > 1n || (days.whole === 1n && /[1-9]/.test(days.fraction)))
+})
 const formError = ref('')
 const openedIssue = ref<number | null>(null)
 const people = ref<MeetingPerson[]>([]), peopleLoading = ref(false), recipientId = ref<number | null>(null)
@@ -72,6 +80,13 @@ const canContinue = computed(() => cards.value.some(card => card.state === 'in_p
 
 function chargeValue(card: Card) {
   return card.state === 'done' ? '100%' : card.status || '5%'
+}
+
+function stepEstimate(direction: 1 | -1) {
+  const days = estimatedDayParts.value
+  if (!days || (direction < 0 && !canDecreaseEstimate.value)) return
+  // 步进只改变整数部分，保留用户输入的小数精度。
+  estimatedDays.value = `${days.whole + BigInt(direction)}${days.fraction}`
 }
 
 function message(cause: unknown) {
@@ -222,7 +237,7 @@ async function submit() {
       } else {
         const estimate = estimatedDays.value
         // 保留小数原文，提交前校验格式和正值，避免浮点转换丢失精度。
-        if (estimate && (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(estimate) || !/[1-9]/.test(estimate))) {
+        if (estimate && (!estimatedDayParts.value || !/[1-9]/.test(estimate))) {
           throw new ApiError(422, '预估工时须为大于 0 的整数或小数。')
         }
         const data = { ...fields, estimated_days: estimate || null }
@@ -411,12 +426,21 @@ function drop(event: DragEvent, state: State) {
           <textarea v-model="form.name" :placeholder="action.card ? undefined : '用尽量简短的一句话描述任务，一个任务工时尽量在5天以内，具体工作内容可写在备注中。'"
             :rows="action.card ? 2 : 3" maxlength="200" required :disabled="busy || action.card?.name_locked || action.card?.has_other_details" />
         </label>
-        <label>优先级<select v-model="form.priority" :disabled="busy || action.card?.has_other_details">
-          <option value="高">高</option><option value="中">中</option><option value="低">低</option>
-        </select></label>
-        <label v-if="!action.card">预估工时
-          <span class="board-estimate-input"><input v-model.trim="estimatedDays" type="text" inputmode="decimal" :disabled="busy" /><span>人天</span></span>
-        </label>
+        <div :class="{ 'board-estimate-row': !action.card }">
+          <div v-if="!action.card" class="board-estimate-field">
+            <label for="board-estimated-days">预估工时（人天）</label>
+            <div class="board-estimate-input">
+              <input id="board-estimated-days" v-model.trim="estimatedDays" type="text" inputmode="decimal" :disabled="busy" />
+              <div class="board-estimate-steppers">
+                <button type="button" aria-label="增加 1 人天" :disabled="busy || !estimatedDayParts" @click="stepEstimate(1)">▲</button>
+                <button type="button" aria-label="减少 1 人天" :disabled="busy || !canDecreaseEstimate" @click="stepEstimate(-1)">▼</button>
+              </div>
+            </div>
+          </div>
+          <label>优先级<select v-model="form.priority" :disabled="busy || action.card?.has_other_details">
+            <option value="高">高</option><option value="中">中</option><option value="低">低</option>
+          </select></label>
+        </div>
         <label>备注<textarea v-model="form.notes" rows="3" maxlength="5000" :disabled="busy" /></label>
       </template>
       <template v-else-if="action.kind === 'transfer'">
@@ -469,7 +493,15 @@ function drop(event: DragEvent, state: State) {
 .board-dialog textarea { width: 100%; overflow-wrap: anywhere; resize: vertical; }
 .board-dialog textarea::placeholder { color: #656b73; }
 .board-dialog textarea:focus::placeholder { color: transparent; }
-.board-estimate-input { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.board-estimate-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.board-estimate-field { display: grid; gap: 7px; }
+.board-estimate-input { position: relative; }
+.board-estimate-input input { padding-inline-end: 42px; }
+.board-estimate-steppers { position: absolute; inset-block: 2px; inset-inline-end: 2px; display: grid; grid-template-rows: repeat(2, 1fr); }
+.board-estimate-steppers button { width: 32px; padding: 0; border: 0; border-inline-start: 1px solid #222; background: #fff; font-size: 10px; }
+.board-estimate-steppers button + button { border-block-start: 1px solid #222; }
+.board-estimate-steppers button:not(:disabled):hover { background: #ffff00; }
+.board-estimate-steppers button:focus-visible { outline-offset: -3px; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
 .board-card.board-target { outline: 2px solid #13766a; outline-offset: 2px; }
