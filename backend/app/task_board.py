@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import Field
+from pydantic import Field, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, aliased, joinedload
 
@@ -38,6 +38,19 @@ class CardMove(Input):
     week_start: date
 
 
+class CardProgress(Input):
+    status: str
+    revision: int = Field(ge=0)
+    week_start: date
+
+    @field_validator("status")
+    @classmethod
+    def valid_progress(cls, value):
+        if value not in main.STATUSES or not value.endswith("%"):
+            raise ValueError("请选择有效的完成百分比")
+        return value
+
+
 class CardPosition(Input):
     revision: int = Field(ge=0)
     week_start: date
@@ -58,6 +71,8 @@ def put_at_top(db: Session, card: BoardTask, state: str):
     if card.state != state:
         card.position = position_at_edge(db, card.user_id, state, top=True)
         card.state = state
+        if state != "in_progress":
+            card.pending_status = None
         # 只在状态转换时记录完成周，编辑和排序不会改写历史归属。
         card.completed_week = main.current_work_week() if state == "done" else None
 
@@ -103,7 +118,7 @@ def delete_detail(db: Session, detail: Task):
         task.position = position
 
 
-def sync_card_from_detail(db: Session, card: BoardTask, task: Task | TaskPlan, fields):
+def sync_card_from_detail(db: Session, card: BoardTask, task: Task | TaskPlan, fields, *, status_changed=True):
     changed = False
     for field, attr, value in (
         ("task_group", "name", task.task_group),
@@ -116,7 +131,8 @@ def sync_card_from_detail(db: Session, card: BoardTask, task: Task | TaskPlan, f
             changed = True
     if "status" in fields:
         state = state_for_status(task.status)
-        changed |= state != card.state
+        # 百分比变化也更新修订号，防止其他页面的旧卡片覆盖进度。
+        changed |= status_changed or state != card.state
         put_at_top(db, card, state)
         changed |= set_assignment_status(card, task.status)
     if changed:
@@ -128,6 +144,8 @@ def percentage(status: str | None):
 
 
 def pending_progress(card: BoardTask):
+    if card.pending_status:
+        return card.pending_status
     status = card.assignment_status if card.meeting_task_id else (card.handoff or {}).get("status")
     return percentage(status)
 
@@ -145,9 +163,9 @@ def card_json(card: BoardTask, *, current=False, historical=False, status: str |
             "has_current_detail": current, "has_other_details": historical}
 
 
-def add_inbox_card(db: Session, owner: int, *, name: str, category_name="", priority="低", **details):
+def add_inbox_card(db: Session, owner: int, *, name: str, category_name="", priority="低", top=False, **details):
     card = BoardTask(user_id=owner, name=name, category_name=category_name, priority=priority,
-                     position=position_at_edge(db, owner, "inbox", top=False), **details)
+                     position=position_at_edge(db, owner, "inbox", top=top), **details)
     db.add(card)
     db.flush()
     return card
@@ -216,7 +234,7 @@ def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idem
     if old is not None:
         return old
     validate_task_type(db, owner, data.category_name)
-    card = add_inbox_card(db, owner, **data.model_dump())
+    card = add_inbox_card(db, owner, top=True, **data.model_dump())
     return finish(db, owner, key, "board:add", card_json(card))
 
 
@@ -353,6 +371,7 @@ def attach_detail(db: Session, card: BoardTask, week: Week, position: int, statu
             issue.task_id = detail.id
             issue.status = status
         card.handoff = None
+        card.pending_status = None
     return detail
 
 
@@ -405,13 +424,43 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
             position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
             detail = attach_detail(db, card, week, position + 1, status)
             week.revision += 1
-        elif detail.status != status:
-            detail.status = status
-            week.revision += 1
-            if card.review_issue:
-                card.review_issue.status = status
+        else:
+            update_detail_status(card, detail, status)
         set_assignment_status(card, status)
     put_at_top(db, card, data.state)
     card.revision += 1
     db.commit()
     return card_json(card, current=detail is not None, historical=historical, status=detail.status if detail else None)
+
+
+def update_detail_status(card: BoardTask, detail: Task, status: str):
+    if detail.status != status:
+        detail.status = status
+        detail.week.revision += 1
+        if card.review_issue:
+            card.review_issue.status = status
+
+
+@router.patch("/{card_id}/progress")
+def update_progress(card_id: int, data: CardProgress, auth=Depends(active_session), db: Session = Depends(get_db)):
+    owner = auth[0].id
+    lock_task_changes(db)
+    main.apply_due_plans(db, owner, main.current_work_week())
+    card, historical = checked_card(db, owner, card_id, data.revision, data.week_start)
+    if card.state != "in_progress":
+        raise HTTPException(409, "只有进行中的任务可以调整进度")
+    week = week_row(db, owner, data.week_start)
+    detail = board_detail(db, card.id, week.id) if week else None
+    previous = detail.status if detail else progress_status(db, card)
+    if previous != data.status:
+        if detail:
+            update_detail_status(card, detail, data.status)
+        else:
+            # 续做前保留新进度，历史明细和本周任务列表继续沿用原有数据。
+            card.pending_status = data.status
+            if card.review_issue:
+                card.review_issue.status = data.status
+        set_assignment_status(card, data.status)
+        card.revision += 1
+    db.commit()
+    return card_json(card, current=detail is not None, historical=historical, status=data.status)

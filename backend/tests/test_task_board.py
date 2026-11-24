@@ -335,21 +335,60 @@ def test_concurrent_move_creates_only_one_detail():
     assert detail["board_task_id"] == card["id"]
 
 
+@pytest.mark.parametrize("continuation", ["add-in-progress", "carry-over"])
+def test_board_progress_syncs_current_week_and_preserves_history(monkeypatch, continuation):
+    alice, bob = client("alice"), client("bob")
+    board = "/api/board-tasks"
+    start = current_week()
+    week = f"/api/weeks/{start}"
+    card = alice.post(board, json={"name": "调整任务进度", "category_name": "其他", "priority": "低"}).json()
+    path = f"{board}/{card['id']}"
+    body = {"week_start": str(start), "revision": card["revision"], "status": "40%"}
+    assert alice.patch(f"{path}/progress", json=body).status_code == 409
+    card = alice.patch(f"{path}/status", json={"week_start": str(start), "revision": card["revision"], "state": "in_progress"}).json()
+    body["revision"] = card["revision"]
+    assert bob.patch(f"{path}/progress", json=body).status_code == 404
+    for invalid in ("35%", "100%", "已完成"):
+        assert alice.patch(f"{path}/progress", json={**body, "status": invalid}).status_code == 422
+    updated = alice.patch(f"{path}/progress", json=body)
+    assert updated.status_code == 200, updated.text
+    assert (updated.json()["status"], updated.json()["position"]) == ("40%", card["position"])
+    data = alice.get(week).json()
+    detail, = data["tasks"]
+    assert detail["status"] == "40%"
+    changed = mutate(alice, "PATCH", f"{week}/tasks/{detail['id']}", data["revision"], {"status": "50%"})
+    assert changed.status_code == 200, changed.text
+    assert alice.patch(f"{path}/progress", json={**body, "revision": updated.json()["revision"]}).status_code == 409
+
+    next_start = start + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: next_start)
+    card, = alice.get(board).json()["tasks"]
+    updated = alice.patch(f"{path}/progress", json={"week_start": str(next_start), "revision": card["revision"], "status": "70%"})
+    assert updated.status_code == 200 and not updated.json()["has_current_detail"]
+    assert alice.get(board).json()["tasks"][0]["status"] == "70%"
+    assert alice.get(week).json()["tasks"][0]["status"] == "50%"
+    assert alice.get(f"/api/weeks/{next_start}").json()["tasks"] == []
+    payload = {"mode": "append"} if continuation == "carry-over" else None
+    continued = mutate(alice, "POST", f"/api/weeks/{next_start}/{continuation}", 0, payload)
+    assert continued.status_code == 200, continued.text
+    assert continued.json()["tasks"][0]["status"] == "70%"
+
+
 def test_board_order_persists_and_cross_column_moves_insert_at_top():
     alice = client("alice")
     board = "/api/board-tasks"
     week_start = str(current_week())
     first, second, third = (alice.post(board, json={"name": name, "category_name": "其他", "priority": "低"}).json()
                             for name in ("第一条", "第二条", "第三条"))
+    def order(state):
+        return [card["id"] for card in alice.get(board).json()["tasks"] if card["state"] == state]
+
+    assert order("inbox") == [third["id"], second["id"], first["id"]]
     url = f"{board}/{third['id']}/position"
     body = {"before_id": first["id"], "revision": third["revision"], "week_start": week_start}
     assert alice.patch(url, json=body).status_code == 200
     assert alice.patch(url, json=body).status_code == 409
-
-    def order(state):
-        return [card["id"] for card in alice.get(board).json()["tasks"] if card["state"] == state]
-
-    assert order("inbox") == [third["id"], first["id"], second["id"]]
+    assert order("inbox") == [second["id"], third["id"], first["id"]]
     for card in (first, second):
         response = alice.patch(f"{board}/{card['id']}/status", json={
             "state": "in_progress", "revision": card["revision"], "week_start": week_start,

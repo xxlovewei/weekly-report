@@ -13,6 +13,7 @@ test('看板延时展示任务详情，预估人天居中显示在秒表内', as
       current_week: '2026-11-23', tasks: [
         { id: 1, name: '接口联调', state: 'in_progress', status: '60%', category_name: '联调联试', priority: '高', notes: '核对请求字段\n验证异常返回', estimated_days: '0.125', position: 0 },
         { id: 2, name: '整理资料', state: 'done', completed_week: '2026-11-23', priority: '低', estimated_days: null, position: 0 },
+        { id: 3, name: '待排期任务', state: 'inbox', priority: '低', position: 0 },
       ],
     } })
     return route.fulfill({ json: [] })
@@ -53,6 +54,8 @@ test('看板延时展示任务详情，预估人天居中显示在秒表内', as
   await expect(preview).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(preview).toBeHidden()
+  await page.getByRole('article', { name: '待排期任务，优先级低' }).hover()
+  await expect(preview).toContainText('未开始')
 })
 
 test('看板按条提示新任务，已提示的卡片再次进入时不重播', async ({ page }) => {
@@ -135,6 +138,9 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   const second = inbox.getByRole('article', { name: `${secondName}，优先级低` })
   await expect(second).toBeVisible()
   expect(await card.evaluate(element => element.getBoundingClientRect().height)).toBe(height)
+  await expect(inbox.getByRole('article').first()).toContainText(secondName)
+  await card.dragTo(second, { targetPosition: { x: 25, y: 5 } })
+  await expect(inbox.getByRole('article').first()).toContainText(name)
   await second.dragTo(card, { targetPosition: { x: 25, y: 5 } })
   await expect(inbox.getByRole('article').filter({ hasText: /第一条看板卡片|第二条看板卡片/ }).first()).toContainText(secondName)
   await page.reload()
@@ -273,14 +279,14 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
       if (route.request().method() === 'POST') {
         const fields = route.request().postDataJSON()
         submittedEstimates.push(fields.estimated_days)
-        return route.fulfill({ status: 201, json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: 24 } })
+        return route.fulfill({ status: 201, json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: -1 } })
       }
       return route.fulfill({ json: { current_week: currentWeek, tasks } })
     }
     if (pathname.endsWith('/board-tasks/100') && route.request().method() === 'PATCH') {
       const fields = route.request().postDataJSON()
       submittedEdits.push(fields.estimated_days)
-      return route.fulfill({ json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: 24, revision: 1 } })
+      return route.fulfill({ json: { ...tasks[0], ...fields, review_issue_id: null, id: 100, position: -1, revision: 1 } })
     }
     if (pathname.endsWith('/reviews/issues/1')) return route.fulfill({ status: 404, json: { detail: '审查问题不存在' } })
     return route.fulfill({ json: [] })
@@ -350,6 +356,7 @@ test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ pa
   await estimateField.fill('0.5')
   await save.click()
   const newCard = board.getByRole('article', { name: '预估工时示例，优先级低' })
+  await expect(lists.first().getByRole('article').first()).toContainText('预估工时示例')
   await expect(newCard.getByRole('img', { name: '预估 0.5 人天' })).toHaveText('0.5')
   expect(submittedEstimates).toEqual(['0.5'])
   const inbox = board.getByRole('region', { name: '任务箱' })
@@ -452,10 +459,20 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   ].map((task, position) => ({ ...task, state: task.status ? 'in_progress' : 'inbox', category_name: '其他', position, revision: 0, has_other_details: false }))
   const user = { id: 42, username: 'member', display_name: '测试成员', role: 'user', is_active: true, status: '正常', must_change_password: false }
   let requests = 0
+  const savedProgress: unknown[] = []
   await page.route('**/api/**', route => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user, csrf_token: 'test' } })
     if (url.pathname.endsWith('/board-tasks')) return route.fulfill({ json: { current_week: start, tasks } })
+    if (url.pathname.endsWith('/board-tasks/1/progress')) {
+      expect(route.request().method()).toBe('PATCH')
+      const payload = route.request().postDataJSON()
+      savedProgress.push(payload)
+      if (payload.status === '90%') return route.fulfill({ status: 409, json: { detail: '请重新载入后操作' } })
+      tasks[0].status = payload.status
+      tasks[0].revision++
+      return route.fulfill({ json: tasks[0] })
+    }
     if (url.pathname.endsWith(`/weeks/${start}`)) return route.fulfill({ json: { revision: 8, tasks: [] } })
     if (url.pathname.endsWith(`/weeks/${start}/add-in-progress`)) {
       expect(route.request().method()).toBe('POST')
@@ -484,9 +501,9 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
   await expect(ongoing.getByRole('article').getByRole('button', { name: '添加到本周工作' })).toHaveCount(0)
   await expect(resume).toBeEnabled()
   await expectChargeDoesNotChangeHeight()
-  const meter = ongoing.getByRole('meter', { name: '完成状态' })
-  await expect(meter).toHaveText(['30%', '70%', '90%'])
-  await expect(meter.nth(1)).toHaveAttribute('aria-valuenow', '70')
+  const sliders = ongoing.getByRole('slider', { name: '完成状态' })
+  await expect(ongoing.locator('.board-charge-value')).toHaveText(['30%', '70%', '90%'])
+  await expect(sliders.nth(1)).toHaveAttribute('aria-valuenow', '70')
   const fillLayer = ongoing.locator('.board-charge-fill').nth(1)
   await expect.poll(() => fillLayer.evaluate(el => getComputedStyle(el, '::before').animationName)).toMatch(/^board-charge-in/)
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -494,12 +511,31 @@ test('进行中栏统一续做，电池显示各卡片的完成百分比', async
     const fill = getComputedStyle(el, '::before')
     return { width: Math.round(parseFloat(fill.width) / el.getBoundingClientRect().width * 100), animation: fill.animationName }
   })).toEqual({ width: 70, animation: 'none' })
+  const slider = sliders.first()
+  await expect(slider).toHaveCSS('cursor', 'ew-resize')
+  const handle = (await slider.boundingBox())!
+  const track = (await ongoingCard.locator('.board-charge-fill').boundingBox())!
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 4)
+  await page.mouse.down()
+  await page.mouse.move(track.x + track.width * 0.63, handle.y - 25, { steps: 5 })
+  await expect(slider).toHaveAttribute('aria-valuenow', '60')
+  await expect(ongoingCard.locator('.board-charge-value')).toHaveText('60%')
+  expect(savedProgress).toEqual([])
+  await page.mouse.up()
+  await expect.poll(() => savedProgress).toEqual([{ status: '60%', revision: 0, week_start: start }])
+  await expect(slider).toHaveAttribute('aria-valuetext', '60%')
+  await expect(slider).not.toHaveAttribute('aria-disabled', 'true')
+  await slider.press('End')
+  await expect(page.getByRole('alert')).toContainText('请重新载入后操作')
+  await expect(slider).toHaveAttribute('aria-valuetext', '60%')
+  await page.reload()
+  await expect(slider).toHaveAttribute('aria-valuetext', '60%')
   await resume.click()
   await expect(page.getByRole('status').filter({ hasText: '已将进行中的任务加入本周工作' })).toBeVisible()
   await expect(resume).toBeDisabled()
   expect(requests).toBe(1)
   await page.setViewportSize({ width: 390, height: 650 })
-  await meter.first().scrollIntoViewIfNeeded()
-  await expect(meter.first()).toBeInViewport()
+  await slider.scrollIntoViewIfNeeded()
+  await expect(slider).toBeInViewport()
   await expectChargeDoesNotChangeHeight()
 })

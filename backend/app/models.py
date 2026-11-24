@@ -106,6 +106,7 @@ class BoardTask(Base):
     priority: Mapped[str] = mapped_column(String(4))
     state: Mapped[str] = mapped_column(String(16), default="inbox")
     completed_week: Mapped[date | None] = mapped_column(Date)
+    pending_status: Mapped[str | None] = mapped_column(String(16))
     estimated_days: Mapped[Decimal | None] = mapped_column(Numeric)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     position: Mapped[int] = mapped_column(BigInteger, default=0)

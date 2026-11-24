@@ -611,6 +611,7 @@ def hand_off_task(db: Session, sender: User, recipient_id: int, source_card: Boa
                           estimated_days=source_card.estimated_days if source_card else None,
                           meeting_task_id=meeting_task.id if meeting_task else None,
                           assignment_status=status if meeting_task else None,
+                          pending_status=source_card.pending_status if source_card and not task else None,
                           transferred_by=sender.display_name, handoff=handoff)
     if issue:
         issue.board_task = card
@@ -638,6 +639,7 @@ def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, use
     row = checked_week(db, auth[0], week_start, revision, user_id)
     task = own_task(db, task_id, row.id)
     values = task_patch_values(db, row.user_id, data)
+    status_changed = "status" in values and task.status != values["status"]
     current = current_work_week()
     card = linked_card(db, task_id)
     renamed = values.get("task_group", task.task_group) != task.task_group
@@ -651,7 +653,7 @@ def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, use
         rename_meeting_task(db, task.meeting_task, task.task_group, skip_week_id=row.id)
     if card and row.start_date == current:
         fields = values.keys() if renamed else values.keys() - {"task_group"}
-        sync_card_from_detail(db, card, task, fields)
+        sync_card_from_detail(db, card, task, fields, status_changed=status_changed)
     if "status" in values:
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
         if issue:
@@ -776,7 +778,10 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
         db.add(copied)
         db.flush()
         if card:
-            if card.state == "in_progress" and not (source.status and source.status.endswith("%")):
+            if card.pending_status:
+                copied.status = card.pending_status
+                card.pending_status = None
+            elif card.state == "in_progress" and not (source.status and source.status.endswith("%")):
                 copied.status = "5%"
             db.add(BoardTaskDetail(task_id=copied.id, board_task_id=card.id, week_id=row.id))
             card.revision += 1
@@ -941,6 +946,8 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
                 new_assignments.append(card)
                 continue
             status_changed = card.assignment_status != assignment.status
+            if status_changed:
+                card.pending_status = None
             if renamed:
                 card.name = item.name
             card.assignment_status = assignment.status

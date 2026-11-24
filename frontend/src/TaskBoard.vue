@@ -4,6 +4,7 @@ import { api, ApiError, newIdempotencyKey } from './api'
 import stopwatch from './assets/task-stopwatch.png'
 import { addDays } from './dates'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
+import { taskStatuses } from './taskStatuses'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, MeetingPerson, TaskPriority, WeekData } from './types'
 
@@ -12,6 +13,7 @@ const columns = [
   { state: 'in_progress', name: '进行中' },
   { state: 'done', name: '已完成' },
 ] as const
+const progressSteps = taskStatuses.filter(status => status.endsWith('%')).map(status => Number.parseInt(status)).reverse()
 type State = typeof columns[number]['state']
 interface CardFields { name: string; category_name: string; priority: TaskPriority; notes: string }
 interface Card extends CardFields {
@@ -42,6 +44,8 @@ const loading = ref(true), busy = ref(false), error = ref('')
 const notice = ref('')
 const dragged = ref<number | null>(null), hovered = ref<State | null>(null)
 const dropBefore = ref<number | null>(null)
+const progressDraft = ref<{ cardId: number; percent: number } | null>(null)
+let progressPointer: { id: number; startX: number; width: number; percent: number } | null = null
 const previewId = ref<number | null>(null)
 const previewPanel = ref<HTMLElement | null>(null)
 const previewStyle = ref<Record<string, string>>({})
@@ -86,7 +90,79 @@ const historyCards = computed(() => completedGroups.value[2].cards)
 const canContinue = computed(() => cards.value.some(card => card.state === 'in_progress' && !card.has_current_detail))
 
 function chargeValue(card: Card) {
+  if (progressDraft.value?.cardId === card.id) return `${progressDraft.value.percent}%`
   return card.state === 'done' ? '100%' : card.status || '5%'
+}
+
+function startProgressDrag(event: PointerEvent, card: Card) {
+  if (event.button !== 0 || busy.value || progressDraft.value) return
+  const handle = event.currentTarget as HTMLElement
+  const track = handle.parentElement?.querySelector('.board-charge-fill')
+  if (!track) return
+  event.preventDefault()
+  closePreview()
+  handle.focus({ preventScroll: true })
+  handle.setPointerCapture(event.pointerId)
+  const percent = Number.parseInt(chargeValue(card))
+  progressPointer = { id: event.pointerId, startX: event.clientX, width: track.getBoundingClientRect().width, percent }
+  progressDraft.value = { cardId: card.id, percent }
+}
+
+function updateProgressDrag(event: PointerEvent) {
+  if (progressPointer?.id !== event.pointerId || !progressDraft.value) return
+  const { startX, width, percent } = progressPointer
+  // 按指针移动距离换算进度，让鼠标抓住竖线后不会跳到其他档位。
+  const position = percent + (event.clientX - startX) / width * 100
+  progressDraft.value.percent = progressSteps.reduce((closest, step) =>
+    Math.abs(step - position) < Math.abs(closest - position) ? step : closest)
+}
+
+function endProgressDrag(event: PointerEvent, card: Card) {
+  if (progressPointer?.id !== event.pointerId || !progressDraft.value) return
+  updateProgressDrag(event)
+  progressPointer = null
+  void saveProgress(card, progressDraft.value.percent)
+}
+
+function cancelProgressDrag(event: PointerEvent) {
+  if (progressPointer?.id === event.pointerId) {
+    progressPointer = null
+    progressDraft.value = null
+  }
+}
+
+function progressKey(event: KeyboardEvent, card: Card) {
+  if (event.key === 'Escape' && progressPointer) {
+    const handle = event.currentTarget as HTMLElement
+    handle.releasePointerCapture(progressPointer.id)
+    progressPointer = null
+    progressDraft.value = null
+    return
+  }
+  if (busy.value || progressDraft.value) return
+  let index = progressSteps.indexOf(Number.parseInt(chargeValue(card)))
+  switch (event.key) {
+    case 'ArrowRight': case 'ArrowUp': index++; break
+    case 'ArrowLeft': case 'ArrowDown': index--; break
+    case 'Home': index = 0; break
+    case 'End': index = progressSteps.length - 1; break
+    default: return
+  }
+  event.preventDefault()
+  void saveProgress(card, progressSteps[Math.max(0, Math.min(index, progressSteps.length - 1))])
+}
+
+async function saveProgress(card: Card, percent: number) {
+  const status = `${percent}%`
+  if (status !== (card.status || '5%')) {
+    progressDraft.value = { cardId: card.id, percent }
+    await perform(async () => {
+      saveCard(await api<Card>(`/board-tasks/${card.id}/progress`, 'PATCH', {
+        status, revision: card.revision, week_start: weekStart.value,
+      }))
+    })
+  }
+  progressDraft.value = null
 }
 
 function cancelPreviewTimer() { window.clearTimeout(previewTimer) }
@@ -99,7 +175,7 @@ function closePreview() {
 
 function schedulePreview(event: PointerEvent | FocusEvent, card: Card) {
   const anchor = event.currentTarget as HTMLElement
-  if (busy.value || dragged.value !== null || action.value || openedIssue.value !== null) return
+  if (busy.value || dragged.value !== null || progressDraft.value || action.value || openedIssue.value !== null) return
   if ('pointerType' in event ? event.pointerType === 'touch' : !anchor.matches(':focus-visible')) return
   if (previewId.value === card.id) { cancelPreviewTimer(); return }
   closePreview()
@@ -323,7 +399,10 @@ async function submit() {
       } else {
         const body = JSON.stringify(data)
         if (createRequest?.body !== body) createRequest = { body, key: newIdempotencyKey() }
-        saveCard(await api<Card>('/board-tasks', 'POST', data, createRequest.key))
+        const card = await api<Card>('/board-tasks', 'POST', data, createRequest.key)
+        saveCard(card)
+        await nextTick()
+        document.getElementById(`board-task-${card.id}`)?.closest('.board-card-list')?.scrollTo({ top: 0 })
       }
     } else if (pending.kind === 'remove') {
       await api(path(pending.card), 'DELETE')
@@ -358,7 +437,7 @@ function requestMove(card: Card, state: State) {
   else void perform(() => move(card, state))
 }
 function startDrag(event: DragEvent, card: Card) {
-  if (busy.value || !event.dataTransfer) { event.preventDefault(); return }
+  if (busy.value || progressDraft.value || !event.dataTransfer) { event.preventDefault(); return }
   closePreview()
   dragged.value = card.id
   event.dataTransfer.effectAllowed = 'move'
@@ -454,7 +533,8 @@ function drop(event: DragEvent, state: State) {
               @focus="schedulePreview($event, card)" @focusout="leavePreview"
               @dblclick="editInboxCard($event, card)"
               @dragstart="startDrag($event, card)" @dragend="resetDrag">
-              <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true" :style="{ '--charge': chargeValue(card) }" />
+              <div v-if="card.state !== 'inbox'" class="board-charge-fill" aria-hidden="true"
+                :class="{ 'board-charge-adjusting': progressDraft?.cardId === card.id }" :style="{ '--charge': chargeValue(card) }" />
               <div class="board-card-content">
                 <div class="board-card-title">
                   <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
@@ -492,8 +572,19 @@ function drop(event: DragEvent, state: State) {
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
                 </button>
               </div>
-              <span v-if="card.state !== 'inbox'" class="board-charge-value" role="meter" aria-label="完成状态"
-                aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Number.parseInt(chargeValue(card), 10)">{{ chargeValue(card) }}</span>
+              <span v-if="card.state === 'done'" class="board-charge-value" role="meter" aria-label="完成状态"
+                aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">100%</span>
+              <template v-else-if="card.state === 'in_progress'">
+                <span class="board-charge-value" aria-hidden="true">{{ chargeValue(card) }}</span>
+                <span class="board-charge-handle" role="slider" aria-label="完成状态" tabindex="0"
+                  :aria-valuemin="progressSteps[0]" :aria-valuemax="progressSteps[progressSteps.length - 1]"
+                  :aria-valuenow="Number.parseInt(chargeValue(card))" :aria-valuetext="chargeValue(card)"
+                  :aria-disabled="busy || undefined" :style="{ '--charge': chargeValue(card) }"
+                  :class="{ 'board-charge-adjusting': progressDraft?.cardId === card.id }"
+                  @pointerdown="startProgressDrag($event, card)" @pointermove="updateProgressDrag"
+                  @pointerup="endProgressDrag($event, card)" @pointercancel="cancelProgressDrag"
+                  @lostpointercapture="cancelProgressDrag" @dragstart.prevent.stop @keydown="progressKey($event, card)" />
+              </template>
             </article>
           </section>
         </template>
@@ -507,7 +598,7 @@ function drop(event: DragEvent, state: State) {
       <dl>
         <dt>任务类型</dt><dd>{{ previewCard.category_name || '未选择' }}</dd>
         <dt>优先级</dt><dd>{{ previewCard.priority }}</dd>
-        <dt>状态</dt><dd>{{ columns.find(column => column.state === previewCard?.state)?.name }}<template v-if="previewCard.state === 'in_progress'"> · {{ chargeValue(previewCard) }}</template></dd>
+        <dt>状态</dt><dd>{{ previewCard.state === 'inbox' ? '未开始' : previewCard.state === 'done' ? '已完成' : `进行中 · ${chargeValue(previewCard)}` }}</dd>
         <template v-if="previewCard.completed_week"><dt>完成周</dt><dd>{{ previewCard.completed_week }}</dd></template>
         <template v-if="previewCard.estimated_days"><dt>预估工时</dt><dd>{{ previewCard.estimated_days }} 人天</dd></template>
         <template v-if="previewCard.transferred_by"><dt>转交人</dt><dd>{{ previewCard.transferred_by }}</dd></template>
@@ -675,10 +766,22 @@ function drop(event: DragEvent, state: State) {
   border-inline-end: 2px solid #2a9e8a;
   background: repeating-linear-gradient(90deg, transparent 0 23px, #207a7624 23px 24px), linear-gradient(110deg, #9ddfea, #92edcb);
   box-shadow: 4px 0 12px #39bca052;
-  animation: board-charge-in 650ms cubic-bezier(.2,.7,.25,1);
-  transition: inline-size 430ms cubic-bezier(.2,.7,.25,1);
+  animation: board-charge-in 650ms var(--charge-easing);
+  transition: inline-size 430ms var(--charge-easing);
 }
 @keyframes board-charge-in { from { inline-size: 0; } }
+.board-card-charging { --charge-easing: cubic-bezier(.2,.7,.25,1); }
+/* 命中区域随填充边缘一起移动，卡片的按钮和整卡拖动仍可使用。 */
+.board-charge-handle {
+  position: absolute; z-index: 1; inset-block: 0; inset-inline-start: var(--charge); inline-size: 14px;
+  translate: -50%; cursor: ew-resize; touch-action: none; -webkit-user-select: none; user-select: none;
+  animation: board-charge-handle-in 650ms var(--charge-easing);
+  transition: inset-inline-start 430ms var(--charge-easing);
+}
+.board-charge-handle:focus-visible { outline: 2px solid #123f50; outline-offset: -2px; }
+.board-card-charging :is(.board-card-actions, .task-meeting-link, .task-review-info) { position: relative; z-index: 2; }
+@keyframes board-charge-handle-in { from { inset-inline-start: 0; } }
+.board-charge-fill.board-charge-adjusting::before, .board-charge-handle.board-charge-adjusting { transition: none; }
 /* 百分比和填充层共用卡片背景，卡片高度由任务内容决定。 */
 .board-charge-value {
   position: absolute;
@@ -694,7 +797,7 @@ function drop(event: DragEvent, state: State) {
   text-shadow: 0 1px #ffffffa8;
 }
 @media (prefers-reduced-motion: reduce) {
-  .board-charge-fill::before { animation: none; transition: none; }
+  .board-charge-fill::before, .board-charge-handle { animation: none; transition: none; }
 }
 .board-dialog { margin: auto; }
 .board-dialog::backdrop { background: #0009; }

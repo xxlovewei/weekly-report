@@ -44,6 +44,8 @@ def apply_due_plans(db: Session, owner: int, through: date):
             status = latest_detail_status(db, card, before=week.start_date)
             positions[week.id] += 1
             is_current = week.start_date == current
+            if is_current and card.pending_status:
+                status = card.pending_status
             if is_current and plan.notes:
                 card.notes = plan.notes
             detail = attach_detail(db, card, week, positions[week.id], status, description=plan.description,
