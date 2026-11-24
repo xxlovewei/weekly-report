@@ -18,7 +18,8 @@ def plans_for_week(db: Session, week_id: int):
 
 
 def plan_rows(db: Session, week):
-    return [main.task_fields_json(plan) for plan in db.scalars(plans_for_week(db, week.id))] if week else []
+    return [{**main.task_fields_json(plan), "board_task_id": plan.board_task_id}
+            for plan in db.scalars(plans_for_week(db, week.id))] if week else []
 
 
 def apply_due_plans(db: Session, owner: int, through: date):
@@ -122,12 +123,39 @@ def copy_in_progress(week_start: str, revision: int, idempotency_key: str | None
     if not sources:
         return {**main.work_week_json(db, week), "no_source": True}
     week, _ = checked_plan(db, auth[0], week_start, revision)
-    position = db.scalar(select(func.max(TaskPlan.position)).where(TaskPlan.week_id == week.id)) or 0
-    for position, card in enumerate(sources, position + 1):
-        # 复用原卡片，计划任务进展由用户填写。
-        db.add(TaskPlan(week_id=week.id, board_task_id=card.id, position=position, task_group=card.name,
-                        category_name=card.category_name or None, priority=card.priority, status=progress_status(db, card)))
+    append_card_plans(db, week, sources)
     return main.finish(db, owner, idempotency_key, operation, main.work_week_json(db, week))
+
+
+@router.post("/from-board/{card_id}", status_code=201)
+def add_plan_from_board(week_start: str, card_id: int, revision: int,
+                        idempotency_key: str | None = Header(default=None),
+                        auth=Depends(main.self_work_write), db: Session = Depends(get_db)):
+    start = check_plan_week(db, week_start)
+    owner = auth[0].id
+    operation = f"plan:from-board:{week_start}:{card_id}"
+    old = main.idempotent(db, owner, idempotency_key, operation)
+    if old is not None:
+        return old
+    card = db.get(BoardTask, card_id)
+    if card is None or card.user_id != owner or card.state not in ("inbox", "in_progress"):
+        raise HTTPException(404, "该任务已不在你的任务箱或进行中栏目")
+    week = main.week_row(db, owner, start)
+    # 与批量复制共用事务锁，同一张卡片在同一周只添加一次。
+    if week and db.scalar(select(TaskPlan.id).where(TaskPlan.week_id == week.id, TaskPlan.board_task_id == card.id)):
+        return main.work_week_json(db, week)
+    week, _ = checked_plan(db, auth[0], week_start, revision)
+    append_card_plans(db, week, [card])
+    return main.finish(db, owner, idempotency_key, operation, main.work_week_json(db, week))
+
+
+def append_card_plans(db: Session, week: Week, cards: list[BoardTask]):
+    position = db.scalar(select(func.max(TaskPlan.position)).where(TaskPlan.week_id == week.id)) or 0
+    for position, card in enumerate(cards, position + 1):
+        # 复用原卡片，任务进展和工作日期留给下周计划填写。
+        status = progress_status(db, card) if card.state == "in_progress" else None
+        db.add(TaskPlan(week_id=week.id, board_task_id=card.id, position=position, task_group=card.name,
+                        category_name=card.category_name or None, priority=card.priority, status=status))
 
 
 @router.put("/order")

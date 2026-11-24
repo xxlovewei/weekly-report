@@ -67,6 +67,7 @@ def test_copy_in_progress_reuses_card_and_rolls_over_latest_actual_status(monkey
     copied = mutate(alice, "POST", copy_path, 0, key="continue").json()
     plan, = copied["plans"]
     assert (plan["task_group"], plan["status"], plan["description"]) == ("跨周联调", "40%", "")
+    assert mutate(alice, "POST", f"{future}/plans/from-board/{card['id']}", copied["revision"]).json() == copied
     assert mutate(alice, "POST", copy_path, 0, key="continue").json() == copied
     assert mutate(alice, "POST", copy_path, copied["revision"]).json() == {**copied, "no_source": True}
     plan_path = f"{future}/plans/{plan['id']}"
@@ -89,3 +90,30 @@ def test_copy_in_progress_reuses_card_and_rolls_over_latest_actual_status(monkey
     assert (detail["status"], detail["description"], detail["notes"]) == ("70%", "继续联调\n跟进修复", "核对接口\n跟进反馈")
     assert alice.get(future).json() == week
     assert week["plans"][0]["status"] == "已完成"
+
+
+def test_add_plan_from_board_reuses_owned_active_card_once(monkeypatch):
+    current = date(2026, 11, 23)
+    monkeypatch.setattr("app.main.current_work_week", lambda: current)
+    alice, bob = client("alice"), client("bob")
+    board = "/api/board-tasks"
+    week = f"/api/weeks/{current + timedelta(days=7)}"
+    card = alice.post(board, json={"name": "下周联调", "category_name": "联调联试", "priority": "高"}).json()
+    path = f"{week}/plans/from-board/{card['id']}"
+    assert mutate(bob, "POST", path, 0).status_code == 404
+    assert mutate(alice, "POST", path, 1).status_code == 409
+    response = mutate(alice, "POST", path, 0, key="from-board")
+    assert response.status_code == 201
+    added = response.json()
+    plan, = added["plans"]
+    assert (plan["board_task_id"], plan["task_group"], plan["category_name"], plan["priority"], plan["status"]) == (
+        card["id"], "下周联调", "联调联试", "高", None)
+    assert mutate(alice, "POST", path, 0, key="from-board").json() == added
+    assert mutate(alice, "POST", path, added["revision"]).json() == added
+    assert alice.get(board).json()["tasks"] == [card]
+    assert alice.get(week).json() == added
+    completed = alice.patch(f"{board}/{card['id']}/status", json={
+        "state": "done", "revision": card["revision"], "week_start": current.isoformat(),
+    })
+    assert completed.status_code == 200
+    assert mutate(alice, "POST", path, added["revision"]).status_code == 404

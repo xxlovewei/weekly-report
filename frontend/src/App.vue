@@ -13,6 +13,7 @@ import MessageCenter from './MessageCenter.vue'
 import ScheduledTasks from './ScheduledTasks.vue'
 import TaskTable from './TaskTable.vue'
 import TaskBoard from './TaskBoard.vue'
+import PlanTaskBoard from './PlanTaskBoard.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { addDays, mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
@@ -169,6 +170,9 @@ watch(() => user.value?.id, () => {
 })
 const week = ref<WeekData>({ revision: 0, tasks: [] })
 const workTasks = computed(() => futureWork.value ? week.value.plans ?? [] : week.value.tasks)
+const planBoardOpen = ref(false), planBoardTrigger = ref<HTMLButtonElement | null>(null)
+const draggedPlanCard = ref<number | null>(null), planDropActive = ref(false)
+const plannedCardIds = computed(() => new Set((week.value.plans ?? []).flatMap(plan => plan.board_task_id == null ? [] : [plan.board_task_id])))
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
 const activeTab = ref<number | null>(null), reportTasks = ref<Task[]>([])
 const draggedReportTabId = ref<number | null>(null)
@@ -385,6 +389,36 @@ async function structural(job: () => Promise<WeekData>) {
   try { await structuralPromise } finally { structuralPromise = null }
 }
 function addTask() { void structural(() => api(workPath('/tasks', true), 'POST', undefined, newIdempotencyKey())) }
+function setPlanCardDrag(id: number | null) {
+  draggedPlanCard.value = id
+  planDropActive.value = false
+}
+function closePlanBoard(restoreFocus = true) {
+  if (!planBoardOpen.value) return
+  planBoardOpen.value = false
+  setPlanCardDrag(null)
+  if (restoreFocus) planBoardTrigger.value?.focus()
+}
+function addPlanCard(id: number) {
+  if (!planBoardOpen.value || !futureWork.value || !canManageOwnWork.value || mutating.value || plannedCardIds.value.has(id)) return
+  void structural(() => api(workPath(`/plans/from-board/${id}`, true), 'POST', undefined, newIdempotencyKey()))
+}
+function allowPlanDrop(event: DragEvent) {
+  if (draggedPlanCard.value === null || mutating.value || !event.dataTransfer) return
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'copy'
+  planDropActive.value = true
+}
+function leavePlanDrop(event: DragEvent) {
+  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) planDropActive.value = false
+}
+function dropPlanCard(event: DragEvent) {
+  const id = draggedPlanCard.value
+  if (id === null) return
+  event.preventDefault()
+  setPlanCardDrag(null)
+  addPlanCard(id)
+}
 function duplicateTask(id: number) { void structural(() => api(`/weeks/${selectedWeek.value}/tasks/${id}/duplicate?revision=${week.value.revision}`, 'POST', undefined, newIdempotencyKey())) }
 function reorderTasks(ids: number[]) { void structural(() => api(workPath('/tasks/order', true), 'PUT', { task_ids: ids })) }
 function transferTask(id: number, userId: number) {
@@ -693,6 +727,7 @@ onMounted(async () => {
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
 watch(() => [route.name, route.query.week, route.query.task, route.query.meeting], () => { if (ready.value && user.value) void loadPage() })
+watch([page, selectedWeek, workMember, canManageOwnWork, futureWork, () => user.value?.id], () => closePlanBoard(false))
 watch(unreadMessages, count => { if (!count) showUnreadReminder.value = false })
 watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
   showUnreadReminder.value = false
@@ -826,7 +861,10 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <template v-if="page === 'work'">
             <button v-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="secondary-button" type="button" :disabled="mutating" @click="selectWeek(addDays(currentWorkWeek, 7))">填写下周计划</button>
             <button v-if="canManageOwnWork && !workReadonly && (futureWork || selectedWeek === currentWorkWeek)" class="secondary-button" type="button" :disabled="mutating" @click="addInProgress">↖ {{ futureWork ? '复制进行中的任务' : '添加进行中的任务' }}</button>
-            <button v-if="canManageOwnWork && !workReadonly && (futureWork || selectedWeek === currentWorkWeek)" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ {{ futureWork ? '新增任务计划' : '新增任务' }}</button>
+            <button v-if="canManageOwnWork && futureWork" ref="planBoardTrigger" class="primary-button" type="button"
+              :disabled="mutating && !planBoardOpen" :aria-expanded="planBoardOpen" aria-controls="plan-task-board"
+              @click="planBoardOpen ? closePlanBoard() : planBoardOpen = true">＋ 新增任务计划</button>
+            <button v-else-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button>
           </template>
           <template v-else>
             <button class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button>
@@ -849,14 +887,18 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
       <TaskBoard v-else-if="page === 'task-board'" :key="user.id" :target-task="targetTask" :target-refresh="boardTargetRefresh" />
-      <div v-else-if="page === 'work'">
+      <div v-else-if="page === 'work'" @dragover="allowPlanDrop" @dragleave="leavePlanDrop" @drop="dropPlanCard">
         <div class="section-head">
           <strong>{{ futureWork ? '任务计划表' : '任务明细' }} <span v-if="!workLoading">{{ workTasks.length }}</span></strong>
           <div v-if="!workReadonly && !workLoading" class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
         <p v-if="workLoading" role="status">正在加载{{ futureWork ? '任务计划' : '任务明细' }}…</p>
         <p v-else-if="workReadonly" class="message">{{ futureWork ? '可提前填写本人下一周的任务计划。' : '仅当前周可编辑任务明细。' }}</p>
+        <p v-if="planBoardOpen" class="plan-drop-hint" :class="{ 'plan-drop-active': planDropActive }">将任务拖到这里添加到计划</p>
         <TaskTable v-if="!workLoading" :key="selectedWeek + ':' + (workMember ?? user.id) + ':' + futureWork" :tasks="workTasks" :categories="categories" work-view :plan="futureWork" :readonly="workReadonly" :delegated="delegatedWork" :busy="mutating" :target-task="futureWork ? null : targetTask" :is-current-week="selectedWeek === currentWorkWeek" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
+        <Teleport v-if="planBoardOpen" to="body">
+          <PlanTaskBoard :planned-ids="plannedCardIds" :busy="mutating" @drag="setPlanCardDrag" @add="addPlanCard" @close="closePlanBoard()" />
+        </Teleport>
         <details v-if="!workLoading && !futureWork && week.plans?.length" class="work-plan-history">
           <summary>任务计划表（历史） · {{ week.plans.length }} 项</summary>
           <TaskTable :tasks="week.plans" plan readonly />
