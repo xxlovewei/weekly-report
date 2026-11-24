@@ -2,8 +2,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0021_board_completion_week"
-down_revision = "0020_task_plan_board_sync"
+revision = "0022_board_completion_week"
+down_revision = "0021_board_task_reminders"
 branch_labels = None
 depends_on = None
 

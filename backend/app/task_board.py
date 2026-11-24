@@ -3,15 +3,16 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, aliased, joinedload
 
 from . import main
 from .db import get_db
 from .main import Input, active_session, finish, idempotent, lock_task_changes, validate_task_type, week_row
-from .models import BoardTask, BoardTaskDetail, Task, TaskPlan, Week
+from .models import BoardTask, BoardTaskDetail, Notification, Task, TaskPlan, Week
 
 router = APIRouter(prefix="/api/board-tasks")
+REMINDER_KINDS = ("转交任务", "会议指派")
 
 
 class CardInput(Input):
@@ -181,8 +182,25 @@ def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
             payload["has_current_detail"] = True
         elif linked_week is not None and linked_week < start:
             payload["has_other_details"] = True
+    pending = db.execute(select(Notification.id, Notification.board_task_id, Notification.kind)
+                         .join(BoardTask, BoardTask.id == Notification.board_task_id)
+                         .where(BoardTask.user_id == auth[0].id, Notification.user_id == auth[0].id,
+                                Notification.kind.in_(REMINDER_KINDS), Notification.board_reminded.is_(False))
+                         .order_by(Notification.id))
+    reminders = [{"id": item.id, "card_id": item.board_task_id, "kind": item.kind} for item in pending]
     db.commit()
-    return {"current_week": start.isoformat(), "tasks": list(cards.values())}
+    return {"current_week": start.isoformat(), "tasks": list(cards.values()), "reminders": reminders}
+
+
+@router.patch("/reminders/{notification_id}")
+def acknowledge_reminder(notification_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
+    owner = auth[0].id
+    # 引导是否展示独立于消息已读。重复上报不改变通知状态。
+    db.execute(update(Notification).where(Notification.id == notification_id, Notification.user_id == owner,
+                                          Notification.kind.in_(REMINDER_KINDS), Notification.board_reminded.is_(False))
+               .values(board_reminded=True))
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("", status_code=201)
@@ -263,6 +281,27 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     db.delete(card)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{card_id}/transfer")
+def transfer_card(card_id: int, revision: int, week_start: date, data: main.TaskTransferInput,
+                  key: str | None = Header(default=None, alias="Idempotency-Key"),
+                  auth=Depends(active_session), db: Session = Depends(get_db)):
+    sender = auth[0]
+    lock_task_changes(db)
+    operation = f"board:transfer:{card_id}:{data.user_id}"
+    old = idempotent(db, sender.id, key, operation)
+    if old is not None:
+        return old
+    card, _ = checked_card(db, sender.id, card_id, revision, week_start, fields=True)
+    if card.state == "done":
+        raise HTTPException(409, "已完成的任务不可转交")
+    week = week_row(db, sender.id, week_start)
+    detail = board_detail(db, card.id, week.id) if week else None
+    main.hand_off_task(db, sender, data.user_id, card, detail)
+    if detail:
+        week.revision += 1
+    return finish(db, sender.id, key, operation, {"ok": True})
 
 
 def progress_status(db: Session, card: BoardTask, detail: Task | None = None):

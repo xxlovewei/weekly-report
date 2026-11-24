@@ -116,3 +116,31 @@ export function startTaskActionsTour(onShown: () => void) {
   tour.drive()
   return () => { if (tour.isActive()) tour.destroy() }
 }
+
+export function startBoardTaskTour(steps: ReadonlyArray<{
+  element: HTMLElement; title: string; description: string; onShown: () => void
+}>) {
+  const tour = driver({
+    animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    duration: 160,
+    popoverClass: 'sidebar-tour-popover',
+    showButtons: ['next', 'close'],
+    closeBtnLabel: '关闭提醒',
+    nextBtnText: '下一条',
+    doneBtnText: '完成',
+    showProgress: steps.length > 1,
+    progressText: '{{current}} / {{total}}',
+    stagePadding: 4,
+    overlayClickBehavior: 'none',
+    disableActiveInteraction: true,
+    skipMissingElement: true,
+    steps: steps.map(({ element, title, description, onShown }) => {
+      // Driver.js 将说明按 HTML 渲染，任务名称和转交人始终作为文本显示。
+      const text = document.createElement('span')
+      text.textContent = description
+      return { element, popover: { title, description: text.innerHTML, onPopoverRender: onShown } }
+    }),
+  })
+  tour.drive()
+  return () => { if (tour.isActive()) tour.destroy() }
+}

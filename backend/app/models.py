@@ -233,4 +233,5 @@ class Notification(Base):
     board_task_id: Mapped[int | None] = mapped_column(ForeignKey("board_tasks.id", ondelete="SET NULL"))
     review_date: Mapped[date | None] = mapped_column(Date)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    board_reminded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
