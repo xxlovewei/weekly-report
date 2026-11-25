@@ -9,6 +9,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .shell{height:100vh;height:100dvh;min-height:0;grid-template-rows:minmax(0,1fr);overflow:hidden}
 .shell .content{min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .shell .work-area{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:6px}
+.shell .board-work-area{display:flex;flex-direction:column}
 @media(max-width:800px){
   .shell{display:flex;flex-direction:column}
   .shell .mobile-toggle{flex:none}

@@ -204,37 +204,39 @@ function drop(event: DragEvent, state: State) {
         <button v-if="column.state === 'inbox'" type="button" class="primary-button"
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
       </header>
-      <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
-      <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
-        tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id }"
-        :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
-        @dragstart="startDrag($event, card)" @dragend="resetDrag">
-        <div class="board-card-content">
-          <strong>{{ card.name || '未命名任务' }}</strong>
-          <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
-            :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
-          <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
-            :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
-          <button v-if="card.state === 'inbox'" type="button" class="mini-button"
-            :disabled="busy" @click="requestMove(card, 'in_progress')">开始任务</button>
-          <button v-if="card.state === 'in_progress' && !card.has_current_detail" type="button" class="mini-button"
-            :disabled="busy" @click="requestMove(card, 'in_progress')">继续本周工作</button>
-        </div>
-        <div class="board-card-actions">
-          <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
-            :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
-          </button>
-          <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy || card.has_other_details"
-            :title="card.has_other_details ? '已关联其他周的任务明细' : '修改任务'" @click="open({ kind: 'edit', card })">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
-          </button>
-          <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
-            :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
-          </button>
-        </div>
-      </article>
+      <div class="board-card-list">
+        <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
+        <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
+          tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id }"
+          :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
+          @dragstart="startDrag($event, card)" @dragend="resetDrag">
+          <div class="board-card-content">
+            <strong>{{ card.name || '未命名任务' }}</strong>
+            <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
+              :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
+            <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
+              :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
+            <button v-if="card.state === 'inbox'" type="button" class="mini-button"
+              :disabled="busy" @click="requestMove(card, 'in_progress')">开始任务</button>
+            <button v-if="card.state === 'in_progress' && !card.has_current_detail" type="button" class="mini-button"
+              :disabled="busy" @click="requestMove(card, 'in_progress')">继续本周工作</button>
+          </div>
+          <div class="board-card-actions">
+            <button type="button" class="icon-btn" aria-label="复制任务" :disabled="busy || card.has_other_details"
+              :title="card.has_other_details ? '已关联其他周的任务明细' : '复制任务'" @click="duplicate(card)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="1"/><path d="M16 8V4H4v12h4"/></svg>
+            </button>
+            <button type="button" class="icon-btn" aria-label="修改任务" :disabled="busy || card.has_other_details"
+              :title="card.has_other_details ? '已关联其他周的任务明细' : '修改任务'" @click="open({ kind: 'edit', card })">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
+            </button>
+            <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
+              :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
+            </button>
+          </div>
+        </article>
+      </div>
     </section>
   </div>
 
@@ -266,8 +268,21 @@ function drop(event: DragEvent, state: State) {
 </template>
 
 <style scoped>
-.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 16px; }
-.board-column { display: grid; align-content: start; gap: 12px; min-width: 0; min-height: 180px; padding: 14px; }
+.board {
+  flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start; align-items: start; gap: 16px;
+  /* 栏目高度取页头下方的可用空间，随窗口和页头尺寸变化。 */
+  container-type: size;
+}
+.board-column {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px;
+  min-width: 0; min-height: 180px; min-height: min(180px, 100cqh);
+  max-height: 100dvh; max-height: 100cqh; padding: 14px;
+}
+.board-card-list {
+  display: grid; align-content: start; gap: 12px; min-height: 0; overflow-y: auto;
+  margin: -4px; padding: 4px;
+}
 .board-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; flex-wrap: wrap; }
 .board-heading h2, .board-empty { margin: 0; }
 .board-empty { padding: 14px 0; color: #555; }

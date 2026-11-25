@@ -117,3 +117,54 @@ test('新增和复制周任务同步到看板，删除当周任务同步移除�
   await expect(page.getByRole('region', { name: '进行中' })).toBeVisible()
   await expect(cards).toHaveCount(0)
 })
+
+test('三个看板栏目随窗口限高，卡片列表独立滚动', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 780 })
+  await signIn(page, 'alice')
+  const columns = ['任务箱', '进行中', '已完成']
+  const tasks = ['inbox', 'in_progress', 'done'].flatMap((state, column) =>
+    Array.from({ length: 24 }, (_, position) => ({
+      id: column * 24 + position + 1, name: `${columns[column]}任务 ${position + 1}`, state,
+      category_name: '其他', priority: '低', position, revision: 0,
+      has_current_detail: state !== 'inbox', has_other_details: false,
+    })),
+  )
+  await page.route('**/api/board-tasks', route => route.fulfill({ json: { current_week: '2026-11-23', tasks } }))
+  await page.getByRole('button', { name: '任务看板', exact: true }).click()
+  const board = page.locator('.board')
+  const lists = board.locator('.board-card-list')
+  await expect(lists).toHaveCount(3)
+
+  const columnSizes = () => board.locator('.board-column').evaluateAll(elements => elements.map(column => {
+    const list = column.querySelector<HTMLElement>('.board-card-list')!
+    return { height: column.clientHeight, visible: list.clientHeight, total: list.scrollHeight }
+  }))
+  const original = await columnSizes()
+  const availableHeight = await board.evaluate(element => element.clientHeight)
+  for (const size of original) {
+    expect(size.height).toBeLessThanOrEqual(availableHeight)
+    expect(size.total).toBeGreaterThan(size.visible)
+  }
+
+  const addButton = board.getByRole('button', { name: '添加任务' })
+  const buttonTop = (await addButton.boundingBox())!.y
+  await lists.first().hover()
+  await page.mouse.wheel(0, 600)
+  await expect.poll(() => lists.first().evaluate(list => list.scrollTop)).toBeGreaterThan(0)
+  expect(await lists.evaluateAll(elements => elements.slice(1).map(list => list.scrollTop))).toEqual([0, 0])
+  expect(await board.evaluate(element => element.parentElement!.scrollTop)).toBe(0)
+  expect((await addButton.boundingBox())!.y).toBe(buttonTop)
+  await lists.first().getByRole('article').last().scrollIntoViewIfNeeded()
+  await expect(lists.first().getByRole('article').last()).toBeInViewport()
+
+  await page.setViewportSize({ width: 1440, height: 540 })
+  const resized = await columnSizes()
+  for (const [index, size] of resized.entries()) expect(size.height).toBeLessThan(original[index].height)
+
+  await page.setViewportSize({ width: 390, height: 650 })
+  const done = board.getByRole('region', { name: '已完成' })
+  await done.getByRole('heading').scrollIntoViewIfNeeded()
+  await expect(done.getByRole('heading')).toBeInViewport()
+  await done.getByRole('article').last().scrollIntoViewIfNeeded()
+  await expect(done.getByRole('article').last()).toBeInViewport()
+})
