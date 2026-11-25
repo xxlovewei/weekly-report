@@ -94,6 +94,20 @@ def test_daily_report_is_retry_safe_and_syncs_issue_status_with_weekly_task(monk
     detail = alice.get(issue_path).json()
     assert detail == {**updated[0], "project_alias": project["alias"]}
     assert updated[0]["title"] == "检查缺少的空值判断" and updated[0]["suggestion"] == "调用前先判断参数是否为空。"
+    current_card, = alice.get(board).json()["tasks"]
+    deleted = alice.delete(f"{board}/{current_card['id']}",
+                           params={"revision": current_card["revision"], "week_start": current_week()})
+    assert deleted.status_code == 200
+    assert alice.get(issue_path).json()["task_added"] is False
+    assert alice.get(day).json()["issues"][0]["task_added"] is False
+    assert alice.post(f"{issue_path}/task").status_code == 200
+    assert bob.post(f"{issue_path}/task").status_code == 200
+    replacement, = alice.get(board).json()["tasks"]
+    assert replacement["id"] != current_card["id"] and replacement["review_issue_id"] == mine["id"]
+    assert replacement["state"] == "done" and replacement["has_current_detail"]
+    assert bob.get(board).json()["tasks"] == []
+    assert alice.get(issue_path).json()["task_added"] is True
+    assert alice.get(day).json()["issues"][0]["task_added"] is True
     for entry, status, column in ((unknown, "40%", "in_progress"), (completed, "已完成", "done")):
         path = f"/api/reviews/issues/{entry['id']}"
         assert alice.patch(path, json={"status": status}).status_code == 200

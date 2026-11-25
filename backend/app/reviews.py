@@ -309,7 +309,7 @@ def issue_json(row, names, user, task_owner=None):
         **row.details, "id": row.id, "project_id": row.project_id, "author": row.author,
         "author_name": names.get(author, row.author or "无名氏"), "mine": author == user.username.lower(),
         "anonymous": author not in names, "title": row.title, "severity": row.severity,
-        "status": row.status, "notes": row.notes, "task_added": row.task_added,
+        "status": row.status, "notes": row.notes, "task_added": row.board_task_id is not None,
         "editable": task_owner is None or task_owner == user.id or user.has_role("admin"),
     }
 
@@ -409,7 +409,8 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
 def create_issue_task(issue_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
     lock_task_changes(db)
     issue = get_issue(db, issue_id)
-    if issue.task_added:
+    # 删除看板卡片会清空关联，历史添加标记不参与去重。
+    if issue.board_task_id is not None:
         return {"ok": True}
     if issue.status == "忽略":
         raise HTTPException(422, "已忽略的问题无法添加到任务看板")
