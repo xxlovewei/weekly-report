@@ -42,7 +42,7 @@ test.beforeEach(async ({ page }) => {
 test('新增与修改任务回车续编号并自动保存', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
-  const existing = page.getByRole('textbox', { name: '任务描述' }).first()
+  const existing = page.getByRole('textbox', { name: '本周任务进展' }).first()
   await existing.press('End')
   await existing.press('Enter')
   await existing.pressSequentially('继续工作')
@@ -52,7 +52,7 @@ test('新增与修改任务回车续编号并自动保存', async ({ page }) => 
   await expect(existing).toHaveValue('7、原有工作\n8、继续工作')
 
   await page.getByRole('button', { name: /新增任务/ }).click()
-  const added = page.getByRole('textbox', { name: '任务描述' }).nth(1)
+  const added = page.getByRole('textbox', { name: '本周任务进展' }).nth(1)
   await added.fill('1. 开发')
   await added.press('End')
   await added.press('Enter')
@@ -69,7 +69,7 @@ test('新增与修改任务回车续编号并自动保存', async ({ page }) => 
 })
 
 test('连续Backspace删除正文并回到上一项时，后续编号递减且可整体撤销', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. BC\n3. D\n4. E')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(10, 10))
   await description.press('Backspace')
@@ -92,7 +92,7 @@ test('连续Backspace删除正文并回到上一项时，后续编号递减且�
 })
 
 test('行中续号、选区替换、普通换行及输入法确认', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. 接口联调\n9. 后续')
   await description.press('Control+Home')
   for (let i = 0; i < 5; i++) await description.press('ArrowRight')
@@ -132,7 +132,7 @@ test('行中续号、选区替换、普通换行及输入法确认', async ({ pa
 })
 
 test('中间插入重排与撤销重做是一组操作', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B\n3. C')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(4, 4))
   await description.press('Enter')
@@ -156,7 +156,7 @@ test('中间插入重排与撤销重做是一组操作', async ({ page }) => {
 test('删除、剪切及边界粘贴只维护原连续组', async ({ page, context }) => {
   const clipboardAvailable = await page.evaluate(() => !!navigator.clipboard)
   if (clipboardAvailable) await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('5. A\n6. B\n7. C\n说明\n1、D')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(5, 10))
   await description.press('Control+x')
@@ -182,7 +182,7 @@ test('删除、剪切及边界粘贴只维护原连续组', async ({ page, conte
 })
 
 test('项内续行与空项保持同组，手动改号保留', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(4, 4))
   await description.press('Shift+Enter')
@@ -197,7 +197,7 @@ test('项内续行与空项保持同组，手动改号保留', async ({ page }) 
 })
 
 test('组合输入只提交一次，可整体撤销', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. ')
   await expect(page.getByText('✓ 已保存')).toBeVisible()
   const patches: string[] = []
@@ -214,7 +214,7 @@ test('组合输入只提交一次，可整体撤销', async ({ page }) => {
 })
 
 test('5000字符超限拒绝整次操作，撤销历史按任务隔离', async ({ page }) => {
-  const first = page.getByRole('textbox', { name: '任务描述' }).first()
+  const first = page.getByRole('textbox', { name: '本周任务进展' }).first()
   await first.fill('1. ' + 'A'.repeat(4997))
   await first.press('End')
   await first.press('Enter')
@@ -224,7 +224,7 @@ test('5000字符超限拒绝整次操作，撤销历史按任务隔离', async (
   await expect(first).toHaveValue('😀'.repeat(5000))
   await first.fill('原任务')
   await page.getByRole('button', { name: /新增任务/ }).click()
-  const second = page.getByRole('textbox', { name: '任务描述' }).nth(1)
+  const second = page.getByRole('textbox', { name: '本周任务进展' }).nth(1)
   await second.fill('新任务')
   await second.press('Control+z')
   await expect(second).toHaveValue('')
@@ -239,7 +239,7 @@ test('保存失败重试保持重排文本和撤销能力，窄屏无溢出', as
       await route.fulfill({ status: 500, json: { detail: '保存暂时失败' } })
     } else await route.fallback()
   })
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(4, 4))
   await description.press('Enter')
@@ -258,7 +258,7 @@ test('保存失败重试保持重排文本和撤销能力，窄屏无溢出', as
 })
 
 test('真实拖放整项移动只记录一次，可撤销', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B\n3. C')
   await description.focus()
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(5, 10))
@@ -281,7 +281,7 @@ test('真实拖放整项移动只记录一次，可撤销', async ({ page }) => 
 })
 
 test('非可取消输入与浏览器撤销输入事件走同一事务', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B\n3. C')
   await description.evaluate(el => {
     const textarea = el as HTMLTextAreaElement
@@ -297,7 +297,7 @@ test('非可取消输入与浏览器撤销输入事件走同一事务', async ({
 })
 
 test('只有input的续号与撤销、外部拖入清单仍能接入原组', async ({ page }) => {
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B')
   await description.evaluate(el => {
     const textarea = el as HTMLTextAreaElement
@@ -330,7 +330,7 @@ test('内容冲突重试不丢编号，切周清除旧历史，只读汇总无�
     const path = new URL(route.request().url()).pathname
     await route.fulfill({ json: path.includes('/users/') ? { revision: 1, tasks: [{ id: 1, position: 1, category_name: null, task_group: '', description: '1. A\n2. B', status: null, work_days: [], notes: '' }] } : [{ id: 1, name: '测试用户', is_active: true }] })
   })
-  const description = page.getByRole('textbox', { name: '任务描述' })
+  const description = page.getByRole('textbox', { name: '本周任务进展' })
   await description.fill('1. A\n2. B')
   await description.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(4, 4))
   await description.press('Enter')
@@ -342,7 +342,7 @@ test('内容冲突重试不丢编号，切周清除旧历史，只读汇总无�
   const previous = new Date(`${current}T00:00:00Z`)
   previous.setUTCDate(previous.getUTCDate() - 7)
   await page.getByRole('button', { name: `${previous.toISOString().slice(0, 10)}，选择该周`, exact: true }).click()
-  await expect(page.getByText('仅当前周可编辑。')).toBeVisible()
+  await expect(page.getByText('仅当前周可编辑任务明细。')).toBeVisible()
   await expect(description).toHaveCount(0)
   await page.getByRole('button', { name: '回到本周' }).click()
   await expect(description).toHaveValue('1. A\n2. \n3. B')
@@ -350,6 +350,6 @@ test('内容冲突重试不丢编号，切周清除旧历史，只读汇总无�
   await expect(description).toHaveValue('1. A\n2. \n3. B')
   await page.getByRole('button', { name: /周报汇总/ }).click()
   await expect(page.getByText('1. A\n2. B', { exact: true })).toBeVisible()
-  await expect(page.getByRole('textbox', { name: '任务描述' })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: '本周任务进展' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0)
 })

@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 from .db import get_db
-from .models import BoardTask, BoardTaskDetail, Category, Idempotency, LoginSession, Meeting, MeetingTask, Notification, ReviewIssue, ReviewRun, Task, User, Week, ReleaseRecord, meeting_updaters
+from .models import BoardTask, BoardTaskDetail, Category, Idempotency, LoginSession, Meeting, MeetingTask, Notification, ReviewIssue, ReviewRun, Task, TaskPlan, User, Week, ReleaseRecord, meeting_updaters
 from .credential_crypto import EncryptedCredentials, decrypt_credentials, public_key
 
 app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -136,8 +136,11 @@ def user_json(user: User):
             "role": "admin" if user.has_role("admin") else "user", "roles": user.roles,
             "is_active": user.is_active, "status": user.status, "must_change_password": user.must_change_password}
 
+def task_fields_json(task: Task | TaskPlan):
+    return {"id": task.id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "priority": task.priority, "work_days": task.work_days, "notes": task.notes}
+
 def task_json(task: Task):
-    return {"id": task.id, "meeting_task_id": task.meeting_task_id, "position": task.position, "category_name": task.category_name, "task_group": task.task_group, "description": task.description, "status": task.status, "priority": task.priority, "transferred_by": task.transferred_by, "work_days": task.work_days, "notes": task.notes}
+    return {**task_fields_json(task), "meeting_task_id": task.meeting_task_id, "transferred_by": task.transferred_by}
 
 def meeting_person_json(user: User):
     return {"id": user.id, "username": user.username, "display_name": user.display_name}
@@ -145,9 +148,9 @@ def meeting_person_json(user: User):
 def meeting_task_json(task: MeetingTask):
     db = object_session(task)
     assignments = []
-    for linked in task.linked_tasks:
-        person = db.get(User, linked.week.user_id)
-        assignments.append({"user_id": person.id, "status": linked.status, "person": meeting_person_json(person)})
+    for card in task.assignments:
+        person = db.get(User, card.user_id)
+        assignments.append({"user_id": person.id, "status": card.assignment_status, "person": meeting_person_json(person)})
     return {"id": task.id, "position": task.position, "name": task.name, "status": task.status, "assignments": assignments}
 
 
@@ -212,7 +215,10 @@ def work_owner(db: Session, actor: User, user_id: int | None):
 
 def writable_week(actor: User, week_start: str):
     start = monday(week_start)
-    if not actor.has_role("admin") and start != current_work_week():
+    current = current_work_week()
+    if start > current:
+        raise HTTPException(403, "未来周请填写任务计划")
+    if not actor.has_role("admin") and start != current:
         raise HTTPException(403, "普通用户只能修改当前周的任务明细")
     return start
 
@@ -242,7 +248,9 @@ def week_row(db: Session, user_id: int, start: date, create=False):
 def week_json(db: Session, row: Week | None):
     if not row:
         return {"revision": 0, "tasks": []}
-    tasks = db.execute(select(Task, ReviewIssue.id, Meeting.id, Meeting.meeting_date, MeetingTask.name, BoardTaskDetail.board_task_id)
+    assignment_count = (select(func.count()).select_from(BoardTask)
+                        .where(BoardTask.meeting_task_id == Task.meeting_task_id).correlate(Task).scalar_subquery())
+    tasks = db.execute(select(Task, ReviewIssue.id, Meeting.id, Meeting.meeting_date, MeetingTask.name, BoardTaskDetail.board_task_id, assignment_count)
                        .outerjoin(ReviewIssue, ReviewIssue.task_id == Task.id)
                        .outerjoin(MeetingTask, MeetingTask.id == Task.meeting_task_id)
                        .outerjoin(Meeting, Meeting.id == MeetingTask.meeting_id)
@@ -251,9 +259,16 @@ def week_json(db: Session, row: Week | None):
     return {"revision": row.revision, "tasks": [
         {**task_json(task), "task_group": task.task_group or meeting_name or "",
          "board_task_id": board_task_id, "review_issue_id": issue_id, "meeting_id": meeting_id,
-         "meeting_date": meeting_date.isoformat() if meeting_date else None}
-        for task, issue_id, meeting_id, meeting_date, meeting_name, board_task_id in tasks
+         "meeting_date": meeting_date.isoformat() if meeting_date else None, "name_locked": count > 1}
+        for task, issue_id, meeting_id, meeting_date, meeting_name, board_task_id, count in tasks
     ]}
+
+def work_week_json(db: Session, row: Week | None):
+    payload = week_json(db, row)
+    plans = plan_rows(db, row)
+    if plans:
+        payload["plans"] = plans
+    return payload
 
 def bump(db: Session, row: Week, expected: int):
     result = db.execute(update(Week).where(Week.id == row.id, Week.revision == expected).values(revision=Week.revision + 1))
@@ -493,7 +508,11 @@ def remove_category(category_id: int, auth=Depends(active_session), db: Session 
 
 @app.get("/api/weeks/{week_start}")
 def get_week(week_start: str, user_id: int | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
-    return week_json(db, week_row(db, work_owner(db, auth[0], user_id), monday(week_start)))
+    row = week_row(db, work_owner(db, auth[0], user_id), monday(week_start))
+    apply_current_plans(db, row)
+    payload = work_week_json(db, row)
+    db.commit()
+    return payload
 
 def lock_task_changes(db: Session):
     # 指派、复制和跨人同步采用同一事务锁，避免跨周加锁顺序造成死锁。
@@ -516,7 +535,7 @@ def add_task(week_start: str, revision: int, idempotency_key: str | None = Heade
     row = checked_week(db, auth[0], week_start, revision)
     task = Task(week_id=row.id, position=len(week_json(db, row)["tasks"]) + 1, description="", status=None, work_days=[], notes="")
     db.add(task); db.flush()
-    return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
+    return finish(db, auth[0].id, idempotency_key, operation, work_week_json(db, row))
 
 def own_task(db: Session, task_id: int, week_id: int):
     task = db.get(Task, task_id)
@@ -540,28 +559,34 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
     sender = auth[0]
     source = checked_week(db, sender, week_start, revision)
     task = own_task(db, task_id, source.id)
-    if db.get(BoardTaskDetail, task_id):
-        raise HTTPException(409, "看板关联明细不可转交")
+    link = db.get(BoardTaskDetail, task_id)
+    if link and source.start_date != current_work_week():
+        raise HTTPException(409, "只可转交当前周的看板任务明细")
     recipient = db.scalar(transfer_recipients(sender.id).where(User.id == data.user_id).with_for_update())
     if recipient is None:
         raise HTTPException(422, "请选择其他可用的普通用户")
     if task.meeting_task_id:
         meeting_task = task.meeting_task
-        if any(linked.week.user_id == recipient.id for linked in meeting_task.linked_tasks):
+        if any(card.user_id == recipient.id for card in meeting_task.assignments):
             raise HTTPException(409, "接收人已被指派同一会议任务，请选择其他用户")
         meeting_task.meeting.revision += 1
 
-    # 转交与两份周报的修订号、序号更新在同一事务中提交。
-    target = week_row(db, recipient.id, source.start_date, create=True)
-    db.execute(update(Task).where(Task.week_id == source.id, Task.position > task.position).values(position=Task.position - 1))
-    task.position = (db.scalar(select(func.max(Task.position)).where(Task.week_id == target.id)) or 0) + 1
-    task.week_id = target.id
-    task.transferred_by = sender.display_name
-    target.revision += 1
-    db.flush()
-    db.add(Notification(user_id=recipient.id, kind="转交任务", task_id=task.id,
-                        title=f"{sender.display_name} 转交了任务：{task.task_group or (task.meeting_task.name if task.meeting_task else '') or task.description or '未命名任务'}"[:500]))
-    payload = week_json(db, source)
+    name = task.task_group or (task.meeting_task.name if task.meeting_task else "") or task.description or "未命名任务"
+    issue_id = db.scalar(select(ReviewIssue.id).where(ReviewIssue.task_id == task.id))
+    card = add_inbox_card(db, recipient.id, name=name[:200], category_name=task.category_name or "",
+                          priority=task.priority or "低", meeting_task_id=task.meeting_task_id,
+                          assignment_status=task.status if task.meeting_task_id else None,
+                          transferred_by=sender.display_name, handoff={
+                              "description": task.description, "notes": task.notes, "work_days": task.work_days,
+                              "status": task.status, "review_issue_id": issue_id,
+                          })
+    source_card = db.get(BoardTask, link.board_task_id) if link else None
+    delete_detail(db, task)
+    if source_card:
+        db.delete(source_card)
+    db.add(Notification(user_id=recipient.id, kind="转交任务", board_task_id=card.id,
+                        title=f"{sender.display_name} 转交了任务：{name}"[:500]))
+    payload = work_week_json(db, source)
     db.commit()
     return payload
 
@@ -573,40 +598,38 @@ def reorder_tasks(week_start: str, revision: int, data: TaskOrderInput, auth=Dep
         raise HTTPException(422, "排序必须包含本周全部任务，且不能重复")
     for position, task_id in enumerate(data.task_ids, 1):
         tasks[task_id].position = position
-    db.flush(); payload = week_json(db, row); db.commit()
+    db.flush(); payload = work_week_json(db, row); db.commit()
     return payload
 
 @app.patch("/api/weeks/{week_start}/tasks/{task_id}")
 def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, user_id: int | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
     row = checked_week(db, auth[0], week_start, revision, user_id)
     task = own_task(db, task_id, row.id)
-    values = data.model_dump(exclude_unset=True)
-    if "category_name" in values and values["category_name"] is not None:
-        validate_task_type(db, row.user_id, values["category_name"])
+    values = task_patch_values(db, row.user_id, data)
+    renamed = task.meeting_task_id and values.get("task_group", task.task_group) != task.task_group
+    if renamed:
+        if len(task.meeting_task.assignments) > 1:
+            raise HTTPException(409, "多人会议任务的名称请在会议记录中修改")
     for key, value in values.items():
-        if key in {"description", "notes", "work_days", "task_group"} and value is None:
-            raise HTTPException(422, "此字段不能为空")
         setattr(task, key, value)
-    if task.meeting_task_id and "task_group" in values:
-        linked = task.meeting_task
-        linked.name = task.task_group
-        linked.meeting.revision += 1
-        affected = set()
-        for peer in linked.linked_tasks:
-            peer.task_group = task.task_group
-            if peer.week_id != row.id:
-                affected.add(peer.week_id)
-        touch_weeks(db, affected)
-    elif task.meeting_task_id and "status" in values:
-        task.meeting_task.meeting.revision += 1
+    if renamed:
+        rename_meeting_task(db, task.meeting_task, task.task_group, skip_week_id=row.id)
     if "status" in values:
         sync_card_from_detail(db, row, task.id, task.status)
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == task.id))
         if issue:
             issue.status = task.status
     db.flush()
-    payload = week_json(db, row); db.commit()
+    payload = work_week_json(db, row); db.commit()
     return payload
+
+def task_patch_values(db: Session, owner: int, data: TaskPatch):
+    values = data.model_dump(exclude_unset=True)
+    if values.get("category_name") is not None:
+        validate_task_type(db, owner, values["category_name"])
+    if any(field in values and values[field] is None for field in ("description", "notes", "work_days", "task_group")):
+        raise HTTPException(422, "此字段不能为空")
+    return values
 
 @app.delete("/api/weeks/{week_start}/tasks/{task_id}")
 def remove_task(week_start: str, task_id: int, revision: int, user_id: int | None = None, auth=Depends(active_session), db: Session = Depends(get_db)):
@@ -616,7 +639,7 @@ def remove_task(week_start: str, task_id: int, revision: int, user_id: int | Non
         raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     sync_card_from_detail(db, row, task.id, None, removed=True)
     delete_detail(db, task)
-    db.flush(); payload = week_json(db, row); db.commit()
+    db.flush(); payload = work_week_json(db, row); db.commit()
     return payload
 
 def move_meeting_notification(db: Session, source_id: int, target_id: int):
@@ -635,13 +658,40 @@ def duplicate_task(week_start: str, task_id: int, revision: int, idempotency_key
     row = checked_week(db, auth[0], week_start, revision)
     source = own_task(db, task_id, row.id)
     db.execute(update(Task).where(Task.week_id == row.id, Task.position > source.position).values(position=Task.position + 1))
-    copied = Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=None if source.status == "忽略" else source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=source.meeting_task_id)
+    legacy_link = source.meeting_task_id if not db.get(BoardTaskDetail, source.id) else None
+    copied = Task(week_id=row.id, position=source.position + 1, category_name=source.category_name, task_group=source.task_group, description=source.description, status=None if source.status == "忽略" else source.status, priority=source.priority, work_days=list(source.work_days), notes=source.notes, meeting_task_id=legacy_link)
     db.add(copied)
-    source.meeting_task_id = None
+    if legacy_link:
+        source.meeting_task_id = None
     db.flush()
     if copied.meeting_task_id:
         move_meeting_notification(db, source.id, copied.id)
-    return finish(db, auth[0].id, idempotency_key, operation, week_json(db, row))
+    return finish(db, auth[0].id, idempotency_key, operation, work_week_json(db, row))
+
+@app.post("/api/weeks/{week_start}/add-in-progress")
+def add_in_progress(week_start: str, revision: int, idempotency_key: str | None = Header(default=None),
+                    auth=Depends(self_work_write), db: Session = Depends(get_db)):
+    lock_task_changes(db)
+    start = monday(week_start)
+    if start != current_work_week():
+        raise HTTPException(403, "只能将进行中的任务添加到当前周")
+    owner = auth[0].id
+    operation = f"board:import:{week_start}"
+    old = idempotent(db, owner, idempotency_key, operation)
+    if old is not None:
+        return old
+    week = week_row(db, owner, start)
+    cards = cards_missing_from_week(db, owner, week)
+    if not cards:
+        return {**work_week_json(db, week), "no_source": True}
+    week = checked_week(db, auth[0], week_start, revision)
+    position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
+    for position, card in enumerate(cards, position + 1):
+        status = progress_status(db, card)
+        attach_detail(db, card, week, position, status)
+        set_assignment_status(card, status)
+        card.revision += 1
+    return finish(db, owner, idempotency_key, operation, work_week_json(db, week))
 
 @app.post("/api/weeks/{week_start}/carry-over")
 def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key: str | None = Header(default=None), auth=Depends(self_work_write), db: Session = Depends(get_db)):
@@ -677,7 +727,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
     db.flush()
     meeting_copies = []
     for source, card in eligible:
-        copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id)
+        copied = Task(week_id=row.id, position=next_position, category_name=source.category_name, task_group=source.task_group, description=source.description, status=source.status, priority=source.priority, work_days=[], notes=source.notes, meeting_task_id=source.meeting_task_id, transferred_by=source.transferred_by)
         db.add(copied)
         db.flush()
         if card:
@@ -687,7 +737,7 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
         issue = db.scalar(select(ReviewIssue).where(ReviewIssue.task_id == source.id))
         if issue:
             issue.task_id = copied.id
-        if source.meeting_task_id:
+        if source.meeting_task_id and not card:
             source.meeting_task_id = None
             source_week.revision += 1
             meeting_copies.append((source.id, copied))
@@ -718,7 +768,10 @@ def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db
     if not user or not user.has_role("user"):
         raise HTTPException(404, "用户不存在")
     row = week_row(db, user_id, start)
-    return week_json(db, row)
+    apply_current_plans(db, row)
+    payload = week_json(db, row)
+    db.commit()
+    return payload
 
 @app.get("/api/calendar/marks")
 def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "review-records"],
@@ -743,7 +796,10 @@ def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "rev
     end = start + timedelta(days=42)
     query = select(Week.start_date).join(Task).where(Week.start_date >= start, Week.start_date < end)
     if scope == "work":
-        query = query.where(Week.user_id == work_owner(db, auth[0], user_id))
+        query = (select(Week.start_date).where(Week.start_date >= start, Week.start_date < end,
+                 Week.user_id == work_owner(db, auth[0], user_id),
+                 select(Task.id).where(Task.week_id == Week.id).exists() |
+                 select(TaskPlan.id).where(TaskPlan.week_id == Week.id).exists()))
     else:
         query = query.join(User, Week.user_id == User.id).where(User.has_role("user"))
     return sorted(day.isoformat() for day in db.scalars(query.distinct()).all())
@@ -758,11 +814,34 @@ def touch_weeks(db: Session, week_ids: set[int]):
             task.position = position
 
 
-def delete_linked_tasks(db: Session, task: MeetingTask, affected: set[int]):
-    for linked in list(task.linked_tasks):
-        affected.add(linked.week_id)
-        db.delete(linked)
-    db.flush()
+def rename_meeting_task(db: Session, task: MeetingTask, name: str, *, skip_week_id: int | None):
+    task.name = name
+    task.meeting.revision += 1
+    for card in task.assignments:
+        if card.name != name:
+            card.name = name
+            card.revision += 1
+    affected = set()
+    start = current_work_week()
+    for linked in task.linked_tasks:
+        if linked.week.start_date == start and linked.week_id != skip_week_id:
+            linked.task_group = name
+            affected.add(linked.week_id)
+    touch_weeks(db, affected)
+
+
+def remove_assignment(db: Session, card: BoardTask, affected: set[int]):
+    rows = db.execute(select(Task, Week.start_date).join(Week, Week.id == Task.week_id)
+                      .join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
+                      .where(BoardTaskDetail.board_task_id == card.id))
+    start = current_work_week()
+    for detail, week_start in rows:
+        affected.add(detail.week_id)
+        if week_start == start:
+            db.delete(detail)
+        else:
+            detail.meeting_task_id = None
+    db.delete(card)
 
 
 @app.get("/api/meeting-assignees")
@@ -800,38 +879,48 @@ def save_meeting(db: Session, row: Meeting, data: MeetingInput):
             db.add(task)
         task.position, task.name, task.status = position, item.name, item.status
         db.flush()
-        linked_by_user = {linked.week.user_id: linked for linked in task.linked_tasks}
+        existing_cards = {card.user_id: card for card in task.assignments}
         selected = set()
         for assignment in item.assignments:
             if assignment.user_id in selected:
                 raise HTTPException(422, "指派人员不能重复")
             selected.add(assignment.user_id)
-            linked = linked_by_user.get(assignment.user_id)
-            user = db.get(User, assignment.user_id)
-            if linked is None:
+            card = existing_cards.get(assignment.user_id)
+            if card is None:
+                user = db.get(User, assignment.user_id)
                 if not user or not user.has_role("user") or user.is_deleted:
                     raise HTTPException(422, "只能指派普通用户")
-                week = week_row(db, user.id, start, create=True)
-                linked = Task(week_id=week.id, meeting_task=task, position=(db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0) + 1, work_days=[], notes="")
-                db.add(linked)
-                new_assignments.append((user.id, linked))
-            if (renamed or not linked.task_group) and len(item.name) <= 200:
-                linked.task_group = item.name
-            linked.status = assignment.status
-            affected.add(linked.week_id)
-        for user_id, linked in linked_by_user.items():
+                card = add_inbox_card(db, user.id, name=item.name[:200], meeting_task_id=task.id,
+                                      assignment_status=assignment.status)
+                new_assignments.append(card)
+                continue
+            status_changed = card.assignment_status != assignment.status
+            if renamed:
+                card.name = item.name
+            card.assignment_status = assignment.status
+            week = week_row(db, card.user_id, start)
+            detail = board_detail(db, card.id, week.id) if week else None
+            if detail:
+                if renamed:
+                    detail.task_group = item.name
+                if status_changed:
+                    detail.status = assignment.status
+                affected.add(week.id)
+            if status_changed and (detail or card.state != "inbox"):
+                state = "done" if assignment.status == "已完成" else "in_progress" if assignment.status else "inbox"
+                put_at_top(db, card, state)
+            card.revision += 1
+        for user_id, card in existing_cards.items():
             if user_id not in selected:
-                affected.add(linked.week_id)
-                db.delete(linked)
+                remove_assignment(db, card, affected)
     for task_id, task in existing.items():
         if task_id not in seen:
-            delete_linked_tasks(db, task, affected)
-            db.delete(task)
+            remove_meeting_task(db, task, affected)
     touch_weeks(db, affected)
-    # 新周任务和指派通知一起提交，修改已有指派时不会重复发消息。
-    db.add_all(Notification(user_id=user_id, kind="会议指派", task_id=linked.id,
-                            title=f"{row.meeting_date}会议指派：{linked.task_group or linked.meeting_task.name or '未命名任务'}"[:500])
-               for user_id, linked in new_assignments)
+    # 任务箱卡片与通知同时提交，修改已有指派时不会重复发消息。
+    db.add_all(Notification(user_id=card.user_id, kind="会议指派", board_task_id=card.id,
+                            title=f"{row.meeting_date}会议指派：{card.name or '未命名任务'}"[:500])
+               for card in new_assignments)
     db.commit()
     db.expire_all()
     return meeting_json(row)
@@ -850,8 +939,8 @@ def list_meetings(page: int = 1, page_size: int = 10, date_from: date | None = N
         empty = status in {"未开始", "未选择"}
         # 已指派任务按每人的状态筛选；未指派任务使用自身状态。
         matching = select(MeetingTask.meeting_id).where(
-            (~MeetingTask.linked_tasks.any() & (MeetingTask.status.is_(None) if empty else MeetingTask.status == status)) |
-            MeetingTask.linked_tasks.any(Task.status.is_(None) if empty else Task.status == status))
+            (~MeetingTask.assignments.any() & (MeetingTask.status.is_(None) if empty else MeetingTask.status == status)) |
+            MeetingTask.assignments.any(BoardTask.assignment_status.is_(None) if empty else BoardTask.assignment_status == status))
         query = query.where(Meeting.id.in_(matching))
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     rows = db.scalars(query.order_by(Meeting.meeting_date.desc(), Meeting.id.desc()).offset((page - 1) * page_size).limit(page_size)).all()
@@ -883,12 +972,23 @@ def delete_meeting(meeting_id: int, auth=Depends(active_session), db: Session = 
     row = db.get(Meeting, meeting_id)
     if not row: raise HTTPException(404, "会议记录不存在")
     affected = set()
-    for task in row.tasks:
-        delete_linked_tasks(db, task, affected)
+    for task in list(row.tasks):
+        remove_meeting_task(db, task, affected)
     touch_weeks(db, affected)
+    db.expire(row, ["tasks"])
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+def remove_meeting_task(db: Session, task: MeetingTask, affected: set[int]):
+    for card in list(task.assignments):
+        remove_assignment(db, card, affected)
+    db.flush()
+    # 转交后留在原周的历史行仍保留内容，会议被移除时解除链接。
+    db.execute(update(Task).where(Task.meeting_task_id == task.id).values(meeting_task_id=None))
+    db.expire(task, ["linked_tasks", "assignments"])
+    db.delete(task)
 
 
 @app.get("/api/releases")
@@ -910,9 +1010,13 @@ def release_notes(version: str, auth=Depends(active_session), db: Session = Depe
 from .notifications import router as notifications_router
 from .reviews import router as reviews_router
 from .scheduled_tasks import router as scheduled_tasks_router
-from .task_board import board_detail, delete_detail, router as task_board_router, sync_card_from_detail
+from .task_board import (add_inbox_card, attach_detail, board_detail, cards_missing_from_week, delete_detail,
+                         progress_status, put_at_top, router as task_board_router, set_assignment_status,
+                         sync_card_from_detail)
+from .task_plans import apply_current_plans, plan_rows, router as task_plans_router
 
 app.include_router(notifications_router)
 app.include_router(reviews_router)
 app.include_router(scheduled_tasks_router)
 app.include_router(task_board_router)
+app.include_router(task_plans_router)

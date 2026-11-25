@@ -392,6 +392,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .review-coverage li > div { flex: 1 1 180px; min-width: 0; }
 .review-summary-project details + details { margin-top: 8px; }
 .task-row.task-target { outline: 2px solid #2781b8; outline-offset: 2px; }
+.task-fields .task-group textarea { min-height: 28px; padding: 3px; field-sizing: content; overflow: hidden; resize: none; overflow-wrap: anywhere; }
+.work-plan-history { margin-top: 24px; }
+.work-plan-history > summary { cursor: pointer; font-weight: 900; margin-bottom: 12px; }
 .message-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .message-row strong { display: block; margin-top: 8px; }
 .message-row time { font-weight: 900; }

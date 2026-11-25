@@ -14,7 +14,7 @@ import ScheduledTasks from './ScheduledTasks.vue'
 import TaskTable from './TaskTable.vue'
 import TaskBoard from './TaskBoard.vue'
 import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
-import { mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
+import { addDays, mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
 import { desktopNotificationPermission, subscribeToMessages } from './notificationStream'
 import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, UserRole, WeekData } from './types'
@@ -53,12 +53,16 @@ const workMembers = ref<ReportTab[]>([])
 const workMember = ref<number | null>(null)
 const workLoading = ref(false)
 const delegatedWork = computed(() => workMember.value !== null && workMember.value !== user.value?.id)
-const workReadonly = computed(() => !isAdmin.value && selectedWeek.value !== currentWorkWeek.value)
+const futureWork = computed(() => !!currentWorkWeek.value && selectedWeek.value > currentWorkWeek.value)
+const workReadonly = computed(() => futureWork.value
+  ? delegatedWork.value || selectedWeek.value !== addDays(currentWorkWeek.value, 7)
+  : !isAdmin.value && selectedWeek.value !== currentWorkWeek.value)
 const canManageOwnWork = computed(() => !workReadonly.value && !delegatedWork.value && !workLoading.value)
 const workMemberQuery = computed(() => delegatedWork.value ? `user_id=${workMember.value}` : '')
 function workPath(suffix = '', revision = false) {
   const query = [workMemberQuery.value, revision ? `revision=${week.value.revision}` : ''].filter(Boolean).join('&')
-  return `/weeks/${selectedWeek.value}${suffix}${query ? `?${query}` : ''}`
+  const path = futureWork.value && suffix.startsWith('/tasks') ? suffix.replace('/tasks', '/plans') : suffix
+  return `/weeks/${selectedWeek.value}${path}${query ? `?${query}` : ''}`
 }
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
 const showUnreadReminder = ref(false)
@@ -125,8 +129,8 @@ async function jumpToMessage(item: LiveMessage) {
   const target = item.target
   const destination = item.kind === '代码审查'
     ? { name: 'review-records', query: { date: target?.date || todayShanghai() } }
-    : item.kind === '系统通知' ? { name: 'messages' }
-      : { name: 'work', query: { week: target?.week || mondayOf(todayShanghai()), task: target?.task } }
+    : item.kind === '系统通知' || !target?.board_task ? { name: 'messages' }
+      : { name: 'task-board', query: { task: target.board_task } }
   try {
     if (page.value === 'work' && hasPending()) {
       if (structuralPromise) await structuralPromise
@@ -138,7 +142,7 @@ async function jumpToMessage(item: LiveMessage) {
     const sameLocation = isNavigationFailure(failure, NavigationFailureType.duplicated)
     if (failure && !sameLocation) return
     if (sameReviewDay) reviewRefresh.value++
-    if (sameLocation && destination.name === 'work') await loadPage()
+    if (sameLocation && destination.name === 'task-board') boardTargetRefresh.value++
   } catch (error) {
     showError(error)
     return
@@ -153,6 +157,7 @@ async function jumpToMessage(item: LiveMessage) {
   }
 }
 const messageJumpNotice = ref('')
+const boardTargetRefresh = ref(0)
 watch(() => route.fullPath, () => {
   messageJumpNotice.value = ''
   if (route.name === 'work' && route.query.task) workMember.value = null
@@ -163,6 +168,7 @@ watch(() => user.value?.id, () => {
   workMembers.value = []
 })
 const week = ref<WeekData>({ revision: 0, tasks: [] })
+const workTasks = computed(() => futureWork.value ? week.value.plans ?? [] : week.value.tasks)
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
 const activeTab = ref<number | null>(null), reportTasks = ref<Task[]>([])
 const draggedReportTabId = ref<number | null>(null)
@@ -180,7 +186,7 @@ const newCategory = ref(''), categoryDrafts = reactive<Record<number, string>>({
 const newUser = reactive({ username: '', display_name: '', password: '', roles: ['user'] as UserRole[], status: '正常' as User['status'] })
 const userDrafts = reactive<Record<number, { username: string; display_name: string; roles: UserRole[]; status: User['status']; password: string }>>({})
 const passwordForm = reactive({ old_password: '', new_password: '', confirm_password: '' })
-const modal = ref<null | { kind: 'delete'; taskId: number } | { kind: 'carry' }>(null)
+const modal = ref<null | { taskId: number }>(null)
 const modalFirst = ref<HTMLButtonElement | null>(null)
 const reportExportOpen = ref(false), reportExporting = ref(false), reportExportError = ref('')
 const reportExportStart = ref(''), reportExportEnd = ref('')
@@ -340,7 +346,7 @@ async function resolveConflict() {
   try {
     const latest = await api<WeekData>(workPath())
     for (const [id, patch] of drafts) {
-      const row = latest.tasks.find(item => item.id === id)
+      const row = (futureWork.value ? latest.plans : latest.tasks)?.find(item => item.id === id)
       if (!row) { notice.value = '该任务已在其他标签页删除，请复制当前内容后刷新页面。'; return }
       Object.assign(row, patch)
     }
@@ -353,7 +359,7 @@ async function resolveConflict() {
 
 function editTask(id: number, patch: Partial<TaskField>) {
   if (workReadonly.value || workLoading.value) return
-  const task = week.value.tasks.find(item => item.id === id)
+  const task = workTasks.value.find(item => item.id === id)
   if (!task) return
   Object.assign(task, patch)
   drafts.set(id, { ...drafts.get(id), ...patch })
@@ -373,20 +379,20 @@ async function structural(job: () => Promise<WeekData>) {
       const response = await enqueue(job)
       week.value = response
       calendarKey.value++
-      notice.value = response.no_source ? '上周没有未完成任务，本周未作修改。' : ''
+      notice.value = response.no_source ? '没有可添加的进行中任务。' : ''
     } catch (error) { showError(error) } finally { mutating.value = false }
   })()
   try { await structuralPromise } finally { structuralPromise = null }
 }
-function addTask() { void structural(() => api(`/weeks/${selectedWeek.value}/tasks?revision=${week.value.revision}`, 'POST', undefined, newIdempotencyKey())) }
+function addTask() { void structural(() => api(workPath('/tasks', true), 'POST', undefined, newIdempotencyKey())) }
 function duplicateTask(id: number) { void structural(() => api(`/weeks/${selectedWeek.value}/tasks/${id}/duplicate?revision=${week.value.revision}`, 'POST', undefined, newIdempotencyKey())) }
-function reorderTasks(ids: number[]) { void structural(() => api(`/weeks/${selectedWeek.value}/tasks/order?revision=${week.value.revision}`, 'PUT', { task_ids: ids })) }
+function reorderTasks(ids: number[]) { void structural(() => api(workPath('/tasks/order', true), 'PUT', { task_ids: ids })) }
 function transferTask(id: number, userId: number) {
   void structural(() => api(`/weeks/${selectedWeek.value}/tasks/${id}/transfer?revision=${week.value.revision}`, 'POST', { user_id: userId }))
 }
 const taskGuideAccount = computed(() =>
   ready.value && page.value === 'work' && !user.value?.must_change_password &&
-    canManageOwnWork.value && week.value.tasks.length && !mutating.value && !modal.value && !sidebarTourActive.value
+    canManageOwnWork.value && !futureWork.value && week.value.tasks.length && !mutating.value && !modal.value && !sidebarTourActive.value
     ? user.value?.id : undefined,
 )
 watch([taskGuideAccount, selectedWeek], async ([account, requestedWeek], _previous, onCleanup) => {
@@ -402,29 +408,14 @@ watch([taskGuideAccount, selectedWeek], async ([account, requestedWeek], _previo
   if (!module || cancelled || taskGuideAccount.value !== account || selectedWeek.value !== requestedWeek || hasSeenGuide(key)) return
   stop = module.startTaskActionsTour(() => markGuideSeen(key))
 }, { flush: 'post' })
-function askDelete(id: number) { openModal({ kind: 'delete', taskId: id }) }
+function askDelete(id: number) { openModal({ taskId: id }) }
 function openModal(value: NonNullable<typeof modal.value>) { modal.value = value; void nextTick(() => modalFirst.value?.focus()) }
 async function confirmDelete(id: number) {
   modal.value = null
   await structural(() => api(workPath(`/tasks/${id}`, true), 'DELETE'))
 }
-async function startCarry() {
-  try {
-    if (structuralPromise) await structuralPromise
-    await flushPending()
-    const requestedWeek = selectedWeek.value
-    const sourceWeek = new Date(`${selectedWeek.value}T12:00:00Z`)
-    sourceWeek.setUTCDate(sourceWeek.getUTCDate() - 7)
-    const previous = await api<WeekData>(`/weeks/${sourceWeek.toISOString().slice(0,10)}`)
-    if (selectedWeek.value !== requestedWeek || page.value !== 'work') return
-    if (!previous.tasks.some(task => !['已完成', '忽略'].includes(task.status || ''))) { notice.value = '上周没有未完成任务，本周未作修改。'; return }
-    if (week.value.tasks.length) openModal({ kind: 'carry' })
-    else await carry('append')
-  } catch (error) { showError(error) }
-}
-async function carry(mode: 'append' | 'overwrite') {
-  modal.value = null
-  await structural(() => api(`/weeks/${selectedWeek.value}/carry-over?revision=${week.value.revision}`, 'POST', { mode }, newIdempotencyKey()))
+function addInProgress() {
+  void structural(() => api(workPath('/add-in-progress', true), 'POST', undefined, newIdempotencyKey()))
 }
 
 async function loadPage() {
@@ -536,7 +527,7 @@ async function meetingSaved() {
   }
 }
 async function removeMeeting(meeting: Meeting) {
-  if (!window.confirm(`删除 ${meeting.meeting_date} 的会议记录？当前关联的周任务也将删除。`)) return
+  if (!window.confirm(`删除 ${meeting.meeting_date} 的会议记录？对应的看板卡片和本周任务也将删除。`)) return
   try {
     await api(`/meetings/${meeting.id}`, 'DELETE')
     if (targetMeeting.value === meeting.id) await searchMeetings()
@@ -832,8 +823,9 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
             <button class="mini-button" type="button" aria-label="增大字号" title="增大字号" :disabled="taskFontSize >= 20" @click="adjustTaskFontSize(1)">A+</button>
           </div>
           <template v-if="page === 'work'">
-            <button v-if="canManageOwnWork" class="secondary-button" type="button" :disabled="mutating" @click="startCarry">↖ 复制上周未完成</button>
-            <button v-if="canManageOwnWork" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ 新增任务</button>
+            <button v-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="secondary-button" type="button" :disabled="mutating" @click="selectWeek(addDays(currentWorkWeek, 7))">填写下周计划</button>
+            <button v-if="canManageOwnWork && selectedWeek === currentWorkWeek" class="secondary-button" type="button" :disabled="mutating" @click="addInProgress">↖ 添加进行中的任务</button>
+            <button v-if="canManageOwnWork" class="primary-button" type="button" :disabled="mutating" @click="addTask">＋ {{ futureWork ? '新增任务计划' : '新增任务' }}</button>
           </template>
           <template v-else>
             <button class="primary-button" type="button" :disabled="reportExporting" @click="openReportExport">⇩ 导出Excel</button>
@@ -855,15 +847,20 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <ScheduledTasks v-else-if="page === 'scheduled-tasks' && isAdmin" :key="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
-      <TaskBoard v-else-if="page === 'task-board'" :key="user.id" />
+      <TaskBoard v-else-if="page === 'task-board'" :key="user.id" :target-task="targetTask" :target-refresh="boardTargetRefresh" />
       <div v-else-if="page === 'work'">
         <div class="section-head">
-          <strong>任务明细 <span v-if="!workLoading">{{ week.tasks.length }}</span></strong>
+          <strong>{{ futureWork ? '任务计划表' : '任务明细' }} <span v-if="!workLoading">{{ workTasks.length }}</span></strong>
           <div v-if="!workReadonly && !workLoading" class="save-indicator" role="status">{{ { saved:'✓ 已保存', saving:'… 保存中', failed:'! 保存失败', conflict:'! 内容冲突' }[mutating ? 'saving' : saveStatus] }}<button v-if="saveStatus === 'failed'" type="button" @click="flushPending">重试</button><button v-if="saveStatus === 'conflict'" type="button" @click="resolveConflict">用当前修改重试</button></div>
         </div>
-        <p v-if="workLoading" role="status">正在加载任务明细…</p>
-        <p v-else-if="workReadonly" class="message">仅当前周可编辑。</p>
-        <TaskTable v-if="!workLoading" :key="selectedWeek + ':' + (workMember ?? user.id)" :tasks="week.tasks" :categories="categories" work-view :readonly="workReadonly" :delegated="delegatedWork" :busy="mutating" :target-task="targetTask" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
+        <p v-if="workLoading" role="status">正在加载{{ futureWork ? '任务计划' : '任务明细' }}…</p>
+        <p v-else-if="futureWork" class="message">{{ workReadonly ? '可提前填写本人下一周的任务计划。' : '到达计划周后，任务将加入该周的工作明细，原计划转为只读历史。' }}</p>
+        <p v-else-if="workReadonly" class="message">仅当前周可编辑任务明细。</p>
+        <TaskTable v-if="!workLoading" :key="selectedWeek + ':' + (workMember ?? user.id) + ':' + futureWork" :tasks="workTasks" :categories="categories" work-view :plan="futureWork" :readonly="workReadonly" :delegated="delegatedWork" :busy="mutating" :target-task="futureWork ? null : targetTask" :allow-board-transfer="selectedWeek === currentWorkWeek" @edit="editTask" @duplicate="duplicateTask" @remove="askDelete" @reorder="reorderTasks" @transfer="transferTask" />
+        <details v-if="!workLoading && !futureWork && week.plans?.length" class="work-plan-history">
+          <summary>任务计划表（历史） · {{ week.plans.length }} 项</summary>
+          <TaskTable :tasks="week.plans" plan readonly />
+        </details>
       </div>
       <div v-else-if="page === 'reports'"><div v-if="!tabs.length" class="empty">暂无成员记录。</div><TaskTable v-if="activeTab" :tasks="reportTasks" readonly /></div>
       <section v-else-if="page === 'categories'" class="panel"><p>为自己的任务维护类型；修改或删除后，历史任务名称保持原样。系统内置类型所有人可直接选择。</p><form class="inline-form" @submit.prevent="addCategory"><label>新任务类型<input v-model="newCategory" maxlength="100" required placeholder="例如：产品开发" /></label><button class="primary-button" type="submit">新增类型</button></form><div v-for="category in categories" :key="category.id" class="list-row"><input v-model="categoryDrafts[category.id]" :aria-label="`任务类型 ${category.name}`" maxlength="100" /><button class="mini-button" type="button" @click="renameCategory(category.id)">保存名称</button><button class="mini-button danger" type="button" @click="deleteCategory(category.id)">删除</button></div><div v-if="!categories.length" class="empty">还没有个人任务类型，可在上方新增。</div></section>
@@ -911,7 +908,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       </div>
     </main>
     <div v-if="reportExportOpen" class="modal-scrim" @click.self="reportExportOpen = false" @keydown.esc="reportExportOpen = false"><form class="modal export-modal" role="dialog" aria-modal="true" aria-labelledby="report-export-title" @submit.prevent="exportReports"><span class="eyebrow">周报汇总</span><h2 id="report-export-title">导出 Excel</h2><p>选择起止周，每位成员将单独生成一个工作表。</p><div class="export-weeks"><label>起始周<input ref="reportExportStartInput" v-model="reportExportStart" type="week" required /></label><label>结束周<input v-model="reportExportEnd" type="week" required /></label></div><p v-if="reportExportError" class="message error" role="alert">{{ reportExportError }}</p><div class="modal-actions"><button class="secondary-button" type="button" :disabled="reportExporting" @click="reportExportOpen = false">取消</button><button class="primary-button" type="submit" :disabled="reportExporting">{{ reportExporting ? '生成中…' : '确定并导出' }}</button></div></form></div>
-    <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="modal.kind === 'delete' ? '确认删除任务' : '复制上周任务'"><span class="eyebrow">操作确认</span><h2>{{ modal.kind === 'delete' ? '删除这项任务？' : '本周已有任务' }}</h2><p>{{ modal.kind === 'delete' ? '删除后，该任务将从本周移除。' : '请选择覆盖本周任务，或将上周未完成任务追加到末尾。' }}</p><div class="modal-actions"><template v-if="modal.kind === 'delete'"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete((modal as { taskId: number }).taskId)">确认删除</button></template><template v-else><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="secondary-button" type="button" @click="carry('append')">新增</button><button class="primary-button" type="button" @click="carry('overwrite')">覆盖</button></template></div></div></div>
+    <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="futureWork ? '确认删除任务计划' : '确认删除任务'"><h2>删除这项{{ futureWork ? '任务计划' : '任务' }}？</h2><p>删除后，该{{ futureWork ? '计划将从任务计划表移除。' : '任务将从本周移除。' }}</p><div class="modal-actions"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete(modal.taskId)">确认删除</button></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
     <div class="unread-reminder-region" aria-live="polite">
       <div v-if="releaseNotice" class="notification-permission release-notice" role="group" aria-label="版本更新">

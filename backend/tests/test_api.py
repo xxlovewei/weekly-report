@@ -252,7 +252,7 @@ def test_report_admin_hidden_and_calendar_marks_task_group(monkeypatch):
     assert alice.get("/api/calendar/marks?year=2026&month=10&scope=reports").json() == ["2026-10-12"]
     assert manager.get("/api/calendar/marks?year=2026&month=10&scope=work").json() == ["2026-10-12"]
     assert alice.get("/api/calendar/marks?year=2026&month=11&scope=work").json() == []
-    assert mutate(manager, "POST", "/api/weeks/2026-10-19/tasks", 0).status_code == 201
+    assert mutate(manager, "POST", "/api/weeks/2026-10-19/plans", 0).status_code == 201
     assert alice.get("/api/calendar/marks?year=2026&month=10&scope=reports").json() == ["2026-10-12"]
     assert manager.get("/api/calendar/marks?year=2026&month=10&scope=work").json() == ["2026-10-12", "2026-10-19"]
     task_id = alice_task["tasks"][0]["id"]

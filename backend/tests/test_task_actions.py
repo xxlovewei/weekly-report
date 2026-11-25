@@ -1,8 +1,8 @@
 from .test_api import client, clean_db, mutate
-from .test_meeting_assignments import current_week, editable, setup_assignment
+from .test_meeting_assignments import current_week, editable, setup_assignment, start_inbox_task
 
 
-def test_transfer_moves_one_task_and_updates_both_revisions():
+def test_transfer_moves_one_task_to_inbox_and_restores_its_details_on_start():
     alice, bob, admin = client("alice"), client("bob"), client("admin")
     week = f"/api/weeks/{current_week()}"
     people = alice.get("/api/task-transfer-recipients").json()
@@ -25,17 +25,22 @@ def test_transfer_moves_one_task_and_updates_both_revisions():
     result = mutate(alice, "POST", f"{path}/transfer", source["revision"], {"user_id": bob_id})
     assert result.status_code == 200, result.text
     assert result.json()["tasks"] == [{**source["tasks"][1], "position": 1}]
+    assert bob.get(week).json() == target
+    card = start_inbox_task(bob)
     received = bob.get(week).json()
     assert received["tasks"] == [target["tasks"][0], {
-        **source["tasks"][0], "position": 2, "transferred_by": "小王",
+        **source["tasks"][0], "id": received["tasks"][1]["id"], "position": 2,
+        "transferred_by": "小王", "board_task_id": card["id"], "task_group": "转交测试",
     }]
     assert received["revision"] == target["revision"] + 1
-    assert mutate(bob, "PATCH", path, target["revision"], {"priority": None}).status_code == 409
-    assert mutate(bob, "PATCH", path, received["revision"], {"priority": None}).json()["tasks"][1]["priority"] is None
+    received_path = f"{week}/tasks/{received['tasks'][1]['id']}"
+    assert mutate(bob, "PATCH", received_path, target["revision"], {"priority": None}).status_code == 409
+    assert mutate(bob, "PATCH", received_path, received["revision"], {"priority": None}).json()["tasks"][1]["priority"] is None
 
 
 def test_meeting_task_transfer_keeps_the_link_and_rejects_duplicate_assignee():
     alice, bob, meeting = setup_assignment()
+    start_inbox_task(alice)
     meeting_path = f"/api/meetings/{meeting['id']}"
     week = f"/api/weeks/{current_week()}"
     source = alice.get(week).json()
@@ -51,6 +56,10 @@ def test_meeting_task_transfer_keeps_the_link_and_rejects_duplicate_assignee():
     saved = alice.put(meeting_path, json=payload).json()
     source = alice.get(week).json()
     assert mutate(alice, "POST", path, source["revision"], {"user_id": bob_id}).status_code == 200
+    assert bob.get(week).json()["tasks"] == []
+    card = bob.get("/api/board-tasks").json()["tasks"][0]
+    assert card["transferred_by"] == "小王" and card["meeting_id"] == meeting["id"]
+    start_inbox_task(bob)
     assert bob.get(week).json()["tasks"][0]["meeting_task_id"] == task["meeting_task_id"]
     updated = alice.get(meeting_path).json()
     assert updated["revision"] == saved["revision"] + 1

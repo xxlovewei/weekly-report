@@ -1,5 +1,5 @@
 import { test, expect, signIn, skipGuides } from './fixtures'
-import { mondayOf, todayShanghai } from '../src/dates'
+import { todayShanghai } from '../src/dates'
 
 test('新增和编辑会议指派都会通知新增人员，消息和工作任务可跳转', async ({ page, browser, baseURL }) => {
   const { headers } = await signIn(page, 'alice')
@@ -43,11 +43,16 @@ test('新增和编辑会议指派都会通知新增人员，消息和工作任�
     const marked = bob.waitForResponse(response => /\/api\/notifications\/\d+$/.test(response.url()) && response.request().method() === 'PATCH')
     await message.getByRole('button', { name: '跳转' }).click()
     expect((await marked).status()).toBe(200)
-    await expect(bob).toHaveURL(new RegExp(`/work\\?week=${mondayOf(date)}&task=\\d+$`))
-    const target = bob.locator('.task-target')
-    await expect(target.getByLabel('任务名称')).toHaveValue(taskName)
+    await expect(bob).toHaveURL(/\/task-board\?task=\d+$/)
+    const target = bob.getByRole('region', { name: '任务箱' }).locator('.board-target')
+    await expect(target).toContainText(taskName)
+    await expect(target).toBeFocused()
+    await target.getByRole('button', { name: '开始任务' }).click()
+    await bob.getByRole('navigation').getByRole('button', { name: '本周工作' }).click()
+    const detail = bob.locator('.task-row').filter({ has: bob.getByRole('link', { name: /会议指派/ }) })
+    await expect(detail.getByLabel('任务名称')).toHaveValue(taskName)
     const bulbText = `${date}会议指派，点击可跳转会议记录`
-    const bulb = target.getByRole('link', { name: bulbText })
+    const bulb = detail.getByRole('link', { name: bulbText })
     await expect(bulb).toHaveAttribute('title', bulbText)
     await bulb.click()
     await expect(bob).toHaveURL(new RegExp(`/meetings\\?meeting=${meetingId}$`))
@@ -66,7 +71,14 @@ test('新增和编辑会议指派都会通知新增人员，消息和工作任�
     await edit.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
     await expect(page.locator('.live-message-reminder').getByRole('button', { name: new RegExp(taskName) })).toBeVisible()
     await page.locator('.live-message-reminder').getByRole('button', { name: new RegExp(taskName) }).click()
-    await expect(page.locator('.task-target').getByRole('link', { name: bulbText })).toBeVisible()
+    const aliceTarget = page.getByRole('region', { name: '任务箱' }).locator('.board-target')
+    await expect(aliceTarget.getByRole('link', { name: '查看指派会议' })).toBeVisible()
+    await aliceTarget.getByRole('button', { name: '开始任务' }).click()
+    await page.getByRole('navigation').getByRole('button', { name: '本周工作' }).click()
+    const aliceDetail = page.locator('.task-row').filter({ has: page.getByRole('link', { name: bulbText }) })
+    await expect(aliceDetail.getByLabel('任务名称')).toBeDisabled()
+    await aliceDetail.getByLabel('本周任务进展').fill('仅本人填写的进展')
+    await expect(page.getByText('✓ 已保存')).toBeVisible()
   } finally {
     try {
       if (meetingId) await expect(await page.request.delete(`/api/meetings/${meetingId}`, { headers })).toBeOK()

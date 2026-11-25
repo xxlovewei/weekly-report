@@ -11,6 +11,7 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
   const bob = await signIn(recipientPage, 'bob')
   const weekPath = `/api/weeks/${mondayOf(todayShanghai())}`
   const fixtureIds: number[] = []
+  let receivedCard: number | undefined
   const names = ['甲', '乙', '丙'].map(name => `任务操作验证 ${Date.now()} ${name}`)
   const readWeek = async (request: APIRequestContext): Promise<WeekData> => {
     const response = await request.get(weekPath)
@@ -90,7 +91,12 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
     await page.reload()
     await assertOrder([...baseline, a, b])
 
-    await recipientPage.reload()
+    await recipientPage.getByRole('navigation').getByRole('button', { name: '任务看板' }).click()
+    const inboxCard = recipientPage.getByRole('region', { name: '任务箱' }).locator('.board-card').filter({ hasText: c })
+    await expect(inboxCard).toBeVisible()
+    receivedCard = Number(await inboxCard.getAttribute('data-card-id'))
+    await inboxCard.getByRole('button', { name: '开始任务' }).click()
+    await recipientPage.getByRole('navigation').getByRole('button', { name: '本周工作' }).click()
     const received = recipientPage.locator('.task-row').last()
     await expect(received.getByRole('textbox', { name: '任务名称' })).toHaveValue(c)
     await expect(received).toHaveCSS('border-left-color', 'rgb(225, 48, 66)')
@@ -106,6 +112,15 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
   } finally {
     // 只清理本次验证创建的任务，保留测试环境原有数据。
     try {
+      if (receivedCard) {
+        const result = await bobContext.request.get('/api/board-tasks')
+        const board = await result.json()
+        const card = board.tasks.find((item: { id: number }) => item.id === receivedCard)
+        if (card) await expect(await bobContext.request.delete(
+          `/api/board-tasks/${receivedCard}?revision=${card.revision}&week_start=${board.current_week}`,
+          { headers: bob.headers },
+        )).toBeOK()
+      }
       for (const [request, headers] of [[page.request, alice.headers], [bobContext.request, bob.headers]] as const) {
         const week = await readWeek(request)
         let revision = week.revision

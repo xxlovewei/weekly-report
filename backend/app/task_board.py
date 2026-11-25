@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from . import main
 from .db import get_db
 from .main import Input, active_session, finish, idempotent, lock_task_changes, validate_task_type, week_row
-from .models import BoardTask, BoardTaskDetail, Task, Week
+from .models import BoardTask, BoardTaskDetail, ReviewIssue, Task, Week
 
 router = APIRouter(prefix="/api/board-tasks")
 
@@ -18,6 +18,10 @@ class CardInput(Input):
     name: str = Field(min_length=1, max_length=200)
     category_name: str = Field(min_length=1, max_length=100)
     priority: Literal["高", "中", "低"]
+
+class CardUpdate(CardInput):
+    name: str = Field(max_length=200)
+    category_name: str = Field(max_length=100)
 
 
 class CardMove(Input):
@@ -69,7 +73,11 @@ def sync_card_from_detail(db: Session, week: Week, task_id: int, status: str | N
     card = db.get(BoardTask, link.board_task_id)
     if week.start_date == main.current_work_week():
         state = "done" if status == "已完成" else "in_progress" if status else "inbox"
-        if removed or state != card.state:
+        assignment_changed = card.meeting_task_id is not None and card.assignment_status != status
+        if assignment_changed:
+            card.assignment_status = status
+            card.meeting_task.meeting.revision += 1
+        if removed or state != card.state or assignment_changed:
             put_at_top(db, card, state)
             card.revision += 1
     elif removed:
@@ -78,9 +86,20 @@ def sync_card_from_detail(db: Session, week: Week, task_id: int, status: str | N
 
 
 def card_json(card: BoardTask, *, current=False, historical=False):
+    meeting = card.meeting_task.meeting if card.meeting_task else None
     return {"id": card.id, "name": card.name, "category_name": card.category_name, "priority": card.priority,
             "state": card.state, "position": card.position, "revision": card.revision,
+            "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
+            "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),
             "has_current_detail": current, "has_other_details": historical}
+
+
+def add_inbox_card(db: Session, owner: int, *, name: str, category_name="", priority="低", **details):
+    card = BoardTask(user_id=owner, name=name, category_name=category_name, priority=priority,
+                     position=position_at_edge(db, owner, "inbox", top=False), **details)
+    db.add(card)
+    db.flush()
+    return card
 
 
 def detail_weeks(db: Session, card_id: int):
@@ -127,29 +146,35 @@ def add_card(data: CardInput, key: str | None = Header(default=None, alias="Idem
     if old is not None:
         return old
     validate_task_type(db, owner, data.category_name)
-    card = BoardTask(user_id=owner, position=position_at_edge(db, owner, "inbox", top=False), **data.model_dump())
-    db.add(card)
-    db.flush()
+    card = add_inbox_card(db, owner, **data.model_dump())
     return finish(db, owner, key, "board:add", card_json(card))
 
 
 @router.patch("/{card_id}")
-def edit_card(card_id: int, revision: int, week_start: date, data: CardInput,
+def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate,
               auth=Depends(active_session), db: Session = Depends(get_db)):
     owner = auth[0].id
     lock_task_changes(db)
     card, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
     changes = {key: value for key, value in data.model_dump().items() if getattr(card, key) != value}
+    if "name" in changes and not changes["name"]:
+        raise HTTPException(422, "请输入任务名称")
     if "category_name" in changes:
         validate_task_type(db, owner, changes["category_name"])
     week = week_row(db, owner, week_start)
     detail = board_detail(db, card.id, week.id) if week else None
+    meeting_rename = card.meeting_task is not None and "name" in changes
+    if meeting_rename:
+        if len(card.meeting_task.assignments) > 1:
+            raise HTTPException(409, "多人会议任务的名称请在会议记录中修改")
+        main.rename_meeting_task(db, card.meeting_task, changes["name"], skip_week_id=week.id if week else None)
     for key, value in changes.items():
         setattr(card, key, value)
         if detail:
             setattr(detail, "task_group" if key == "name" else key, value)
     if changes:
-        card.revision += 1
+        if not meeting_rename:
+            card.revision += 1
         if detail:
             week.revision += 1
     db.commit()
@@ -179,6 +204,8 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     owner = auth[0].id
     lock_task_changes(db)
     card, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
+    if card.meeting_task_id:
+        raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     week = week_row(db, owner, week_start)
     detail = board_detail(db, card.id, week.id) if week else None
     if detail:
@@ -197,6 +224,48 @@ def continued_status(db: Session, card_id: int, current_detail: Task | None):
                              .join(Week, Week.id == BoardTaskDetail.week_id)
                              .where(BoardTaskDetail.board_task_id == card_id).order_by(Week.start_date.desc()).limit(1))
     return previous if previous and previous.endswith("%") else "5%"
+
+
+def progress_status(db: Session, card: BoardTask, detail: Task | None = None):
+    if detail is None:
+        # 已指派或转交的任务保留已有百分比，后续每周只带入完成状态。
+        status = card.assignment_status if card.meeting_task_id else (card.handoff or {}).get("status")
+        if status and status.endswith("%"):
+            return status
+    return continued_status(db, card.id, detail)
+
+
+def set_assignment_status(card: BoardTask, status: str | None):
+    if card.meeting_task and card.assignment_status != status:
+        card.assignment_status = status
+        card.meeting_task.meeting.revision += 1
+
+
+def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None):
+    handoff = card.handoff or {}
+    detail = Task(week_id=week.id, position=position, task_group=card.name,
+                  category_name=card.category_name or None, priority=card.priority, status=status,
+                  meeting_task_id=card.meeting_task_id, transferred_by=card.transferred_by,
+                  description=handoff.get("description", ""), notes=handoff.get("notes", ""),
+                  work_days=handoff.get("work_days", []))
+    db.add(detail)
+    db.flush()
+    db.add(BoardTaskDetail(task_id=detail.id, board_task_id=card.id, week_id=week.id))
+    if issue_id := handoff.get("review_issue_id"):
+        issue = db.get(ReviewIssue, issue_id)
+        if issue and issue.task_id is None:
+            issue.task_id = detail.id
+            issue.status = status
+    card.handoff = None
+    return detail
+
+
+def cards_missing_from_week(db: Session, owner: int, week: Week | None):
+    query = column_cards(owner, "in_progress").order_by(BoardTask.position, BoardTask.id)
+    if week:
+        query = query.where(~select(BoardTaskDetail.task_id).where(
+            BoardTaskDetail.board_task_id == BoardTask.id, BoardTaskDetail.week_id == week.id).exists())
+    return list(db.scalars(query))
 
 
 @router.patch("/{card_id}/position")
@@ -232,18 +301,15 @@ def move_card(card_id: int, data: CardMove, auth=Depends(active_session), db: Se
             week.revision += 1
             detail = None
     else:
-        status = "已完成" if data.state == "done" else continued_status(db, card.id, detail)
+        status = "已完成" if data.state == "done" else progress_status(db, card, detail)
         if detail is None:
             position = db.scalar(select(func.max(Task.position)).where(Task.week_id == week.id)) or 0
-            detail = Task(week_id=week.id, position=position + 1, task_group=card.name,
-                          category_name=card.category_name, priority=card.priority, status=status)
-            db.add(detail)
-            db.flush()
-            db.add(BoardTaskDetail(task_id=detail.id, board_task_id=card.id, week_id=week.id))
+            detail = attach_detail(db, card, week, position + 1, status)
             week.revision += 1
         elif detail.status != status:
             detail.status = status
             week.revision += 1
+        set_assignment_status(card, status)
     put_at_top(db, card, data.state)
     card.revision += 1
     db.commit()

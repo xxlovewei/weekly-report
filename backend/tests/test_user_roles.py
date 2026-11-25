@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from .credentials import credential_post
 from .test_api import PASSWORD, client, clean_db, engine, mutate
+from .test_meeting_assignments import start_inbox_task
 
 
 def test_dual_role_applies_to_permissions_and_workflows(monkeypatch):
@@ -36,7 +37,9 @@ def test_dual_role_applies_to_permissions_and_workflows(monkeypatch):
     assert [item["username"] for item in bob.get("/api/task-transfer-recipients").json()] == ["alice"]
     assert mutate(bob, "POST", f"/api/weeks/{week}/tasks/{task_id}/transfer", 1, {"user_id": alice_id}).status_code == 200
     assert {item["id"] for item in bob.get(f"/api/reports/{week}").json()} >= {alice_id}
-    assert bob.get(f"/api/reports/{week}/users/{alice_id}").json()["tasks"][0]["id"] == task_id
+    assert bob.get(f"/api/reports/{week}/users/{alice_id}").json()["tasks"] == []
+    card = start_inbox_task(alice)
+    assert bob.get(f"/api/reports/{week}/users/{alice_id}").json()["tasks"][0]["board_task_id"] == card["id"]
     assert bob.get("/api/calendar/marks?year=2026&month=10&scope=reports").json() == [week]
 
     assert {item["username"] for item in bob.get("/api/meeting-assignees").json()} == {"alice", "bob"}

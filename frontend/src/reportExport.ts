@@ -14,7 +14,7 @@ function limitSheetName(value: string, limit: number) {
 export function createReportWorkbook(people: ReportExportSheet[]) {
   const workbook = XLSX.utils.book_new()
   const usedNames = new Set<string>()
-  const headers = ['周次', '任务类型', '任务名称', '任务描述', '完成状态', '工作日期', '备注']
+  const headers = ['周次', '任务类型', '任务名称', '本周任务进展', '完成状态', '工作日期', '备注']
   for (const person of people) {
     const base = limitSheetName(person.name.replace(/[\\/:?*\[\]]/g, ' ').replace(/^'+|'+$/g, '').trim() || '未命名', 31)
     let name = base, suffix = 2

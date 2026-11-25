@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, useId, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import { DescriptionHistory } from './descriptionHistory'
 import { editNumberedText, moveNumberedText, reconcileNumberedInput } from './numberedLines'
 import type { NumberedEdit, TextSelection } from './numberedLines'
@@ -7,8 +7,8 @@ import type { NumberedEdit, TextSelection } from './numberedLines'
 // 所有多行文本复用相同的编号、输入法及撤销交互，按字段保留各自的长度限制。
 const props = withDefaults(defineProps<{
   modelValue: string; disabled?: boolean; label?: string; rows?: number;
-  placeholder?: string; maxLength?: number; required?: boolean; titleClass?: string;
-}>(), { label: '任务描述', rows: 2, placeholder: '写下这项工作…', maxLength: 5000 })
+  placeholder?: string; maxLength?: number; required?: boolean; titleClass?: string; plain?: boolean;
+}>(), { label: '本周任务进展', rows: 2, placeholder: '填写本周任务进展…', maxLength: 5000 })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const text = ref(props.modelValue), error = ref('')
@@ -18,14 +18,21 @@ let known: TextSelection = { value: props.modelValue, start: 0, end: 0 }
 let pending: { before: TextSelection; inputType: string; expected?: TextSelection | null } | null = null
 let composition: TextSelection | null = null
 let drag: { before: TextSelection; removed: boolean; target?: number } | null = null
+let observer: ResizeObserver | undefined
 
 function read(): TextSelection {
   const el = textarea.value!
   return { value: el.value, start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection }
 }
 function resize() {
+  if (props.plain && CSS.supports('field-sizing', 'content')) return
   const el = textarea.value
   if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 4}px` }
+}
+function plainInput(event: Event) {
+  resize()
+  if ((event as InputEvent).isComposing) return
+  emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
 }
 function display(state: TextSelection, focus = false) {
   const el = textarea.value!
@@ -165,6 +172,7 @@ function rememberSelection() {
   if (!composition && textarea.value?.value === known.value) known = read()
 }
 watch(() => props.modelValue, value => {
+  if (props.plain) return
   if (value === known.value) return
   history.clear()
   pending = null
@@ -174,12 +182,29 @@ watch(() => props.modelValue, value => {
   if (textarea.value) display({ value, start: Math.min(known.start, value.length), end: Math.min(known.end, value.length) })
   else { text.value = value; known = { value, start: 0, end: 0 } }
 })
-onMounted(resize)
+watch(() => props.modelValue, () => { if (props.plain) resize() }, { flush: 'post' })
+onMounted(() => {
+  resize()
+  const label = textarea.value?.parentElement
+  if (!label) return
+  let width = label.clientWidth
+  // 输入框宽度变化时重新测量换行后的高度。
+  observer = new ResizeObserver(() => {
+    if (label.clientWidth === width) return
+    width = label.clientWidth
+    resize()
+  })
+  observer.observe(label)
+})
+onUnmounted(() => observer?.disconnect())
 </script>
 
 <template>
   <div class="numbered-text-field">
-  <label><span :class="titleClass">{{ label }}</span><textarea ref="textarea" :disabled="disabled" :rows="rows" :value="text" :placeholder="placeholder" :required="required" :aria-invalid="!!error" :aria-describedby="error ? `${id}-error` : undefined" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" /></label>
+  <label><span :class="titleClass">{{ label }}</span>
+    <textarea v-if="plain" ref="textarea" :disabled="disabled" :rows="rows" :value="modelValue" :maxlength="maxLength" :placeholder="placeholder" @input="plainInput" @compositionend="plainInput" />
+    <textarea v-else ref="textarea" :disabled="disabled" :rows="rows" :value="text" :placeholder="placeholder" :required="required" :aria-invalid="!!error" :aria-describedby="error ? `${id}-error` : undefined" @keydown="keydown" @beforeinput="beforeinput" @input="input" @paste="paste" @compositionstart="compositionStart" @compositionend="compositionEnd" @dragstart="dragStart" @dragend="dragEnd" @select="rememberSelection" @keyup="rememberSelection" @pointerup="rememberSelection" />
+  </label>
   <p v-if="error" :id="`${id}-error`" class="description-error" role="alert">{{ error }}</p>
   </div>
 </template>

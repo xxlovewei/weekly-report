@@ -101,7 +101,8 @@ def test_transfer_notification_access_filters_and_read_state():
     assert mutate(alice, "POST", f"{week}/tasks/{task_id}/transfer", state["revision"], {"user_id": bob_id}).status_code == 200
     path = "/api/notifications"
     message, = bob.get(path).json()["items"]
-    assert message["target"] == {"week": week_start.isoformat(), "task": task_id} and message["is_read"] is False
+    board_task, = bob.get("/api/board-tasks").json()["tasks"]
+    assert message["target"] == {"board_task": board_task["id"]} and message["is_read"] is False
     assert alice.patch(f"{path}/{message['id']}", json={"is_read": True}).status_code == 404
     assert alice.get(f"{path}?all_users=true").status_code == 403
     assert bob.get(f"{path}/unread").json() == {"count": 1}

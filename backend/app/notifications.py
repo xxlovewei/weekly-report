@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .db import SessionLocal, get_db
 from .main import Input, active_session
-from .models import Notification, Task, User, Week
+from .models import BoardTask, Notification, User
 from .notification_events import notification_lifespan, subscribers
 from .release_announcement import VERSION, stream_release
 from .scheduled_tasks import UNREAD_REMINDER, task_settings
@@ -32,11 +32,11 @@ def count_unread(db, user_id):
     ))
 
 
-def notification_target(row, week, owner_id, user_id):
+def notification_target(row, board_owner, user_id):
     if row.review_date:
         return {"date": row.review_date}
-    if week and owner_id == user_id:
-        return {"week": week, "task": row.task_id}
+    if board_owner == user_id:
+        return {"board_task": row.board_task_id}
     return None
 
 
@@ -51,13 +51,13 @@ def stream_snapshot(request, user_id, cursor, client_version, legacy_reconnect, 
         if cursor is None:
             cursor = db.scalar(select(func.max(Notification.id)).where(Notification.user_id == user.id)) or 0
         release = stream_release(db, user_id, client_version, legacy_reconnect, connected_at)
-        rows = db.execute(select(Notification, Week.start_date, Week.user_id)
-                          .outerjoin(Task, Task.id == Notification.task_id)
-                          .outerjoin(Week, Week.id == Task.week_id)
+        rows = db.execute(select(Notification, BoardTask.user_id)
+                          .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
                           .where(Notification.user_id == user_id, Notification.id > cursor)
                           .order_by(Notification.id).limit(100)).all()
         messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
-                     "target": notification_target(row, week, owner_id, user_id)} for row, week, owner_id in rows]
+                     "target": notification_target(row, board_owner, user_id)}
+                    for row, board_owner in rows]
         return {"count": count_unread(db, user_id), "messages": messages,
                 "release": release,
                 "unread_reminder": task_settings(db, UNREAD_REMINDER).model_dump(),
@@ -139,18 +139,17 @@ def list_notifications(
         filters.append(Notification.kind == kind)
     if is_read is not None:
         filters.append(Notification.is_read.is_(is_read))
-    rows = db.execute(select(Notification, User.display_name, Week.start_date, Week.user_id)
+    rows = db.execute(select(Notification, User.display_name, BoardTask.user_id)
                       .join(User, User.id == Notification.user_id)
-                      .outerjoin(Task, Task.id == Notification.task_id)
-                      .outerjoin(Week, Week.id == Task.week_id)
+                      .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
                       .where(*filters).order_by(Notification.created_at.desc(), Notification.id.desc())
                       .limit(20).offset((page - 1) * 20))
     items = []
-    for row, recipient, week, owner_id in rows:
+    for row, recipient, board_owner in rows:
         item = {"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read, "created_at": row.created_at}
         if all_users:
             item["recipient"] = recipient
-        elif target := notification_target(row, week, owner_id, user.id):
+        elif target := notification_target(row, board_owner, user.id):
             item["target"] = target
         items.append(item)
     return {"items": items, "total": db.scalar(select(func.count()).select_from(Notification).where(*filters))}

@@ -61,23 +61,32 @@ class Week(Base):
     revision: Mapped[int] = mapped_column(Integer, default=0)
     tasks: Mapped[list["Task"]] = relationship(back_populates="week", order_by="Task.position", cascade="all, delete-orphan")
 
-class Task(Base):
-    __tablename__ = "tasks"
-    __table_args__ = {"comment": "任务明细表"}
-    id: Mapped[int] = mapped_column(primary_key=True)
-    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
-    meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", name="fk_tasks_meeting_task", ondelete="RESTRICT"), nullable=True, index=True)
-    meeting_task: Mapped["MeetingTask | None"] = relationship(back_populates="linked_tasks")
+class TaskFields:
     position: Mapped[int] = mapped_column(Integer)
     category_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     task_group: Mapped[str] = mapped_column(String(200), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     priority: Mapped[str | None] = mapped_column(String(4), nullable=True)
-    # 保存转交时的姓名，之后账号更名也能保留来源。
-    transferred_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     work_days: Mapped[list[int]] = mapped_column(JSON, default=list)
     notes: Mapped[str] = mapped_column(Text, default="")
+
+class TaskPlan(TaskFields, Base):
+    __tablename__ = "task_plans"
+    __table_args__ = {"comment": "任务计划表"}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
+    applied: Mapped[bool] = mapped_column(Boolean, default=False)
+
+class Task(TaskFields, Base):
+    __tablename__ = "tasks"
+    __table_args__ = {"comment": "任务明细表"}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id", ondelete="CASCADE"), index=True)
+    meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", name="fk_tasks_meeting_task", ondelete="RESTRICT"), nullable=True, index=True)
+    meeting_task: Mapped["MeetingTask | None"] = relationship(back_populates="linked_tasks")
+    # 保存转交时的姓名，之后账号更名也能保留来源。
+    transferred_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
     week: Mapped[Week] = relationship(back_populates="tasks")
 
 class BoardTask(Base):
@@ -85,6 +94,7 @@ class BoardTask(Base):
     __table_args__ = (
         CheckConstraint("state IN ('inbox', 'in_progress', 'done')", name="ck_board_task_state"),
         CheckConstraint("priority IN ('高', '中', '低')", name="ck_board_task_priority"),
+        UniqueConstraint("meeting_task_id", "user_id", name="uq_board_meeting_assignee"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -94,6 +104,12 @@ class BoardTask(Base):
     state: Mapped[str] = mapped_column(String(16), default="inbox")
     revision: Mapped[int] = mapped_column(Integer, default=0)
     position: Mapped[int] = mapped_column(BigInteger, default=0)
+    meeting_task_id: Mapped[int | None] = mapped_column(ForeignKey("meeting_tasks.id", ondelete="CASCADE"))
+    meeting_task: Mapped["MeetingTask | None"] = relationship(back_populates="assignments")
+    assignment_status: Mapped[str | None] = mapped_column(String(16))
+    transferred_by: Mapped[str | None] = mapped_column(String(120))
+    # 转交的明细暂存在任务箱，首次加入本周工作时恢复。
+    handoff: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class BoardTaskDetail(Base):
@@ -143,7 +159,7 @@ class MeetingTask(Base):
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     meeting: Mapped[Meeting] = relationship(back_populates="tasks")
 
-    # 每个被指派人仅关联当前有效的周任务；复制时将关联移动到新行。
+    assignments: Mapped[list[BoardTask]] = relationship(back_populates="meeting_task", order_by=BoardTask.id, passive_deletes=True)
     linked_tasks: Mapped[list["Task"]] = relationship(back_populates="meeting_task", order_by="Task.id")
 
 
@@ -207,6 +223,7 @@ class Notification(Base):
     kind: Mapped[str] = mapped_column(String(16))
     title: Mapped[str] = mapped_column(String(500))
     task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    board_task_id: Mapped[int | None] = mapped_column(ForeignKey("board_tasks.id", ondelete="SET NULL"))
     review_date: Mapped[date | None] = mapped_column(Date)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

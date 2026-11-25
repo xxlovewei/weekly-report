@@ -197,6 +197,7 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
   const week = mondayOf(todayShanghai())
   const weekPath = `/api/weeks/${week}`
   let taskId: number | undefined
+  let boardTaskId: number | undefined
   let receiverHeaders: Record<string, string> | undefined
   let senderHeaders: Record<string, string> | undefined
 
@@ -236,9 +237,20 @@ test('真实任务转交通知通过消息流即时送达', async ({ page, brows
     const read = page.waitForResponse(response => /\/api\/notifications\/\d+$/.test(response.url()) && response.request().method() === 'PATCH')
     await toast.click()
     expect((await read).status()).toBe(200)
-    await expect(page).toHaveURL(new RegExp(`task=${taskId}(?:&|$)`))
+    await expect(page).toHaveURL(/\/task-board\?task=\d+$/)
+    const target = page.getByRole('region', { name: '任务箱' }).locator('.board-target')
+    await expect(target).toBeFocused()
+    boardTaskId = Number(await target.getAttribute('data-card-id'))
   } finally {
     try {
+      if (boardTaskId && receiverHeaders) {
+        const board = await (await page.request.get('/api/board-tasks')).json()
+        const card = board.tasks.find((item: { id: number }) => item.id === boardTaskId)
+        if (card) await expect(await page.request.delete(
+          `/api/board-tasks/${boardTaskId}?revision=${card.revision}&week_start=${board.current_week}`,
+          { headers: receiverHeaders },
+        )).toBeOK()
+      }
       if (taskId) {
         for (const [request, headers] of [[sender.request, senderHeaders], [page.request, receiverHeaders]] as const) {
           if (!headers) continue

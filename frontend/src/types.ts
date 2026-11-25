@@ -2,8 +2,8 @@ export type UserRole = 'admin' | 'user'
 export interface User { id: number; username: string; display_name: string; role: UserRole; roles?: UserRole[]; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
 export interface Category { id: number; name: string }
 export type TaskPriority = '高' | '中' | '低'
-export interface Task { id: number; board_task_id?: number | null; meeting_task_id?: number | null; meeting_id?: number | null; meeting_date?: string | null; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
-export interface WeekData { revision: number; tasks: Task[]; no_source?: boolean }
+export interface Task { id: number; board_task_id?: number | null; meeting_task_id?: number | null; meeting_id?: number | null; meeting_date?: string | null; name_locked?: boolean; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
+export interface WeekData { revision: number; tasks: Task[]; plans?: Task[]; no_source?: boolean }
 export interface ReviewIssue {
   id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean
   title: string; severity: string; category: string; dimension: string; sha: string; commit_message: string
@@ -19,7 +19,7 @@ export type MeetingPerson = Pick<User, 'id' | 'username' | 'display_name'>
 export interface Meeting { revision?: number; id: number; meeting_date: string; meeting_type: string; content: string; needs_follow_up: boolean; creator: MeetingPerson | null; updaters: MeetingPerson[]; tasks: MeetingTask[] }
 export interface MeetingPage { items: Meeting[]; total: number; page: number; page_size: number }
 
-export interface MessageTarget { date?: string; week?: string; task?: number }
+export interface MessageTarget { date?: string; board_task?: number }
 export interface LiveMessage {
   id: number
   kind: '转交任务' | '会议指派' | '代码审查' | '系统通知'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, newIdempotencyKey } from './api'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, TaskPriority } from './types'
@@ -18,8 +18,12 @@ interface Card extends CardFields {
   position: number
   has_current_detail: boolean
   has_other_details: boolean
+  meeting_id?: number | null
+  transferred_by?: string | null
+  name_locked?: boolean
 }
 type Dialog = { kind: 'edit'; card?: Card } | { kind: 'remove' | 'return'; card: Card }
+const props = defineProps<{ targetTask?: number | null; targetRefresh?: number }>()
 
 const cards = ref<Card[]>([])
 const categories = ref<Category[]>([])
@@ -57,6 +61,17 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(load)
+watch(() => [loading.value, props.targetTask, props.targetRefresh], () => {
+  if (loading.value || !props.targetTask) return
+  const card = document.getElementById(`board-task-${props.targetTask}`)
+  if (!card) return
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  card.focus({ preventScroll: true })
+  card.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'instant' : 'smooth' })
+  if (!reducedMotion) card.animate([
+    { backgroundColor: '#fff' }, { backgroundColor: '#f2ffac' }, { backgroundColor: '#fff' },
+  ], { duration: 800, iterations: 3 })
+}, { flush: 'post' })
 
 function saveCard(card: Card) {
   const index = cards.value.findIndex(item => item.id === card.id)
@@ -95,7 +110,7 @@ async function submit() {
   await perform(async () => {
     if (pending.kind === 'edit') {
       const fields = { ...form, name: form.name.trim() }
-      if (!fields.name) { throw new ApiError(422, '请输入任务名称。') }
+      if (!fields.name && !pending.card?.name_locked) { throw new ApiError(422, '请输入任务名称。') }
       if (pending.card) {
         saveCard(await api<Card>(path(pending.card), 'PATCH', fields))
       } else {
@@ -190,12 +205,18 @@ function drop(event: DragEvent, state: State) {
           :disabled="busy" @click="open({ kind: 'edit' })">＋ 添加任务</button>
       </header>
       <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
-      <article v-for="card in column.cards" :key="card.id" class="board-card priority-edge" :data-priority="card.priority"
-        :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id }"
+      <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
+        tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id }"
         :aria-label="`${card.name}，优先级${card.priority}`" :draggable="!busy"
         @dragstart="startDrag($event, card)" @dragend="resetDrag">
         <div class="board-card-content">
-          <strong>{{ card.name }}</strong>
+          <strong>{{ card.name || '未命名任务' }}</strong>
+          <RouterLink v-if="card.meeting_id" class="task-transfer-mark task-meeting-link"
+            :to="{ name: 'meetings', query: { meeting: card.meeting_id } }" title="会议指派，点击可跳转会议记录" aria-label="查看指派会议">💡</RouterLink>
+          <span v-if="card.transferred_by" class="task-transfer-mark" role="img"
+            :aria-label="`由${card.transferred_by}转交的任务`" :title="`由${card.transferred_by}转交的任务`">💡</span>
+          <button v-if="card.state === 'inbox'" type="button" class="mini-button"
+            :disabled="busy" @click="requestMove(card, 'in_progress')">开始任务</button>
           <button v-if="card.state === 'in_progress' && !card.has_current_detail" type="button" class="mini-button"
             :disabled="busy" @click="requestMove(card, 'in_progress')">继续本周工作</button>
         </div>
@@ -208,8 +229,8 @@ function drop(event: DragEvent, state: State) {
             :title="card.has_other_details ? '已关联其他周的任务明细' : '修改任务'" @click="open({ kind: 'edit', card })">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4-1 12-12-3-3L5 16zM14 7l3 3"/></svg>
           </button>
-          <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details"
-            :title="card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
+          <button type="button" class="icon-btn danger" aria-label="删除任务" :disabled="busy || card.has_other_details || !!card.meeting_id"
+            :title="card.meeting_id ? '会议指派任务，请在会议记录中取消指派' : card.has_other_details ? '已关联其他周的任务明细' : '删除任务'" @click="open({ kind: 'remove', card })">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M9 6V3h6v3M6 6l1 14h10l1-14M10 10v6m4-6v6"/></svg>
           </button>
         </div>
@@ -221,12 +242,12 @@ function drop(event: DragEvent, state: State) {
     <form v-if="action" class="stack-form" @submit.prevent="submit">
       <h2 id="board-dialog-title">{{ action.kind === 'edit' ? (action.card ? '修改任务' : '添加任务') : action.kind === 'remove' ? '删除任务' : '移回任务箱' }}</h2>
       <template v-if="action.kind === 'edit'">
-        <label>任务类型<select v-model="form.category_name" required :disabled="busy">
-          <option value="" disabled>请选择任务类型</option>
+        <label>任务类型<select v-model="form.category_name" :required="!!form.category_name || action.card?.category_name !== ''" :disabled="busy">
+          <option value="" disabled>{{ action.card?.category_name === '' ? '未选择' : '请选择任务类型' }}</option>
           <option v-if="form.category_name && !options.includes(form.category_name)" :value="form.category_name">{{ form.category_name }}（历史）</option>
           <option v-for="name in options" :key="name" :value="name">{{ name }}</option>
         </select></label>
-        <label>任务名称<input v-model="form.name" maxlength="200" required :disabled="busy" /></label>
+        <label>任务名称<input v-model="form.name" maxlength="200" required :disabled="busy || action.card?.name_locked" /></label>
         <label>优先级<select v-model="form.priority" :disabled="busy">
           <option value="高">高</option><option value="中">中</option><option value="低">低</option>
         </select></label>
@@ -252,8 +273,10 @@ function drop(event: DragEvent, state: State) {
 .board-empty { padding: 14px 0; color: #555; }
 .board-drop-target { outline: 3px solid #75a60a; outline-offset: -5px; }
 .board-card.board-drop-before { outline: 2px solid #75a60a; outline-offset: 2px; }
+.board-card.board-target { outline: 2px solid #2781b8; outline-offset: 2px; }
 .board-card { background: #fff; border: 1px solid #222; border-left: 4px solid var(--priority-glow); box-shadow: var(--priority-edge-shadow); padding: 10px 8px 10px 12px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; cursor: grab; }
 .board-card-content { display: grid; gap: 6px; justify-items: start; min-width: 0; overflow-wrap: anywhere; }
+.board-card-content strong { white-space: pre-wrap; }
 .board-card-actions { display: flex; margin-left: auto; align-items: center; gap: 4px; flex-wrap: wrap; }
 .board-card-actions svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .board-dialog { margin: auto; }
