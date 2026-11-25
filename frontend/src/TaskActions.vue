@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, ApiError } from './api'
 import type { MeetingPerson, Task, TaskPriority } from './types'
 
-const props = defineProps<{ tasks: Task[]; delegated?: boolean; busy?: boolean; plan?: boolean; allowBoardTransfer?: boolean }>()
+const props = defineProps<{ tasks: Task[]; delegated?: boolean; busy?: boolean; isCurrentWeek?: boolean }>()
 const emit = defineEmits<{
   move: [id: number, targetId: number, after: boolean]
   priority: [id: number, priority: TaskPriority]
@@ -132,7 +132,7 @@ function confirmTransfer() {
         <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(index + 1)">下移一行</button>
         <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(tasks.length - 1)">置底</button>
         <button type="button" @click="showPriorities">设置优先级 <span aria-hidden="true">›</span></button>
-        <button v-if="!delegated && !plan" type="button" aria-haspopup="dialog" :disabled="!!tasks[index]?.board_task_id && !allowBoardTransfer" @click="startTransfer">转交任务</button>
+        <button v-if="!delegated && isCurrentWeek" type="button" aria-haspopup="dialog" :disabled="tasks[index]?.has_history" :title="tasks[index]?.has_history ? '已有历史周明细，无法转交' : undefined" @click="startTransfer">转交任务</button>
       </template>
     </div>
     <dialog ref="dialog" class="modal task-transfer-dialog" aria-labelledby="task-transfer-title" @close="transferClosed">

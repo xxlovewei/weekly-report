@@ -26,7 +26,8 @@ def test_transfer_moves_one_task_to_inbox_and_restores_its_details_on_start():
     assert result.status_code == 200, result.text
     assert result.json()["tasks"] == [{**source["tasks"][1], "position": 1}]
     assert bob.get(week).json() == target
-    card = start_inbox_task(bob)
+    message, = bob.get("/api/notifications").json()["items"]
+    card = start_inbox_task(bob, card_id=message["target"]["board_task"])
     received = bob.get(week).json()
     assert received["tasks"] == [target["tasks"][0], {
         **source["tasks"][0], "id": received["tasks"][1]["id"], "position": 2,

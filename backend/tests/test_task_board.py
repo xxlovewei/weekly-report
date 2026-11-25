@@ -47,6 +47,63 @@ def test_board_move_and_week_status_sync():
     assert detail["status"] == "5%"
 
 
+def test_week_add_copy_rename_and_delete_share_independent_cards():
+    alice = client("alice")
+    board = "/api/board-tasks"
+    week = f"/api/weeks/{current_week()}"
+    first = mutate(alice, "POST", f"{week}/tasks", 0, key="add").json()
+    assert mutate(alice, "POST", f"{week}/tasks", 0, key="add").json() == first
+    original, = first["tasks"]
+    card, = alice.get(board).json()["tasks"]
+    assert card["id"] == original["board_task_id"] and card["has_current_detail"] and card["state"] == "inbox"
+    path = f"{week}/tasks/{original['id']}"
+    updated = mutate(alice, "PATCH", path, first["revision"], {
+        "task_group": "同步任务", "category_name": "其他", "priority": "高",
+        "status": "已完成", "description": "完成验证",
+    }).json()
+    copied = mutate(alice, "POST", f"{path}/duplicate", updated["revision"], key="copy").json()
+    assert mutate(alice, "POST", f"{path}/duplicate", updated["revision"], key="copy").json() == copied
+    _, second = copied["tasks"]
+    cards = alice.get(board).json()["tasks"]
+    assert {item["id"] for item in cards} == {original["board_task_id"], second["board_task_id"]}
+    assert all((item["name"], item["category_name"], item["priority"], item["state"]) ==
+               ("同步任务", "其他", "高", "done") for item in cards)
+    remove = mutate(alice, "DELETE", f"{week}/tasks/{second['id']}", copied["revision"])
+    assert remove.status_code == 200, remove.text
+    assert [item["id"] for item in alice.get(board).json()["tasks"]] == [original["board_task_id"]]
+
+
+def test_week_history_locks_rename_and_delete_but_allows_progress_and_copy(monkeypatch):
+    alice, admin = client("alice"), client("admin")
+    previous = current_week()
+    week = f"/api/weeks/{previous}"
+    created = mutate(alice, "POST", f"{week}/tasks", 0).json()
+    original, = created["tasks"]
+    assert mutate(alice, "PATCH", f"{week}/tasks/{original['id']}", created["revision"], {
+        "task_group": "跨周任务", "status": "40%",
+    }).status_code == 200
+    current = previous + timedelta(days=7)
+    monkeypatch.setattr("app.main.current_work_week", lambda: current)
+    current_path = f"/api/weeks/{current}"
+    resumed = mutate(alice, "POST", f"{current_path}/add-in-progress", 0).json()
+    detail, = resumed["tasks"]
+    assert detail["has_history"] and detail["board_task_id"] == original["board_task_id"]
+    path = f"{current_path}/tasks/{detail['id']}"
+    assert mutate(alice, "PATCH", path, resumed["revision"], {"task_group": "禁止改名"}).status_code == 409
+    assert mutate(alice, "DELETE", path, resumed["revision"]).status_code == 409
+    assert mutate(alice, "POST", f"{path}/transfer", resumed["revision"], {"user_id": 3}).status_code == 409
+    revision = alice.get(week).json()["revision"]
+    assert admin.delete(f"{week}/tasks/{original['id']}?revision={revision}&user_id=2").status_code == 409
+    edited = mutate(alice, "PATCH", path, resumed["revision"], {
+        "task_group": "跨周任务", "description": "本周进展", "status": "60%",
+    }).json()
+    assert edited["tasks"][0]["description"] == "本周进展"
+    copied = mutate(alice, "POST", f"{path}/duplicate", edited["revision"]).json()
+    assert not copied["tasks"][1]["has_history"]
+    assert copied["tasks"][1]["board_task_id"] != original["board_task_id"]
+    assert alice.get(week).json()["tasks"][0]["status"] == "40%"
+
+
 @pytest.mark.parametrize("resume_by_copy", [True, False])
 def test_rollover_keeps_history_and_deduplicates_continuation(monkeypatch, resume_by_copy):
     alice = client("alice")
@@ -84,6 +141,7 @@ def test_rollover_keeps_history_and_deduplicates_continuation(monkeypatch, resum
     body.update(state="inbox", revision=card["revision"], week_start=str(current))
     assert alice.patch(f"{card_path}/status", json=body).status_code == 200
     assert alice.get(current_path).json()["tasks"] == []
+    old["tasks"][0]["has_history"] = True
     assert alice.get(old_path).json() == old
 
 
@@ -160,9 +218,10 @@ def test_copy_edit_and_delete_card_keep_independent_details():
     week_path = f"/api/weeks/{week}"
     detail, = (data := alice.get(week_path).json())["tasks"]
     edited = mutate(alice, "PATCH", f"{week_path}/tasks/{detail['id']}", data["revision"], {"task_group": "周报别名"}).json()
-    response = alice.patch(f"{card_path}?revision={card['revision']}&week_start={week}", json={**fields, "priority": "高"})
+    card, = (item for item in alice.get(board_path).json()["tasks"] if item["id"] != copied["id"])
+    response = alice.patch(f"{card_path}?revision={card['revision']}&week_start={week}", json={**fields, "name": "周报别名", "priority": "高"})
     assert response.status_code == 200, response.text
-    assert response.json()["name"] == fields["name"]
+    assert response.json()["name"] == "周报别名"
     detail, = (data := alice.get(week_path).json())["tasks"]
     assert data["revision"] > edited["revision"] and detail["task_group"] == "周报别名" and detail["priority"] == "高"
     assert alice.delete(f"{card_path}?revision={response.json()['revision']}&week_start={week}").status_code == 200

@@ -149,10 +149,9 @@ def test_task_order_copy_revision_and_idempotency(monkeypatch):
     assert len(carried["tasks"]) == 2
     assert all(t["work_days"] == [] for t in carried["tasks"])
     assert mutate(alice, "POST", f"{target}/carry-over", 0, {"mode":"append"}, key="carry1").json() == carried
-    overwritten = mutate(alice, "POST", f"{target}/carry-over", 1, {"mode":"overwrite"}).json()
-    assert len(overwritten["tasks"]) == 2
-    removed = mutate(alice, "DELETE", f"{target}/tasks/{overwritten['tasks'][0]['id']}", 2).json()
-    assert [t["position"] for t in removed["tasks"]] == [1]
+    repeated = mutate(alice, "POST", f"{target}/carry-over", 1, {"mode":"overwrite"}).json()
+    assert repeated["no_source"] and repeated["tasks"] == carried["tasks"]
+    assert mutate(alice, "DELETE", f"{target}/tasks/{carried['tasks'][0]['id']}", 1).status_code == 409
 
 def test_no_source_does_not_clear_and_blank_status_copies(monkeypatch):
     monkeypatch.setattr("app.main.current_work_week", lambda: date.fromisoformat("2026-10-12"))

@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import Field
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from . import main
 from .db import get_db
@@ -56,6 +56,35 @@ def board_detail(db: Session, card_id: int, week_id: int):
     return db.scalar(select(Task).join(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
                      .where(BoardTaskDetail.board_task_id == card_id, BoardTaskDetail.week_id == week_id))
 
+def linked_card(db: Session, task_id: int):
+    link = db.get(BoardTaskDetail, task_id)
+    return db.get(BoardTask, link.board_task_id) if link else None
+
+
+def prior_detail_exists(card_id, current_week: date):
+    detail = aliased(BoardTaskDetail)
+    return (select(detail.task_id).join(Week, Week.id == detail.week_id)
+            .where(detail.board_task_id == card_id, Week.start_date < current_week).exists())
+
+
+def has_prior_detail(db: Session, card_id: int, current_week: date):
+    return db.scalar(select(prior_detail_exists(card_id, current_week)))
+
+
+def state_for_status(status: str | None):
+    return "done" if status == "已完成" else "in_progress" if status else "inbox"
+
+
+def create_card_for_detail(db: Session, week: Week, task: Task):
+    # 周明细和独立的看板卡片在同一事务中创建，状态决定卡片所在列。
+    state = state_for_status(task.status)
+    card = BoardTask(user_id=week.user_id, name=task.task_group, category_name=task.category_name or "",
+                     priority=task.priority or "低", state=state,
+                     position=position_at_edge(db, week.user_id, state, top=False))
+    db.add_all([task, card])
+    db.flush()
+    db.add(BoardTaskDetail(task_id=task.id, board_task_id=card.id, week_id=week.id))
+
 
 def delete_detail(db: Session, detail: Task):
     week_id = detail.week_id
@@ -66,22 +95,22 @@ def delete_detail(db: Session, detail: Task):
         task.position = position
 
 
-def sync_card_from_detail(db: Session, week: Week, task_id: int, status: str | None, *, removed=False):
-    link = db.get(BoardTaskDetail, task_id)
-    if link is None:
-        return
-    card = db.get(BoardTask, link.board_task_id)
-    if week.start_date == main.current_work_week():
-        state = "done" if status == "已完成" else "in_progress" if status else "inbox"
-        assignment_changed = card.meeting_task_id is not None and card.assignment_status != status
-        if assignment_changed:
-            card.assignment_status = status
-            card.meeting_task.meeting.revision += 1
-        if removed or state != card.state or assignment_changed:
-            put_at_top(db, card, state)
-            card.revision += 1
-    elif removed:
-        # 删除历史关联可能解锁卡片编辑，通知使用旧版本的页面重新载入。
+def sync_card_from_detail(db: Session, card: BoardTask, task: Task, fields):
+    changed = False
+    for field, attr, value in (
+        ("task_group", "name", task.task_group),
+        ("category_name", "category_name", task.category_name or ""),
+        ("priority", "priority", task.priority or "低"),
+    ):
+        if field in fields and getattr(card, attr) != value:
+            setattr(card, attr, value)
+            changed = True
+    if "status" in fields:
+        state = state_for_status(task.status)
+        changed |= state != card.state
+        put_at_top(db, card, state)
+        changed |= set_assignment_status(card, task.status)
+    if changed:
         card.revision += 1
 
 
@@ -102,18 +131,13 @@ def add_inbox_card(db: Session, owner: int, *, name: str, category_name="", prio
     return card
 
 
-def detail_weeks(db: Session, card_id: int):
-    return list(db.scalars(select(Week.start_date).join(BoardTaskDetail, BoardTaskDetail.week_id == Week.id)
-                           .where(BoardTaskDetail.board_task_id == card_id)))
-
-
 def checked_card(db: Session, user_id: int, card_id: int, revision: int, week_start: date, *, fields=False):
     card = db.get(BoardTask, card_id)
     if card is None or card.user_id != user_id:
         raise HTTPException(404, "看板任务不存在")
     if revision != card.revision or week_start != main.current_work_week():
         raise HTTPException(409, "卡片或当前周已更新，请重新载入后操作")
-    historical = any(start != week_start for start in detail_weeks(db, card.id))
+    historical = has_prior_detail(db, card.id, week_start)
     if fields and historical:
         raise HTTPException(409, "卡片已关联其他周的任务明细，仅可移列或续做")
     return card, historical
@@ -132,7 +156,7 @@ def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
         payload = cards.setdefault(card.id, card_json(card))
         if linked_week == start:
             payload["has_current_detail"] = True
-        elif linked_week is not None:
+        elif linked_week is not None and linked_week < start:
             payload["has_other_details"] = True
     return {"current_week": start.isoformat(), "tasks": list(cards.values())}
 
@@ -239,6 +263,8 @@ def set_assignment_status(card: BoardTask, status: str | None):
     if card.meeting_task and card.assignment_status != status:
         card.assignment_status = status
         card.meeting_task.meeting.revision += 1
+        return True
+    return False
 
 
 def attach_detail(db: Session, card: BoardTask, week: Week, position: int, status: str | None):

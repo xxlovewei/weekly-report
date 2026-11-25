@@ -2,7 +2,7 @@ export type UserRole = 'admin' | 'user'
 export interface User { id: number; username: string; display_name: string; role: UserRole; roles?: UserRole[]; is_active: boolean; status: '正常' | '锁定'; must_change_password: boolean }
 export interface Category { id: number; name: string }
 export type TaskPriority = '高' | '中' | '低'
-export interface Task { id: number; board_task_id?: number | null; meeting_task_id?: number | null; meeting_id?: number | null; meeting_date?: string | null; name_locked?: boolean; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
+export interface Task { id: number; board_task_id?: number | null; meeting_task_id?: number | null; meeting_id?: number | null; meeting_date?: string | null; name_locked?: boolean; has_history?: boolean; review_issue_id?: number | null; position: number; category_name: string | null; task_group: string; description: string; status: string | null; priority?: TaskPriority | null; transferred_by?: string | null; work_days: number[]; notes: string }
 export interface WeekData { revision: number; tasks: Task[]; plans?: Task[]; no_source?: boolean }
 export interface ReviewIssue {
   id: number; project_id: number; author: string; author_name: string; mine: boolean; anonymous: boolean

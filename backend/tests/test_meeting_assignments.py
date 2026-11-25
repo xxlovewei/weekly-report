@@ -18,9 +18,9 @@ def setup_assignment():
     return alice, bob, result.json()
 
 
-def start_inbox_task(client, state="in_progress"):
+def start_inbox_task(client, state="in_progress", *, card_id=None):
     board = client.get("/api/board-tasks").json()
-    card, = board["tasks"]
+    card, = (item for item in board["tasks"] if card_id is None or item["id"] == card_id)
     assert card["state"] == "inbox"
     result = client.patch(f"/api/board-tasks/{card['id']}/status", json={
         "revision": card["revision"], "week_start": board["current_week"], "state": state,
@@ -145,6 +145,7 @@ def test_add_in_progress_retains_meeting_history_and_does_not_duplicate(monkeypa
     old = alice.get(source).json()
     copied = mutate(alice, "POST", f"{target}/add-in-progress", 0).json()
     assert copied["tasks"][0]["meeting_task_id"]
+    old["tasks"][0]["has_history"] = True
     assert alice.get(source).json() == old
     assert mutate(alice, "POST", f"{target}/add-in-progress", copied["revision"]).json()["no_source"]
     new = copied["tasks"][0]

@@ -207,7 +207,7 @@ function drop(event: DragEvent, state: State) {
       <p v-if="!column.cards.length" class="board-empty">暂无任务</p>
       <article v-for="card in column.cards" :key="card.id" :id="`board-task-${card.id}`" class="board-card priority-edge" :data-priority="card.priority"
         tabindex="-1" :data-card-id="card.id" :class="{ 'board-drop-before': dropBefore === card.id, 'board-target': targetTask === card.id }"
-        :aria-label="`${card.name}，优先级${card.priority}`" :draggable="!busy"
+        :aria-label="`${card.name || '未命名任务'}，优先级${card.priority}`" :draggable="!busy"
         @dragstart="startDrag($event, card)" @dragend="resetDrag">
         <div class="board-card-content">
           <strong>{{ card.name || '未命名任务' }}</strong>

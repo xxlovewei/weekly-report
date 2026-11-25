@@ -1,4 +1,5 @@
 import { expect, signIn, skipGuides, test } from './fixtures'
+import type { WeekData } from '../src/types'
 
 test('个人看板拖拽与明细双向同步，管理员可以代管明细', async ({ page, browser, baseURL }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -77,4 +78,42 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   await page.getByRole('button', { name: '确认删除' }).click()
   await expect(returned).toHaveCount(0)
   expect(errors).toEqual([])
+})
+
+test('新增和复制周任务同步到看板，删除当周任务同步移除卡片', async ({ page }) => {
+  await signIn(page, 'alice')
+  const name = `周任务同步 ${Date.now()}`
+  const create = page.waitForResponse(response => response.request().method() === 'POST' &&
+    /\/api\/weeks\/[^/]+\/tasks$/.test(new URL(response.url()).pathname))
+  await page.getByRole('button', { name: '新增任务' }).click()
+  const created: WeekData = await (await create).json()
+  const original = created.tasks.at(-1)!
+  const added = page.locator(`#work-task-${original.id}`)
+  await added.getByLabel('任务名称').fill(name)
+  await added.getByLabel('完成状态').selectOption('40%')
+  await expect(page.getByText('✓ 已保存')).toBeVisible()
+  const duplicate = page.waitForResponse(response => response.request().method() === 'POST' &&
+    new URL(response.url()).pathname.endsWith(`/tasks/${original.id}/duplicate`))
+  await added.getByRole('button', { name: '复制一行' }).click()
+  const response: WeekData = await (await duplicate).json()
+  const copied = response.tasks[response.tasks.findIndex(task => task.id === original.id) + 1]
+  expect(copied.board_task_id).not.toBe(original.board_task_id)
+  await expect(page.locator(`#work-task-${copied.id}`).getByLabel('任务名称')).toHaveValue(name)
+
+  await page.getByRole('button', { name: '任务看板', exact: true }).click()
+  const cards = page.getByRole('region', { name: '进行中' }).getByRole('article', { name: `${name}，优先级低` })
+  await expect(cards).toHaveCount(2)
+
+  await page.getByRole('button', { name: '本周工作', exact: true }).click()
+  for (const id of [copied.id, original.id]) {
+    const deleteButton = page.locator(`#work-task-${id}`).getByRole('button', { name: '删除', exact: true })
+    await deleteButton.click()
+    const dialog = page.getByRole('dialog', { name: '确认删除任务' })
+    await expect(dialog).toContainText('本周明细和看板任务都将删除')
+    await dialog.getByRole('button', { name: '确认删除' }).click()
+    await expect(dialog).toHaveCount(0)
+  }
+  await page.getByRole('button', { name: '任务看板', exact: true }).click()
+  await expect(page.getByRole('region', { name: '进行中' })).toBeVisible()
+  await expect(cards).toHaveCount(0)
 })
