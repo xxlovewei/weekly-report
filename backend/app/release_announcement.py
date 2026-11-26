@@ -23,18 +23,18 @@ def announce_release(version: str) -> bool:
             if db.scalar(select(ReleaseRecord.id).where(ReleaseRecord.version == version)) is None:
                 raise ValueError(f"版本 {version} 尚未入库")
             return False
-        # 提交后唤醒在线消息流。短时断线的标签页可从数据库补收。
+        # 提交后唤醒在线消息流。仍运行旧版本的标签页重连后可从数据库补收。
         db.execute(text("SELECT pg_notify('zhoubao_messages', :event)"), {"event": RELEASE_ANNOUNCED})
         return True
 
 
 def stream_release(db, user_id: int, client_version: str | None, legacy_reconnect: bool, connected_at: datetime):
-    release = select(ReleaseRecord.version).where(
-        ReleaseRecord.announced_at >= datetime.now(timezone.utc) - RECOVERY_WINDOW,
-    )
-    if client_version is None and not legacy_reconnect:
-        # 没有重连游标的旧页面只接收打开之后的新通知。
-        release = release.where(ReleaseRecord.announced_at >= connected_at)
+    release = select(ReleaseRecord.version).where(ReleaseRecord.announced_at.is_not(None))
+    if client_version is None:
+        # 无法识别页面版本时，只在短时重连或当前连接期间补发普通消息。
+        release = release.where(ReleaseRecord.announced_at >= datetime.now(timezone.utc) - RECOVERY_WINDOW)
+        if not legacy_reconnect:
+            release = release.where(ReleaseRecord.announced_at >= connected_at)
     version = db.scalar(release.order_by(ReleaseRecord.announced_at.desc(), ReleaseRecord.id.desc()).limit(1))
     if version is None:
         return None

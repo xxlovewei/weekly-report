@@ -44,4 +44,7 @@ def test_release_announces_only_after_confirmation_and_legacy_delivery_is_idempo
         record = db.scalar(select(ReleaseRecord))
         record.announced_at = datetime.now(timezone.utc) - timedelta(hours=1)
         db.commit()
-    assert snapshot(active, "2.3.0")["release"] is None
+    # 带版本号的旧页面恢复连接时，仍可收到已发布版本。
+    assert snapshot(offline, "2.3.0")["release"] == {"version": "2.3.1", "message": message}
+    assert snapshot(offline, "2.3.1")["release"] is None
+    assert snapshot(offline, None, reconnect=True)["messages"] == []
