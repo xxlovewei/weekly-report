@@ -985,7 +985,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
         </div>
       </Transition>
       <div v-if="releaseVersion" class="release-notice" role="group" aria-label="版本更新">
-        <span class="release-notice-icon" aria-hidden="true">👂</span>
+        <span class="release-notice-icon" aria-hidden="true">🎉</span>
         <p class="release-notice-text">有新版 <strong>v{{ releaseVersion }}</strong> 已就绪</p>
         <div class="release-notice-actions">
           <button class="release-notice-refresh" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
