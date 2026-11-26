@@ -313,7 +313,7 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     lock_task_changes(db)
     card, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
     if card.deployment_item:
-        raise HTTPException(403, "请在发版管理中从升级计划移除此检查项")
+        raise HTTPException(403, "请在发版管理中从发版计划移除此检查项")
     if card.meeting_task_id:
         raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     week = week_row(db, owner, week_start)

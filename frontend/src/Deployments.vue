@@ -11,6 +11,7 @@ interface Version {
   tag: string | null; tag_url: string | null; tag_sha: string | null
 }
 interface GitLabRef { name: string; sha: string }
+type CommitMessages = { requires_recent_confirmation: true } | { messages: string[] }
 interface Project { id: number; name: string; level: string | null; network: string | null; sites: string[] }
 interface Item { id: number; title: string; notes: string; author: string; source_version: string | null; removed: boolean; done: boolean; dispatched: boolean; can_complete: boolean }
 interface Plan {
@@ -75,7 +76,7 @@ function isEditable(plan: Plan) { return plan.status === 'draft' || plan.status 
 const editable = computed(() => !!detail.value && isEditable(detail.value))
 const kept = computed(() => detail.value?.items.filter(item => !removedIds.value.includes(item.id)) || [])
 const checklistChanged = computed(() => detail.value?.items.some(item => item.removed !== removedIds.value.includes(item.id)))
-const formTitle = computed(() => mode.value === 'plan' ? '新增升级计划' : mode.value === 'baseline' ? '补录部署基线' : editingMemo.value ? '编辑备忘' : '新增备忘')
+const formTitle = computed(() => mode.value === 'plan' ? '新增发版计划' : mode.value === 'baseline' ? '补录部署基线' : editingMemo.value ? '编辑备忘' : '新增备忘')
 const timeFormat = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
   day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
@@ -275,11 +276,11 @@ function saveOperation() {
   })
 }
 function deletePlan(plan: Plan) {
-  if (!window.confirm(`删除${siteName(plan.site)}的升级计划？已派发的检查任务会收回。`)) return
+  if (!window.confirm(`删除${siteName(plan.site)}的发版计划？已派发的检查任务会收回。`)) return
   void run(async () => {
     await api(`/deployments/plans/${plan.id}/cancel`, 'POST', { revision: plan.revision })
     await loadTab()
-    feedback.value = '升级计划已删除'
+    feedback.value = '发版计划已删除'
   })
 }
 
@@ -313,6 +314,27 @@ function openForm(next: FormMode, memo?: Memo) {
     await loadVersions()
   })
 }
+function newVersionPayload() {
+  if (branchPicker.value?.hasUnselectedText()) throw new Error('请从 GitLab 查询结果中选择分支，或清空分支')
+  if (tagPicker.value?.hasUnselectedText()) throw new Error('请从 GitLab 查询结果中选择标签，或清空标签')
+  return { number: number.value || undefined, branch: branch.value?.name ?? null, sha: branch.value?.sha ?? null,
+    tag: tag.value?.name ?? null, tag_sha: tag.value?.sha ?? null }
+}
+async function fetchCommitMessages() {
+  await run(async () => {
+    const path = `/deployments/projects/${projectId.value}/commit-messages`
+    const selection = newVersion.value ? { version: newVersionPayload() } : { version_id: versionId.value }
+    let result = await api<CommitMessages>(path, 'POST', selection)
+    if ('requires_recent_confirmation' in result) {
+      if (!editor.value?.open || !window.confirm('没有可供比较的上一发版版本，将获取所选分支或标签最近 2 周的提交备注。是否继续？')) return
+      result = await api<CommitMessages>(path, 'POST', { ...selection, allow_recent: true })
+    }
+    if (!editor.value?.open || !('messages' in result)) return
+    if (!result.messages.length) throw new Error('所选范围内没有 GitLab 提交记录')
+    if (upgradeContent.value && !window.confirm('将用获取的提交备注替换现有升级内容。是否继续？')) return
+    upgradeContent.value = result.messages.join('\n\n')
+  })
+}
 async function saveForm() {
   await run(async () => {
     const targetSites = project.value?.level === 'national' ? project.value.sites : sites.value
@@ -327,11 +349,8 @@ async function saveForm() {
     } else {
       const baseline = mode.value === 'baseline'
       if (newVersion.value) {
-        if (branchPicker.value?.hasUnselectedText()) throw new Error('请从 GitLab 查询结果中选择分支，或清空分支')
-        if (tagPicker.value?.hasUnselectedText()) throw new Error('请从 GitLab 查询结果中选择标签，或清空标签')
         const saved = await api<Version>(`/deployments/projects/${projectId.value}/${baseline ? 'baseline-versions' : 'versions'}`,
-          'POST', { number: number.value, branch: branch.value?.name ?? null, sha: branch.value?.sha ?? null,
-            tag: tag.value?.name ?? null, tag_sha: tag.value?.sha ?? null })
+          'POST', newVersionPayload())
         versions.value.unshift(saved); versionId.value = saved.id; newVersion.value = false
       }
       if (!versionId.value) throw new Error('请选择版本')
@@ -345,7 +364,7 @@ async function saveForm() {
       }
       historyMode.value = baseline
       await showSection('plans')
-      feedback.value = baseline ? `已补录 ${rows.length} 个机房的基线` : `已生成 ${rows.length} 条升级计划`
+      feedback.value = baseline ? `已补录 ${rows.length} 个机房的基线` : `已生成 ${rows.length} 条发版计划`
     }
     editor.value?.close()
   })
@@ -363,7 +382,7 @@ async function saveForm() {
         <label v-if="overviewLevel === 'regional'">铁路局<select v-model="overviewSite"><option value="">全部铁路局</option><option v-for="[id, name] in siteEntries.slice(1)" :key="id" :value="id">{{ name }}</option></select></label>
         <label>部署网络<select v-model="overviewNetwork"><option value="">全部网络</option><option v-for="(name, id) in overview.networks" :key="id" :value="id">{{ name }}</option></select></label>
         <label>项目搜索<input v-model="projectSearch" type="search" placeholder="项目名称" /></label>
-        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增升级计划</button>
+        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
       </div>
       <div v-if="overviewProjects.length" class="release-table release-matrix" tabindex="0" aria-label="项目与机房部署总览">
         <table>
@@ -402,7 +421,7 @@ async function saveForm() {
         <label>计划范围<select :value="historyMode ? 'history' : 'open'" :disabled="busy" @change="showPlanList(($event.target as HTMLSelectElement).value === 'history')">
           <option value="open">待执行</option><option value="history">发版历史</option>
         </select></label>
-        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增升级计划</button>
+        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
         <button v-if="admin" class="secondary-button" :disabled="busy || !configured.length" @click="openForm('baseline')">补录部署基线</button>
       </div>
       <form v-if="historyMode" class="release-toolbar" @submit.prevent="run(loadHistory)">
@@ -414,7 +433,7 @@ async function saveForm() {
         <label>截止日期<input v-model="end" type="date" :min="start || undefined" /></label>
         <button class="secondary-button" :disabled="busy">查询</button>
       </form>
-      <div class="release-table" tabindex="0" :aria-label="historyMode ? '发版历史' : '升级计划'">
+      <div class="release-table" tabindex="0" :aria-label="historyMode ? '发版历史' : '发版计划'">
         <table>
           <thead><tr><th scope="col">项目</th><th scope="col">部署位置</th><th scope="col">目标版本</th><th scope="col">GitLab 分支</th><th scope="col">GitLab 标签</th>
             <th scope="col">{{ historyMode ? '实际发版 / 回滚时间' : '计划时间' }}</th><th scope="col">升级内容</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
@@ -446,7 +465,7 @@ async function saveForm() {
                 <span v-if="row.status === 'baseline'" class="release-muted">—</span>
               </div></td>
             </tr>
-            <tr v-if="!(historyMode ? history : plans).length"><td colspan="9" class="empty">{{ historyMode ? '暂无符合条件的发版历史' : '暂无待执行的升级计划' }}</td></tr>
+            <tr v-if="!(historyMode ? history : plans).length"><td colspan="9" class="empty">{{ historyMode ? '暂无符合条件的发版历史' : '暂无待执行的发版计划' }}</td></tr>
           </tbody>
         </table>
       </div>
@@ -506,12 +525,12 @@ async function saveForm() {
       </template>
       <template v-else>
         <div v-if="versions.length" class="release-choice-actions">
-          <button type="button" class="mini-button" :aria-pressed="!newVersion" @click="newVersion = false">使用已有版本</button>
-          <button type="button" class="mini-button" :aria-pressed="newVersion" @click="newVersion = true">登记新版本</button>
+          <button type="button" class="mini-button" :aria-pressed="!newVersion" :disabled="busy" @click="newVersion = false">使用已有版本</button>
+          <button type="button" class="mini-button" :aria-pressed="newVersion" :disabled="busy" @click="newVersion = true">登记新版本</button>
         </div>
         <div class="release-form-row">
-          <label v-if="newVersion">版本号<input v-model.trim="number" type="text" placeholder="x.x.x" pattern="(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)" required maxlength="40" /></label>
-          <label v-else>版本号<select v-model="versionId" required><option :value="null" disabled>请选择版本</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ [item.number, item.branch, item.tag].filter(Boolean).join(' · ') }}</option></select></label>
+          <label v-if="newVersion">版本号<input v-model.trim="number" type="text" placeholder="x.x.x" pattern="(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)" required maxlength="40" :disabled="busy" /></label>
+          <label v-else>版本号<select v-model="versionId" required :disabled="busy"><option :value="null" disabled>请选择版本</option><option v-for="item in versions" :key="item.id" :value="item.id">{{ [item.number, item.branch, item.tag].filter(Boolean).join(' · ') }}</option></select></label>
           <label>{{ mode === 'plan' ? '计划时间（北京时间）' : '实际上线时间（北京时间，选填）' }}
             <input v-model="timestamp" type="datetime-local" :required="mode === 'plan'" />
           </label>
@@ -520,10 +539,14 @@ async function saveForm() {
             <GitLabRefPicker :key="`branch-${projectId}`" ref="branchPicker" v-model="branch" :project-id="projectId" kind="branches" :disabled="busy" />
             <GitLabRefPicker :key="`tag-${projectId}`" ref="tagPicker" v-model="tag" :project-id="projectId" kind="tags" :disabled="busy" />
         </div>
-        <label v-if="mode === 'plan'">升级内容<textarea v-model="upgradeContent" rows="4" wrap="soft" maxlength="5000" /></label>
+        <label v-if="mode === 'plan'">升级内容<textarea v-model="upgradeContent" rows="4" wrap="soft" /></label>
       </template>
       <p v-if="error" class="review-error" role="alert">{{ error }}</p>
-      <div class="top-actions"><button type="button" class="secondary-button" @click="editor?.close()">关闭</button><button class="primary-button" :disabled="busy || !projectId">保存</button></div>
+      <div class="top-actions">
+        <button v-if="mode === 'plan'" type="button" class="secondary-button" :disabled="busy || !projectId" @click="fetchCommitMessages">获取提交记录</button>
+        <button type="button" class="secondary-button" @click="editor?.close()">关闭</button>
+        <button class="primary-button" :disabled="busy || !projectId">保存</button>
+      </div>
     </form>
   </dialog>
 
@@ -569,7 +592,7 @@ async function saveForm() {
 
   <dialog ref="operationDialog" class="review-dialog summary-dialog release-dialog" aria-labelledby="release-operation-title" @close="actionPlan = null">
     <form v-if="actionPlan" class="stack-form" @submit.prevent="saveOperation">
-      <header class="release-dialog-header"><h2 id="release-operation-title">{{ operation === 'edit' ? '修改升级计划' : '确认发版' }}</h2><button type="button" class="mini-button release-dialog-close" aria-label="关闭" @click="operationDialog?.close()">×</button></header>
+      <header class="release-dialog-header"><h2 id="release-operation-title">{{ operation === 'edit' ? '修改发版计划' : '确认发版' }}</h2><button type="button" class="mini-button release-dialog-close" aria-label="关闭" @click="operationDialog?.close()">×</button></header>
       <p>{{ actionPlan.project_name }} · {{ siteName(actionPlan.site) }} · {{ actionPlan.version.number }}</p>
       <template v-if="operation === 'edit'">
         <div class="release-form-row">
@@ -580,7 +603,7 @@ async function saveForm() {
           <GitLabRefPicker ref="editBranchPicker" v-model="editBranch" :project-id="actionPlan.project_id" kind="branches" :disabled="busy" />
           <GitLabRefPicker ref="editTagPicker" v-model="editTag" :project-id="actionPlan.project_id" kind="tags" :disabled="busy" />
         </div>
-        <label>升级内容<textarea v-model="detailContent" rows="4" wrap="soft" maxlength="5000" /></label>
+        <label>升级内容<textarea v-model="detailContent" rows="4" wrap="soft" /></label>
       </template>
       <template v-else>
         <fieldset class="release-fieldset release-outcomes">

@@ -2,7 +2,7 @@ import json
 import os
 import re
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, build_opener
@@ -34,14 +34,22 @@ DEPLOYED_STATES = ("baseline", "succeeded")
 HISTORY_STATES = (*DEPLOYED_STATES, "failed")
 SHA_PATTERN = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
 RefKind = Literal["branches", "tags"]
+VersionNumber = Annotated[str, Field(max_length=40, pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")]
 
 
-class VersionInput(Input):
-    number: str = Field(max_length=40, pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+class VersionRefsInput(Input):
     branch: str | None = Field(default=None, min_length=1, max_length=1000)
     sha: str | None = Field(default=None, pattern=SHA_PATTERN)
     tag: str | None = Field(default=None, min_length=1, max_length=1000)
     tag_sha: str | None = Field(default=None, pattern=SHA_PATTERN)
+
+
+class VersionInput(VersionRefsInput):
+    number: VersionNumber
+
+
+class CommitVersionInput(VersionRefsInput):
+    number: VersionNumber | None = None
 
 
 class TargetsInput(Input):
@@ -52,7 +60,13 @@ class TargetsInput(Input):
 
 class PlansInput(TargetsInput):
     scheduled_at: AwareDatetime
-    upgrade_content: str = Field(default="", max_length=5000)
+    upgrade_content: str = ""
+
+
+class CommitMessagesInput(Input):
+    version_id: int | None = None
+    version: CommitVersionInput | None = None
+    allow_recent: bool = False
 
 
 class BaselineInput(TargetsInput):
@@ -72,7 +86,7 @@ class RevisionInput(Input):
 
 class ScheduleInput(RevisionInput):
     scheduled_at: AwareDatetime
-    upgrade_content: str | None = Field(default=None, max_length=5000)
+    upgrade_content: str | None = None
     version: VersionInput | None = None
 
 
@@ -113,8 +127,7 @@ def checked_sites(project, sites):
     return chosen
 
 
-def gitlab_refs(project, kind: RefKind, *, name=None, search="", page=1):
-    label = "分支" if kind == "branches" else "标签"
+def gitlab_repository(project):
     base = project.gitlab_url
     if not base or not project.gitlab_id:
         raise HTTPException(422, "请在审查配置补齐项目的 GitLab 地址和项目 ID")
@@ -126,8 +139,19 @@ def gitlab_refs(project, kind: RefKind, *, name=None, search="", page=1):
         token = None
     if not isinstance(token, str) or not token.strip():
         raise HTTPException(503, "管理员尚未配置此 GitLab 实例的发版只读凭据")
+    return f"{base}/api/v4/projects/{project.gitlab_id}/repository", token
+
+
+def read_gitlab_json(url, token):
+    with build_opener(NoRedirect()).open(Request(url, headers={"PRIVATE-TOKEN": token}), timeout=10) as response:
+        return json.load(response), response.headers.get("X-Next-Page")
+
+
+def gitlab_refs(project, kind: RefKind, *, name=None, search="", page=1):
+    label = "分支" if kind == "branches" else "标签"
+    repository, token = gitlab_repository(project)
     size = 25
-    path = f"/api/v4/projects/{project.gitlab_id}/repository/{kind}"
+    path = f"/{kind}"
     if name is not None:
         if name in {".", ".."}:
             raise HTTPException(422, f"请选择当前项目的 GitLab {label}")
@@ -135,9 +159,7 @@ def gitlab_refs(project, kind: RefKind, *, name=None, search="", page=1):
     else:
         path += "?" + urlencode({"search": search, "page": page, "per_page": size})
     try:
-        with build_opener(NoRedirect()).open(Request(base + path, headers={"PRIVATE-TOKEN": token}), timeout=10) as response:
-            data = json.load(response)
-            next_page = response.headers.get("X-Next-Page")
+        data, next_page = read_gitlab_json(repository + path, token)
         if name is not None:
             if data["name"] != name:
                 raise ValueError("unexpected GitLab ref")
@@ -186,6 +208,43 @@ def target_plans(project, site):
 def current_plan(db, project, site):
     return db.scalar(target_plans(project, site).where(DeploymentPlan.status.in_(DEPLOYED_STATES))
                      .order_by(DeploymentPlan.id.desc()).limit(1))
+
+
+def previous_release(db, project_id, number):
+    # 按版本号找前一个已上线版本。同一版本有多条记录时使用最近一条的引用快照。
+    target = version_key(number) if number else None
+    releases = db.scalars(select(DeploymentPlan).where(DeploymentPlan.project_id == project_id,
+                         DeploymentPlan.status.in_(DEPLOYED_STATES)).order_by(DeploymentPlan.id.desc()))
+    return max((plan for plan in releases if target is None or version_key(plan.version.number) < target),
+               key=lambda plan: version_key(plan.version.number), default=None)
+
+
+def gitlab_commit_messages(project, sha, previous_sha):
+    if sha == previous_sha:
+        return []
+    repository, token = gitlab_repository(project)
+    # 用提交哈希固定范围，防止分支移动时分页结果发生偏移。
+    size = 100
+    params = {"ref_name": f"{previous_sha}..{sha}" if previous_sha else sha, "per_page": size}
+    if not previous_sha:
+        now = datetime.now(timezone.utc)
+        params["since"] = (now - timedelta(weeks=2)).isoformat(timespec="seconds")
+        params["until"] = now.isoformat(timespec="seconds")
+    messages = []
+    page = 1
+    try:
+        while True:
+            query = urlencode({**params, "page": page})
+            commits, next_page = read_gitlab_json(f"{repository}/commits?{query}", token)
+            if not isinstance(commits, list):
+                raise ValueError("invalid GitLab commit list")
+            messages.extend(commit["message"].rstrip("\r\n") for commit in commits)
+            has_more = bool(next_page) if next_page is not None else len(commits) == size
+            if not commits or not has_more:
+                return messages
+            page += 1
+    except (URLError, TimeoutError, ValueError, TypeError, KeyError, AttributeError) as error:
+        raise HTTPException(502, "无法获取 GitLab 提交记录，请检查项目访问权限和版本引用后重试") from error
 
 
 def checklist_complete(plan):
@@ -280,6 +339,36 @@ def resolve_version_refs(project, data, current=None):
     return values
 
 
+@router.post("/projects/{project_id}/commit-messages")
+def commit_messages(project_id: int, data: CommitMessagesInput, _=Depends(admin), db: Session = Depends(get_db)):
+    project = get_active_project(db, project_id)
+    checked_sites(project, None)
+    if (data.version_id is None) == (data.version is None):
+        raise HTTPException(422, "请选择一个已有版本或填写新版本")
+    current = data.version if data.version_id is None else db.get(DeploymentVersion, data.version_id)
+    if current is None or (data.version_id is not None and current.project_id != project_id):
+        raise HTTPException(422, "请选择该项目的有效版本")
+    if not (current.tag or current.branch):
+        raise HTTPException(422, "请先选择 GitLab 分支或标签")
+    previous = previous_release(db, project_id, current.number)
+    if previous is None and not data.allow_recent:
+        return {"requires_recent_confirmation": True}
+    previous_sha = None
+    if previous is not None:
+        refs = plan_version_json(previous)
+        previous_sha = refs["tag_sha"] or refs["sha"]
+        if not previous_sha:
+            raise HTTPException(422, f"上一发版版本 {previous.version.number} 未记录 GitLab 提交，无法比较提交范围")
+    if data.version is not None:
+        refs = resolve_version_refs(project, data.version)
+        sha = refs["tag_sha"] or refs["sha"]
+    else:
+        sha = current.tag_sha or current.sha
+    if not sha:
+        raise HTTPException(422, "所选版本未记录 GitLab 提交，请重新选择分支或标签")
+    return {"messages": gitlab_commit_messages(project, sha, previous_sha)}
+
+
 def save_version(db, project_id, data):
     project = get_active_project(db, project_id)
     checked_sites(project, None)
@@ -332,7 +421,7 @@ def add_baseline(data: BaselineInput, actor=Depends(admin), db: Session = Depend
     rows = []
     for site in sites:
         if db.scalar(target_plans(project, site).where(DeploymentPlan.status.in_((*DEPLOYED_STATES, *OPEN_STATES))).limit(1)):
-            raise HTTPException(409, f"{SITES[site]}已有历史或升级计划")
+            raise HTTPException(409, f"{SITES[site]}已有历史或发版计划")
         rows.append(new_plan(project, site, version, status="baseline", deployed_at=data.deployed_at,
                              confirmed_by=actor.display_name))
     db.add_all(rows)
@@ -415,7 +504,7 @@ def list_plans(project_id: int | None = None, site: str | None = None, network: 
 def get_plan(db, plan_id):
     plan = db.get(DeploymentPlan, plan_id)
     if plan is None:
-        raise HTTPException(404, "升级计划不存在")
+        raise HTTPException(404, "发版计划不存在")
     return plan
 
 

@@ -1,7 +1,8 @@
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from urllib.error import HTTPError
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
@@ -83,6 +84,70 @@ def test_optional_refs_and_multiline_upgrade_content(gitlab_main):
     })
     assert response.status_code == 200 and response.json()["upgrade_content"] == "调整配置\n验证服务"
     assert details(operator, shanghai)["upgrade_content"] == content
+
+
+def test_commit_messages_require_recent_confirmation_and_compare_released_versions(monkeypatch):
+    calls = []
+    base = "https://gitlab.example.com"
+    refs = {"main": "a" * 40, "v1.8.0": "b" * 40, "v1.10.0": "c" * 40}
+    long_message = "更新项目配置\n\n" + "补充升级步骤" * 900
+
+    def gitlab_response(url, token):
+        path = urlsplit(url)
+        assert token == "test-only"
+        if path.path.endswith("/commits"):
+            params = parse_qs(path.query)
+            calls.append(params)
+            if params["page"] == ["1"]:
+                return [{"message": long_message + "\n", "title": "标题", "id": refs["main"]}], "2"
+            return [{"message": "修复上线流程\n"}], ""
+        name = unquote(path.path.rsplit("/", 1)[-1])
+        return {"name": name, "commit": {"id": refs[name]}}, None
+
+    monkeypatch.setenv("REVIEW_GITLAB_URLS", base)
+    monkeypatch.setenv("DEPLOYMENT_GITLAB_TOKENS", json.dumps({base: "test-only"}))
+    monkeypatch.setattr(deployments, "read_gitlab_json", gitlab_response)
+    operator = client("admin")
+    project_id = operator.post("/api/reviews/projects", json={
+        "name": "提交记录项目", "url": f"{base}/team/app", "gitlab_url": base, "gitlab_id": 42,
+        "deployment_level": "regional", "deployment_network": "internal",
+    }).json()["id"]
+    path = f"{ROOT}/projects/{project_id}"
+    endpoint = f"{path}/commit-messages"
+    new_version = {"number": "1.10.0", "branch": "main", "tag": "v1.10.0", "tag_sha": refs["v1.10.0"]}
+    payload = {"version": new_version}
+    expected = {"messages": [long_message, "修复上线流程"]}
+
+    assert client("alice").post(endpoint, json=payload).status_code == 403
+    assert operator.post(endpoint, json=payload).json() == {"requires_recent_confirmation": True}
+    assert not calls
+    assert operator.post(endpoint, json={**payload, "allow_recent": True}).json() == expected
+    assert len(calls) == 2
+    for index, params in enumerate(calls, 1):
+        assert params["page"] == [str(index)] and params["ref_name"] == [refs["v1.10.0"]]
+        assert datetime.fromisoformat(params["until"][0]) - datetime.fromisoformat(params["since"][0]) == timedelta(weeks=2)
+    calls.clear()
+
+    prior = operator.post(f"{path}/versions", json={"number": "1.8.0", "branch": "main", "tag": "v1.8.0"}).json()
+    assert operator.post(f"{ROOT}/baselines", json={
+        "project_id": project_id, "version_id": prior["id"], "sites": ["beijing"],
+    }).status_code == 201
+    draft = operator.post(f"{path}/versions", json={"number": "1.9.0", "branch": "main"}).json()
+    create_plan(operator, project_id, draft["id"], "shanghai")
+    saved_version = operator.post(f"{path}/versions", json=new_version).json()
+    assert operator.post(endpoint, json={"version_id": saved_version["id"]}).json() == expected
+    assert len(calls) == 2
+    for params in calls:
+        assert params["ref_name"] == [f"{refs['v1.8.0']}..{refs['v1.10.0']}"]
+        assert "since" not in params
+
+    content = "\n\n".join(expected["messages"])
+    saved = operator.post(f"{ROOT}/plans", json={
+        "project_id": project_id, "version_id": saved_version["id"], "sites": ["beijing"],
+        "scheduled_at": "2026-01-01T08:00:00+08:00", "upgrade_content": content,
+    })
+    assert saved.status_code == 201, saved.text
+    assert saved.json()[0]["upgrade_content"] == content
 
 
 def test_draft_version_changes_are_local_and_zero_checklist_can_release(gitlab_main):

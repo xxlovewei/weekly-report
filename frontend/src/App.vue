@@ -28,7 +28,7 @@ const desktopSidebar = ref(!mobileSidebarQuery.matches), sidebarCollapsed = ref(
 const compactSidebar = computed(() => desktopSidebar.value && sidebarCollapsed.value)
 const deploymentMenuOpen = ref(false)
 const deploymentSections = [
-  { id: 'overview', label: '部署总览' }, { id: 'plans', label: '升级计划' }, { id: 'memos', label: '发版备忘' },
+  { id: 'overview', label: '部署总览' }, { id: 'plans', label: '发版计划' }, { id: 'memos', label: '发版备忘' },
 ] as const
 const deploymentSection = computed(() => route.query.tab === 'memos' ? 'memos'
   : route.query.tab === 'plans' || route.query.plan ? 'plans' : 'overview')

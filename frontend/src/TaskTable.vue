@@ -89,7 +89,7 @@ function openActions(event: MouseEvent | KeyboardEvent, id: number) {
           <span aria-hidden="true">i</span>
         </button>
         <RouterLink v-if="task.deployment_plan_id" class="task-transfer-mark task-meeting-link"
-          :to="{ name: 'deployments', query: { plan: task.deployment_plan_id } }" title="查看机房升级计划" aria-label="查看机房升级计划"><DeploymentTaskIcon /></RouterLink>
+          :to="{ name: 'deployments', query: { plan: task.deployment_plan_id } }" title="查看机房发版计划" aria-label="查看机房发版计划"><DeploymentTaskIcon /></RouterLink>
         <RouterLink v-if="(!readonly || workView) && task.meeting_id && task.meeting_date" class="task-transfer-mark task-meeting-link"
           :to="{ name: 'meetings', query: { meeting: task.meeting_id } }"
           :title="`${task.meeting_date}会议指派，点击可跳转会议记录`"

@@ -572,7 +572,7 @@ function drop(event: DragEvent, state: State) {
                     <span aria-hidden="true">i</span>
                   </button>
                   <RouterLink v-if="card.deployment_plan_id" class="task-transfer-mark task-meeting-link" :draggable="false"
-                    :to="{ name: 'deployments', query: { plan: card.deployment_plan_id } }" title="查看机房升级计划" aria-label="查看机房升级计划"><DeploymentTaskIcon /></RouterLink>
+                    :to="{ name: 'deployments', query: { plan: card.deployment_plan_id } }" title="查看机房发版计划" aria-label="查看机房发版计划"><DeploymentTaskIcon /></RouterLink>
                   <span v-if="card.estimated_days" class="board-card-estimate" role="img"
                     :aria-label="`预估 ${card.estimated_days} 人天`" :style="{ '--estimate-length': card.estimated_days.length }">
                     <img :src="stopwatch" alt="" draggable="false" />

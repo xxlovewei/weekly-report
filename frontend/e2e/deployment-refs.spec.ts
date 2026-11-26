@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 
-for (const mode of ['补录部署基线', '新增升级计划'] as const) {
+for (const mode of ['补录部署基线', '新增发版计划'] as const) {
   test(`${mode}使用 GitLab 查询结果选择分支和标签`, async ({ page }) => {
     const admin = { id: 42, username: 'admin', display_name: '管理员', roles: ['admin'], is_active: true, status: '正常' }
     const branch = { name: 'release/1.2.3', sha: 'a'.repeat(40) }
@@ -8,6 +8,8 @@ for (const mode of ['补录部署基线', '新增升级计划'] as const) {
     const requests: string[] = []
     const saved: unknown[] = []
     const savedTargets: unknown[] = []
+    const commitRequests: unknown[] = []
+    const messages = ['更新升级流程\n补充说明', '修复上线校验']
     await page.route('**/api/**', route => {
       const request = route.request(), url = new URL(request.url())
       const path = url.pathname
@@ -23,6 +25,11 @@ for (const mode of ['补录部署基线', '新增升级计划'] as const) {
         const results = kind === 'branches' ? [branch, { name: 'main', sha: 'c'.repeat(40) }] : [tag]
         return route.fulfill({ json: { items: results.filter(item => item.name.includes(search)), has_more: false } })
       }
+      if (path.endsWith('/commit-messages')) {
+        const data = request.postDataJSON()
+        commitRequests.push(data)
+        return route.fulfill({ json: data.allow_recent ? { messages } : { requires_recent_confirmation: true } })
+      }
       if (path.includes('/projects/1/') && request.method() === 'POST') {
         const data = request.postDataJSON()
         saved.push(data)
@@ -36,7 +43,7 @@ for (const mode of ['补录部署基线', '新增升级计划'] as const) {
       return route.fulfill({ json: [] })
     })
     await page.goto('/deployments')
-    await page.getByRole('button', { name: '升级计划', exact: true }).click()
+    await page.getByRole('button', { name: '发版计划', exact: true }).click()
     await page.getByRole('button', { name: mode, exact: true }).click()
 
     const dialog = page.getByRole('dialog', { name: mode })
@@ -79,14 +86,33 @@ for (const mode of ['补录部署基线', '新增升级计划'] as const) {
     await tags.fill('prod/')
     await dialog.getByRole('option', { name: /prod\/1\.2\.3/ }).click()
     await expect(tags).toHaveValue(tag.name)
+    const commits = dialog.getByRole('button', { name: '获取提交记录' })
+    if (mode === '新增发版计划') {
+      let prompt = ''
+      page.once('dialog', confirmation => { prompt = confirmation.message(); return confirmation.dismiss() })
+      await commits.click()
+      await expect(commits).toBeEnabled()
+      expect(prompt).toContain('最近 2 周')
+      expect(commitRequests).toHaveLength(1)
+      await expect(dialog.getByLabel('升级内容')).toHaveValue('')
+
+      page.once('dialog', confirmation => confirmation.accept())
+      await commits.click()
+      await expect(dialog.getByLabel('升级内容')).toHaveValue(messages.join('\n\n'))
+      expect(commitRequests).toHaveLength(3)
+      expect(commitRequests.at(-1)).toMatchObject({ allow_recent: true, version: { branch: branch.name, tag: tag.name } })
+    } else {
+      await expect(commits).toHaveCount(0)
+    }
     await dialog.getByRole('button', { name: '保存', exact: true }).click()
     await expect(dialog).toBeHidden()
     expect(saved).toEqual([{ number: '1.2.3', branch: branch.name, sha: branch.sha, tag: tag.name, tag_sha: tag.sha }])
     expect(savedTargets[0]).toMatchObject({ sites: ['national'] })
+    if (mode === '新增发版计划') expect(savedTargets[0]).toMatchObject({ upgrade_content: messages.join('\n\n') })
   })
 }
 
-test('路局升级计划显示当前版本并可省略 GitLab 引用，升级内容保留换行', async ({ page }) => {
+test('路局发版计划显示当前版本并可省略 GitLab 引用，升级内容保留换行', async ({ page }) => {
   const sites = Object.fromEntries(Array.from({ length: 18 }, (_, index) => [`site-${index}`, `路局 ${index + 1}`]))
   const saved: Record<string, unknown>[] = []
   const content = '更新运行配置\n补充数据库索引'
@@ -107,9 +133,9 @@ test('路局升级计划显示当前版本并可省略 GitLab 引用，升级内
     return route.fulfill({ json: [] })
   })
   await page.goto('/deployments')
-  await page.getByRole('button', { name: '升级计划', exact: true }).click()
-  await page.getByRole('button', { name: '新增升级计划', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '新增升级计划' })
+  await page.getByRole('button', { name: '发版计划', exact: true }).click()
+  await page.getByRole('button', { name: '新增发版计划', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '新增发版计划' })
   const rooms = dialog.getByRole('group', { name: '部署机房' })
   await expect(rooms.getByRole('checkbox')).toHaveCount(18)
   await expect(rooms.getByText('1.0.0', { exact: true })).toBeVisible()
@@ -163,13 +189,13 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
   await expect(menu).toHaveAttribute('aria-expanded', 'false')
   await menu.click()
   await expect(menu).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.locator('#deployment-submenu').getByRole('button')).toHaveText(['部署总览', '升级计划', '发版备忘'])
-  await page.getByRole('button', { name: '升级计划', exact: true }).click()
+  await expect(page.locator('#deployment-submenu').getByRole('button')).toHaveText(['部署总览', '发版计划', '发版备忘'])
+  await page.getByRole('button', { name: '发版计划', exact: true }).click()
   const row = page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '示例项目' }) })
   await expect(row.getByRole('button', { name: '示例项目' })).toHaveCount(0)
   await expect(row.getByRole('button', { name: '确认发版' })).toBeDisabled()
   await row.getByRole('button', { name: '修改' }).click()
-  const edit = page.getByRole('dialog', { name: '修改升级计划' })
+  const edit = page.getByRole('dialog', { name: '修改发版计划' })
   await expect(edit.locator('input, textarea, select')).toHaveCount(2)
   await edit.getByLabel('升级内容').fill('新的上线说明')
   await edit.getByRole('button', { name: '保存', exact: true }).click()
@@ -236,12 +262,12 @@ test('部署总览按项目列展示，零检查项直接确认，未派发计�
   await expect(overview.getByRole('columnheader')).toHaveText(['部署机房', /项目甲/, /项目乙/])
   const shanghai = overview.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '上海局' }) })
   await expect(shanghai.getByRole('cell').nth(1)).toContainText('2.0.0')
-  await page.getByRole('button', { name: '升级计划', exact: true }).click()
+  await page.getByRole('button', { name: '发版计划', exact: true }).click()
   await expect(page.getByRole('button', { name: '备忘检查', exact: true })).toBeDisabled()
   await expect(page.getByTitle('无需检查')).toBeVisible()
   await expect(page.getByRole('button', { name: '确认发版', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: '修改', exact: true }).click()
-  const edit = page.getByRole('dialog', { name: '修改升级计划' })
+  const edit = page.getByRole('dialog', { name: '修改发版计划' })
   await expect(edit).toHaveCSS('border-top-width', '4px')
   await edit.getByLabel('版本号', { exact: true }).fill('1.1.0')
   await expect(edit.getByRole('combobox', { name: 'GitLab 分支（选填）' })).toHaveValue('main')
