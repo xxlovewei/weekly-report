@@ -67,7 +67,7 @@ function workPath(suffix = '', revision = false) {
 }
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
 const showUnreadReminder = ref(false)
-const releaseNotice = ref(''), releaseRefreshing = ref(false)
+const releaseVersion = ref(''), releaseRefreshing = ref(false)
 const notificationPermission = ref<ReturnType<typeof desktopNotificationPermission>>(desktopNotificationPermission())
 const showPermissionReminder = ref(false), requestingPermission = ref(false)
 const liveMessages = ref<LiveMessage[]>([])
@@ -735,7 +735,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   showUnreadReminder.value = false
   showPermissionReminder.value = false
   liveMessages.value = []
-  releaseNotice.value = ''
+  releaseVersion.value = ''
   unreadMessages.value = 0
   void refreshUnread()
   if (!account) return
@@ -765,7 +765,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   }, message => {
     // 合并多个即时提醒时保留最新三条，其余可在消息中心查看。
     liveMessages.value = [...liveMessages.value.slice(-2), message]
-  }, message => openLiveMessage(message), message => { releaseNotice.value = message })
+  }, message => openLiveMessage(message), version => { releaseVersion.value = version })
   // 配置或账号变更时，丢弃旧扫描尚未返回的结果。
   async function scanUnread() {
     if (checking) return
@@ -958,13 +958,6 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="futureWork ? '确认删除任务计划' : '确认删除任务'"><h2>删除这项{{ futureWork ? '任务计划' : '任务' }}？</h2><p>{{ futureWork ? '该计划将从任务计划表移除。' : '该任务将从本周工作明细移除。' }}</p><div class="modal-actions"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete(modal.taskId)">确认删除</button></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
     <div class="unread-reminder-region" aria-live="polite">
-      <div v-if="releaseNotice" class="notification-permission release-notice" role="group" aria-label="版本更新">
-        <strong>{{ releaseNotice }}</strong>
-        <div class="notification-permission-actions">
-          <button class="mini-button primary-button" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
-          <button class="mini-button" type="button" @click="releaseNotice = ''">稍后刷新</button>
-        </div>
-      </div>
       <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
         <strong>开启桌面通知</strong>
         <p v-if="notificationPermission === 'default'">授权后，未读消息将通过操作系统提醒。</p>
@@ -991,6 +984,14 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <button class="unread-reminder-close" type="button" aria-label="关闭未读消息提醒" @click="showUnreadReminder = false">×</button>
         </div>
       </Transition>
+      <div v-if="releaseVersion" class="release-notice" role="group" aria-label="版本更新">
+        <span class="release-notice-icon" aria-hidden="true">🎉</span>
+        <p class="release-notice-text">有新版 <strong>v{{ releaseVersion }}</strong> 已就绪</p>
+        <div class="release-notice-actions">
+          <button class="release-notice-refresh" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
+          <button class="release-notice-later" type="button" @click="releaseVersion = ''">稍后</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

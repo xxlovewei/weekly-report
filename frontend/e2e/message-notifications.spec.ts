@@ -39,10 +39,9 @@ test('消息中心在标题旁显示通知状态，并默认筛选未读消息',
   await expect(rows).toHaveCount(2)
 })
 
-test('版本更新提醒无需桌面授权，而且同版本只弹一次', async ({ page }) => {
+test('版本更新提醒无需桌面授权，稍后关闭，同一页签可刷新', async ({ page, context }) => {
   const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
-  const message = '版本v99.0.0已更新🎉，请刷新页面🔄️体验吧'
-  const release = { version: '99.0.0', message }
+  let release: { version: string; message: string } | null = { version: '99.0.0', message: '旧版客户端提示文案' }
   await page.addInitScript(() => Object.defineProperty(Notification, 'permission', { value: 'denied' }))
   await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
   await page.route('**/api/notifications?*', route => route.fulfill({ json: { items: [], total: 0 } }))
@@ -52,17 +51,33 @@ test('版本更新提醒无需桌面授权，而且同版本只弹一次', async
     deliveries++
     return route.fulfill({
       contentType: 'text/event-stream',
-      body: `retry: 50\ndata: ${JSON.stringify({ release, count: 0, messages: [] })}\n\n`,
+      body: `retry: 50\ndata: ${JSON.stringify({ release, count: 0, messages: [], unread_reminder: { enabled: false, interval_minutes: 5 } })}\n\n`,
     })
   })
-  await page.goto('/messages')
+  await page.setViewportSize({ width: 320, height: 720 })
+  await page.goto('/messages#updates')
   const notice = page.getByRole('group', { name: '版本更新' })
-  await expect(notice.getByText(message, { exact: true })).toBeVisible()
+  await expect(notice.getByText('有新版 v99.0.0 已就绪', { exact: true })).toBeVisible()
   await expect(notice.getByRole('button', { name: '刷新页面' })).toBeVisible()
+  const viewport = page.viewportSize()!
+  const bounds = (await notice.boundingBox())!
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width)
+  expect(bounds.y + bounds.height).toBeGreaterThan(viewport.height - 48)
   const firstDelivery = deliveries
-  await notice.getByRole('button', { name: '稍后刷新' }).click()
+  await notice.getByRole('button', { name: '稍后', exact: true }).click()
   await expect.poll(() => deliveries).toBeGreaterThan(firstDelivery)
   await expect(notice).toBeHidden()
+
+  release = { version: '99.0.1', message: '旧版客户端提示文案' }
+  await expect(notice.getByText('有新版 v99.0.1 已就绪', { exact: true })).toBeVisible()
+  release = null
+  const reloaded = page.waitForEvent('domcontentloaded')
+  await notice.getByRole('button', { name: '刷新页面' }).click()
+  await reloaded
+  await expect(page).toHaveURL(/\/messages#updates$/)
+  await expect(notice).toBeHidden()
+  expect(context.pages()).toEqual([page])
 })
 
 test('未读轮询和即时消息按权限选择提醒，点击桌面通知后标记已读', async ({ page }) => {

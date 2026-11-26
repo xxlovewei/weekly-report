@@ -25,7 +25,7 @@ export function subscribeToMessages(
   onSnapshot: (count: number, schedule: ScheduleSettings) => void,
   onNewMessage: (message: LiveMessage) => void,
   onClick: (message: LiveMessage) => Promise<void>,
-  onRelease: (message: string) => void,
+  onRelease: (version: string) => void,
 ) {
   const stream = new EventSource(`${import.meta.env.BASE_URL}api/notifications/stream?client_version=${version}`)
   const displayed = new Set<Notification>()
@@ -75,7 +75,7 @@ export function subscribeToMessages(
     if (snapshot.release && snapshot.release.version !== announcedVersion) {
       // 断线重连或消息流刷新不会重新弹出已收到的同版本提醒。
       announcedVersion = snapshot.release.version
-      onRelease(snapshot.release.message)
+      onRelease(snapshot.release.version)
     }
     for (const message of snapshot.messages) {
       // SSE 按消息编号递增发送，同一标签页只展示一次。
