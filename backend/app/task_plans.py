@@ -18,8 +18,17 @@ def plans_for_week(db: Session, week_id: int):
 
 
 def plan_rows(db: Session, week):
-    return [{**main.task_fields_json(plan), "board_task_id": plan.board_task_id}
-            for plan in db.scalars(plans_for_week(db, week.id))] if week else []
+    if week is None:
+        return []
+    rows = []
+    for plan in db.scalars(plans_for_week(db, week.id)):
+        row = {**main.task_fields_json(plan), "board_task_id": plan.board_task_id}
+        card = db.get(BoardTask, plan.board_task_id) if plan.board_task_id else None
+        if card and card.deployment_item:
+            row.update(notes=card.notes, task_group=card.name, name_locked=True,
+                       deployment_plan_id=card.deployment_item.plan_id)
+        rows.append(row)
+    return rows
 
 
 def apply_due_plans(db: Session, owner: int, through: date):
@@ -47,12 +56,14 @@ def apply_due_plans(db: Session, owner: int, through: date):
             is_current = week.start_date == current
             if is_current and card.pending_status:
                 status = card.pending_status
-            if is_current and plan.notes:
+            if card.deployment_item:
+                status = {"done": "已完成", "in_progress": progress_status(db, card), "inbox": None}[card.state]
+            if is_current and plan.notes and not card.deployment_item:
                 card.notes = plan.notes
             detail = attach_detail(db, card, week, positions[week.id], status, description=plan.description,
                                    current=is_current)
             detail.work_days = list(plan.work_days)
-            if plan.notes:
+            if plan.notes and not card.deployment_item:
                 detail.notes = plan.notes
             card.revision += 1
         elif not detail.description:
@@ -183,6 +194,12 @@ def edit_plan(week_start: str, plan_id: int, revision: int, data: main.TaskPatch
               auth=Depends(main.self_work_write), db: Session = Depends(get_db)):
     week, plan = checked_plan(db, auth[0], week_start, revision, plan_id)
     values = main.task_patch_values(db, week.user_id, data)
+    if plan.board_task_id:
+        card = db.get(BoardTask, plan.board_task_id)
+        if card and card.deployment_item and any(values[field] != expected for field, expected in (
+            ("notes", card.notes), ("task_group", card.name)
+        ) if field in values):
+            raise HTTPException(409, "发版检查的名称和备注由个人备忘维护")
     shared = {field: values[field] for field in values.keys() & {"task_group", "category_name", "priority"}
               if getattr(plan, field) != values[field]}
     for field, value in values.items():

@@ -170,7 +170,7 @@ function confirmTransfer() {
         <button v-for="priority in priorities" :key="priority" type="button"
           :aria-pressed="currentPriority === priority" @click="setPriority(priority)">{{ priority }}</button>
       </div>
-      <button v-if="!delegated && isCurrentWeek" type="button" aria-haspopup="dialog" :disabled="tasks[index]?.has_history" :title="tasks[index]?.has_history ? '已有历史周明细，无法转交' : undefined" @click="startTransfer">转交任务</button>
+      <button v-if="!delegated && isCurrentWeek && !tasks[index]?.deployment_plan_id" type="button" aria-haspopup="dialog" :disabled="tasks[index]?.has_history" :title="tasks[index]?.has_history ? '已有历史周明细，无法转交' : undefined" @click="startTransfer">转交任务</button>
     </div>
     <dialog ref="dialog" class="modal task-transfer-dialog" aria-labelledby="task-transfer-title" @close="transferClosed">
       <form @submit.prevent="confirmTransfer">

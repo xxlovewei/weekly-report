@@ -69,6 +69,15 @@ def position_at_edge(db: Session, owner: int, state: str, *, top: bool):
 
 def put_at_top(db: Session, card: BoardTask, state: str):
     if card.state != state:
+        item = card.deployment_item
+        if item:
+            if item.removed or item.plan.status != "ready":
+                raise HTTPException(409, "发版检查项已归档，请查看发版历史")
+            # 看板和周工作都经这里写入同一个机房的执行状态。
+            done = state == "done"
+            if item.done != done:
+                item.done = done
+                item.plan.revision += 1
         card.position = position_at_edge(db, card.user_id, state, top=True)
         card.state = state
         if state != "in_progress":
@@ -127,6 +136,8 @@ def sync_card_from_detail(db: Session, card: BoardTask, task: Task | TaskPlan, f
         ("notes", "notes", task.notes),
     ):
         if field in fields and getattr(card, attr) != value:
+            if field in {"task_group", "notes"} and card.deployment_item:
+                raise HTTPException(409, "发版检查的名称和备注由个人备忘维护")
             setattr(card, attr, value)
             changed = True
     if "status" in fields:
@@ -159,7 +170,9 @@ def card_json(card: BoardTask, *, current=False, historical=False, status: str |
             "estimated_days": format(card.estimated_days, "f") if card.estimated_days is not None else None,
             "meeting_id": meeting.id if meeting else None, "transferred_by": card.transferred_by,
             "review_issue_id": card.review_issue.id if card.review_issue else None,
-            "name_locked": bool(card.meeting_task and len(card.meeting_task.assignments) > 1),
+            "name_locked": bool(card.deployment_item or (card.meeting_task and len(card.meeting_task.assignments) > 1)),
+            "deployment_plan_id": card.deployment_item.plan_id if card.deployment_item else None,
+            "deployment_archived": bool(card.deployment_item and card.deployment_item.plan.status in ("succeeded", "failed")),
             "has_current_detail": current, "has_other_details": historical}
 
 
@@ -188,7 +201,8 @@ def list_cards(auth=Depends(active_session), db: Session = Depends(get_db)):
     start = main.current_work_week()
     main.apply_due_plans(db, auth[0].id, start)
     # 同时读取卡片和周明细，本周尚无明细时优先保留最近一次进度。
-    rows = db.execute(select(BoardTask, Week.start_date, Task.status).options(joinedload(BoardTask.review_issue))
+    rows = db.execute(select(BoardTask, Week.start_date, Task.status).options(
+        joinedload(BoardTask.review_issue), joinedload(BoardTask.deployment_item))
                       .outerjoin(BoardTaskDetail, BoardTaskDetail.board_task_id == BoardTask.id)
                       .outerjoin(Week, Week.id == BoardTaskDetail.week_id)
                       .outerjoin(Task, Task.id == BoardTaskDetail.task_id)
@@ -245,6 +259,8 @@ def edit_card(card_id: int, revision: int, week_start: date, data: CardUpdate | 
     lock_task_changes(db)
     card, historical = checked_card(db, owner, card_id, revision, week_start)
     changes = {key: value for key, value in data.model_dump(exclude_unset=True).items() if getattr(card, key) != value}
+    if changes.keys() & {"name", "notes"} and card.deployment_item:
+        raise HTTPException(409, "发版检查的名称和备注由个人备忘维护")
     if historical and not isinstance(data, CardNotesUpdate):
         raise HTTPException(409, "卡片已关联其他周的任务明细，仅可修改备注、移列或续做")
     if "name" in changes and not changes["name"]:
@@ -284,6 +300,8 @@ def duplicate_card(card_id: int, revision: int, week_start: date,
     if old is not None:
         return old
     source, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
+    if source.deployment_item:
+        raise HTTPException(403, "请在发版管理中查看此检查项")
     card = add_inbox_card(db, owner, name=source.name, category_name=source.category_name,
                           priority=source.priority, notes=source.notes, estimated_days=source.estimated_days)
     return finish(db, owner, key, operation, card_json(card))
@@ -294,6 +312,8 @@ def delete_card(card_id: int, revision: int, week_start: date, auth=Depends(acti
     owner = auth[0].id
     lock_task_changes(db)
     card, _ = checked_card(db, owner, card_id, revision, week_start, fields=True)
+    if card.deployment_item:
+        raise HTTPException(403, "请在发版管理中从升级计划移除此检查项")
     if card.meeting_task_id:
         raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     week = week_row(db, owner, week_start)

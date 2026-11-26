@@ -194,6 +194,8 @@ class ReviewProject(Base):
     is_common: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # 停用配置后保留日报引用，重新添加同一项目时复用原 ID。
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    deployment_level: Mapped[str | None] = mapped_column(String(16))
+    deployment_network: Mapped[str | None] = mapped_column(String(16))
 
 
 class ReviewRun(Base):

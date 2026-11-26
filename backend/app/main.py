@@ -19,7 +19,7 @@ app = FastAPI(title="周报", docs_url="/api/docs", openapi_url="/api/openapi.js
 hasher = PasswordHash.recommended()
 STATUSES = {"已完成", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%", "5%"}
 BUG_TASK_TYPE = "改bug"
-SHARED_TYPES = {"开发相关", BUG_TASK_TYPE, "联调联试", "数据处理", "运维相关", "开会", "其他"}
+SHARED_TYPES = {"开发相关", BUG_TASK_TYPE, "联调联试", "数据处理", "运维相关", "开会", "其他", "发版检查"}
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_PATH = os.getenv("COOKIE_PATH", "/")
 SESSION_LIFETIME = timedelta(days=7)
@@ -254,18 +254,22 @@ def week_json(db: Session, row: Week | None):
     current = current_work_week()
     prior_detail = prior_detail_exists(BoardTaskDetail.board_task_id, current)
     tasks = db.execute(select(Task, ReviewIssue.id, Meeting.id, Meeting.meeting_date, MeetingTask.name,
-                              BoardTaskDetail.board_task_id, assignment_count, prior_detail)
+                              BoardTaskDetail.board_task_id, assignment_count, prior_detail, DeploymentItem.plan_id,
+                              DeploymentPlan.status)
                        .outerjoin(ReviewIssue, ReviewIssue.task_id == Task.id)
                        .outerjoin(MeetingTask, MeetingTask.id == Task.meeting_task_id)
                        .outerjoin(Meeting, Meeting.id == MeetingTask.meeting_id)
                        .outerjoin(BoardTaskDetail, BoardTaskDetail.task_id == Task.id)
+                       .outerjoin(DeploymentItem, DeploymentItem.card_id == BoardTaskDetail.board_task_id)
+                       .outerjoin(DeploymentPlan, DeploymentPlan.id == DeploymentItem.plan_id)
                        .where(Task.week_id == row.id).order_by(Task.position, Task.id))
     return {"revision": row.revision, "tasks": [
         {**task_json(task), "task_group": task.task_group or meeting_name or "",
          "board_task_id": board_task_id, "review_issue_id": issue_id, "meeting_id": meeting_id,
-         "meeting_date": meeting_date.isoformat() if meeting_date else None, "name_locked": count > 1,
+         "meeting_date": meeting_date.isoformat() if meeting_date else None, "name_locked": count > 1 or plan_id is not None,
+         "deployment_plan_id": plan_id, "deployment_archived": plan_status in ("succeeded", "failed"),
          "has_history": row.start_date < current or has_prior}
-        for task, issue_id, meeting_id, meeting_date, meeting_name, board_task_id, count, has_prior in tasks
+        for task, issue_id, meeting_id, meeting_date, meeting_name, board_task_id, count, has_prior, plan_id, plan_status in tasks
     ]}
 
 def work_week_json(db: Session, row: Week | None):
@@ -587,6 +591,8 @@ def transfer_task(week_start: str, task_id: int, revision: int, data: TaskTransf
 
 
 def hand_off_task(db: Session, sender: User, recipient_id: int, source_card: BoardTask | None, task: Task | None):
+    if source_card and source_card.deployment_item:
+        raise HTTPException(403, "发版检查项由备忘作者执行")
     recipient = db.scalar(transfer_recipients(sender.id).where(User.id == recipient_id).with_for_update())
     if recipient is None:
         raise HTTPException(422, "请选择其他可用的普通用户")
@@ -644,6 +650,10 @@ def edit_task(week_start: str, task_id: int, revision: int, data: TaskPatch, use
     current = current_work_week()
     card = linked_card(db, task_id)
     renamed = values.get("task_group", task.task_group) != task.task_group
+    if card and card.deployment_item and (renamed or values.get("notes", task.notes) != task.notes):
+        raise HTTPException(409, "发版检查的名称和备注由个人备忘维护")
+    if card and card.deployment_item and status_changed and card.deployment_item.plan.status in ("succeeded", "failed"):
+        raise HTTPException(409, "发版检查项已归档，请查看发版历史")
     if renamed:
         ensure_no_task_history(db, row, card, current, "修改任务名称")
         if task.meeting_task and len(task.meeting_task.assignments) > 1:
@@ -678,6 +688,8 @@ def remove_task(week_start: str, task_id: int, revision: int, user_id: int | Non
     if task.meeting_task_id:
         raise HTTPException(403, "会议指派任务不可删除，请在会议记录中取消指派")
     card = linked_card(db, task_id)
+    if card and card.deployment_item:
+        raise HTTPException(403, "请在发版管理中维护此检查项")
     ensure_no_task_history(db, row, card, current_work_week(), "删除")
     if card:
         card.revision += 1
@@ -1068,9 +1080,12 @@ from .task_board import (add_inbox_card, attach_detail, board_detail, cards_miss
                          delete_detail, has_prior_detail, linked_card, prior_detail_exists, progress_status,
                          put_at_top, router as task_board_router, set_assignment_status, sync_card_from_detail)
 from .task_plans import apply_due_plans, plan_rows, router as task_plans_router
+from .deploy_models import DeploymentItem, DeploymentPlan
+from .deployments import router as deployments_router
 
 app.include_router(notifications_router)
 app.include_router(reviews_router)
 app.include_router(scheduled_tasks_router)
 app.include_router(task_board_router)
 app.include_router(task_plans_router)
+app.include_router(deployments_router)

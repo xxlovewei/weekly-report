@@ -4,6 +4,7 @@ import { api, ApiError, newIdempotencyKey } from './api'
 import stopwatch from './assets/task-stopwatch.png'
 import { addDays } from './dates'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
+import DeploymentTaskIcon from './DeploymentTaskIcon.vue'
 import { taskStatuses } from './taskStatuses'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, MeetingPerson, TaskPriority, WeekData } from './types'
@@ -28,6 +29,8 @@ interface Card extends CardFields {
   has_other_details: boolean
   meeting_id?: number | null
   review_issue_id?: number | null
+  deployment_plan_id?: number | null
+  deployment_archived?: boolean
   transferred_by?: string | null
   name_locked?: boolean
 }
@@ -435,12 +438,12 @@ async function move(card: Card, state: State) {
   }))
 }
 function requestMove(card: Card, state: State) {
-  if (busy.value || state === card.state) return
+  if (busy.value || state === card.state || card.deployment_archived) return
   if (state === 'inbox' && card.has_current_detail) open({ kind: 'return', card })
   else void perform(() => move(card, state))
 }
 function canDrag(card: Card) {
-  return !busy.value && !props.planBusy && !props.plannedIds?.has(card.id)
+  return !busy.value && !card.deployment_archived && !props.planBusy && !props.plannedIds?.has(card.id)
 }
 function startDrag(event: DragEvent, card: Card) {
   if (!canDrag(card) || progressDraft.value || !event.dataTransfer) { event.preventDefault(); return }
@@ -568,6 +571,8 @@ function drop(event: DragEvent, state: State) {
                     title="点击可查看审查记录的内容" aria-label="点击可查看审查记录的内容" @click="openedIssue = card.review_issue_id">
                     <span aria-hidden="true">i</span>
                   </button>
+                  <RouterLink v-if="card.deployment_plan_id" class="task-transfer-mark task-meeting-link" :draggable="false"
+                    :to="{ name: 'deployments', query: { plan: card.deployment_plan_id } }" title="查看机房升级计划" aria-label="查看机房升级计划"><DeploymentTaskIcon /></RouterLink>
                   <span v-if="card.estimated_days" class="board-card-estimate" role="img"
                     :aria-label="`预估 ${card.estimated_days} 人天`" :style="{ '--estimate-length': card.estimated_days.length }">
                     <img :src="stopwatch" alt="" draggable="false" />
@@ -581,7 +586,7 @@ function drop(event: DragEvent, state: State) {
                   :aria-label="`${plannedIds?.has(card.id) ? '已加入计划' : '加入计划'}：${card.name || '未命名任务'}`"
                   @click="canDrag(card) && emit('add-plan', card.id)">{{ plannedIds?.has(card.id) ? '已加入' : '加入计划' }}</button>
               </div>
-              <div v-else-if="card.state !== 'done'" class="board-card-actions">
+              <div v-else-if="card.state !== 'done' && !card.deployment_plan_id" class="board-card-actions">
                 <button type="button" class="icon-btn" aria-label="转交任务" aria-haspopup="dialog"
                   :disabled="busy || card.has_other_details" :title="card.has_other_details ? '已有历史周明细，无法转交' : '转交任务'"
                   @click="open({ kind: 'transfer', card })">

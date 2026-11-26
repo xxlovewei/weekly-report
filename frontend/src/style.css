@@ -113,6 +113,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
 .sidebar .brand,.sidebar>.calendar,.sidebar-bottom,.sidebar nav{flex:none}
 .sidebar-body{display:flex;flex:1;min-height:0;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:4px 6px 6px;margin-inline:-4px}
 .sidebar nav{display:flex;flex-direction:column}
+.sidebar-disclosure{margin-left:auto}
+.sidebar-submenu{display:grid;gap:4px;margin:0 0 4px 24px;padding-left:8px;border-left:1px solid #cbd8e2}
+.sidebar .sidebar-submenu .sidebar-link{min-height:36px;padding:6px 10px;font-size:12px}
 /* 选中项保留原有排版位置，超出菜单可视范围后吸附到对应边缘。 */
 .sidebar .sidebar-link.active{position:sticky;inset-block:0;z-index:1}
 /* 页头和侧栏共用同一套折叠按钮尺寸。 */
@@ -308,7 +311,44 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{cursor:not-allo
   background: #fff;
 }
 .notification-permission p { margin: 6px 0 12px; font-size: 12px; line-height: 1.5; }
-.release-notice .notification-permission-actions { margin-top: 12px; }
+.unread-reminder-region:has(.release-notice) {
+  width: min(486px, calc(100% - 40px));
+  justify-items: end;
+  padding: 8px 8px 12px;
+}
+.unread-reminder-region:has(.release-notice) > :not(.release-notice) { width: min(350px, 100%); }
+.release-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #e2e6dd;
+  border-radius: 18px;
+  background: #fcfdfa;
+  color: #252923;
+  box-shadow: 0 3px 10px #22281f20;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+}
+.release-notice-icon { font-size: 24px; line-height: 1; }
+.release-notice-text { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 15px; font-weight: 600; }
+.release-notice-text strong { color: #416b23; }
+.release-notice-actions { display: flex; gap: 6px; margin-left: auto; }
+.release-notice-actions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 11px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.release-notice-refresh { background: #83bf49; color: #18250c; }
+.release-notice-refresh:hover:not(:disabled) { background: #a0d16d; }
+.release-notice-later { background: transparent; color: #60675b; }
+.release-notice-later:hover { background: #edf1e8; }
 .notification-permission-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .unread-reminder-link span { font-size: 12px; }
 .unread-reminder-close {

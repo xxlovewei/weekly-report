@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal, get_db
 from .main import Input, active_session
 from .models import BoardTask, Notification, User
 from .notification_events import notification_lifespan, subscribers
-from .release_announcement import VERSION, stream_release
+from .release_announcement import DESKTOP_RELEASE_VERSION, VERSION, stream_release, version_number
 from .scheduled_tasks import UNREAD_REMINDER, task_settings
 
 router = APIRouter(prefix="/api/notifications", lifespan=notification_lifespan)
@@ -51,10 +51,12 @@ def stream_snapshot(request, user_id, cursor, client_version, legacy_reconnect, 
         if cursor is None:
             cursor = db.scalar(select(func.max(Notification.id)).where(Notification.user_id == user.id)) or 0
         release = stream_release(db, user_id, client_version, legacy_reconnect, connected_at)
-        rows = db.execute(select(Notification, BoardTask.user_id)
-                          .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
-                          .where(Notification.user_id == user_id, Notification.id > cursor)
-                          .order_by(Notification.id).limit(100)).all()
+        query = (select(Notification, BoardTask.user_id)
+                 .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
+                 .where(Notification.user_id == user_id, Notification.id > cursor))
+        if client_version is not None and version_number(client_version) >= DESKTOP_RELEASE_VERSION:
+            query = query.where(or_(Notification.event_key.is_(None), ~Notification.event_key.startswith("release:")))
+        rows = db.execute(query.order_by(Notification.id).limit(100)).all()
         messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
                      "target": notification_target(row, board_owner, user_id)}
                     for row, board_owner in rows]
@@ -123,7 +125,7 @@ async def notification_stream(request: Request, last_event_id: str = Header(defa
 @router.get("")
 def list_notifications(
     all_users: bool = False, day: date | None = None, is_read: bool | None = None,
-    kind: Literal["转交任务", "会议指派", "代码审查", "系统通知"] | None = None, page: int = Query(1, ge=1, le=1000000),
+    kind: Literal["转交任务", "会议指派", "代码审查", "系统通知", "发版检查"] | None = None, page: int = Query(1, ge=1, le=1000000),
     auth=Depends(active_session), db: Session = Depends(get_db),
 ):
     user = auth[0]

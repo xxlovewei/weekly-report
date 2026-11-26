@@ -20,6 +20,7 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       REVIEW_WORKER_TOKEN: ${REVIEW_WORKER_TOKEN:-}
       REVIEW_GITLAB_URLS: ${REVIEW_GITLAB_URLS:-}
+      DEPLOYMENT_GITLAB_TOKENS: ${DEPLOYMENT_GITLAB_TOKENS:-}
     depends_on:
       db:
         condition: service_healthy

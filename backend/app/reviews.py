@@ -33,6 +33,8 @@ class ProjectInput(Input):
     gitlab_url: str | None = Field(default=None, max_length=1000)
     gitlab_id: int | None = Field(default=None, gt=0)
     skip_slash_branches: bool = True
+    deployment_level: Literal["national", "regional"] | None = None
+    deployment_network: Literal["internal", "external", "dedicated"] | None = None
 
     @field_validator("url", "gitlab_url")
     @classmethod
@@ -98,7 +100,8 @@ def gitlab_projects(encrypted: EncryptedCredentials, _=Depends(admin)):
 
 
 def project_json(row):
-    fields = ("id", "name", "alias", "url", "visibility", "owner", "gitlab_url", "gitlab_id", "skip_slash_branches", "is_common")
+    fields = ("id", "name", "alias", "url", "visibility", "owner", "gitlab_url", "gitlab_id", "skip_slash_branches", "is_common",
+              "deployment_level", "deployment_network")
     return {field: getattr(row, field) for field in fields}
 
 
@@ -126,7 +129,7 @@ def save_project(db, data, project_id=None):
     fields = data.model_dump()
     if row is not None:
         # 配置表单省略旧字段时保留原值，仍接受旧客户端显式提交的字段。
-        for field in {"visibility", "owner"} - data.model_fields_set:
+        for field in {"visibility", "owner", "deployment_level", "deployment_network"} - data.model_fields_set:
             del fields[field]
     row = row or ReviewProject()
     for field, value in fields.items():
@@ -309,7 +312,7 @@ def issue_json(row, names, user, task_owner=None):
         **row.details, "id": row.id, "project_id": row.project_id, "author": row.author,
         "author_name": names.get(author, row.author or "无名氏"), "mine": author == user.username.lower(),
         "anonymous": author not in names, "title": row.title, "severity": row.severity,
-        "status": row.status, "notes": row.notes, "task_added": row.task_added,
+        "status": row.status, "notes": row.notes, "task_added": row.board_task_id is not None,
         "editable": task_owner is None or task_owner == user.id or user.has_role("admin"),
     }
 
@@ -409,7 +412,8 @@ def edit_issue(issue_id: int, data: IssueEdit, auth=Depends(active_session), db:
 def create_issue_task(issue_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
     lock_task_changes(db)
     issue = get_issue(db, issue_id)
-    if issue.task_added:
+    # 删除看板卡片会清空关联，历史添加标记不参与去重。
+    if issue.board_task_id is not None:
         return {"ok": True}
     if issue.status == "忽略":
         raise HTTPException(422, "已忽略的问题无法添加到任务看板")

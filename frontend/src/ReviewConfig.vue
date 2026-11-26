@@ -6,12 +6,15 @@ const props = defineProps<{ accountId: number }>()
 interface ProjectInput {
   name: string; alias: string; url: string
   gitlab_url: string | null; gitlab_id: number | null; skip_slash_branches: boolean
+  deployment_level: 'national' | 'regional' | null
+  deployment_network: 'internal' | 'external' | 'dedicated' | null
 }
 type Project = ProjectInput & { id: number; is_common: boolean }
 interface GitLabProject {
   id: number; name: string; web_url: string; path_with_namespace: string
 }
-const blankProject = (): ProjectInput => ({ name: '', alias: '', url: '', gitlab_url: null, gitlab_id: null, skip_slash_branches: true })
+const blankProject = (): ProjectInput => ({ name: '', alias: '', url: '', gitlab_url: null, gitlab_id: null, skip_slash_branches: true, deployment_level: null, deployment_network: null })
+const networkLabels = { internal: '内服网', external: '外服网', dedicated: '专网' }
 const projects = ref<Project[]>([]), discovered = ref<GitLabProject[]>([]), selected = ref<number[]>([])
 const left = ref<number[]>([]), right = ref<number[]>([]), search = ref(''), discoveredBase = ref('')
 const editing = ref<Project | null>(null), editor = ref<HTMLDialogElement | null>(null)
@@ -106,14 +109,17 @@ function saveSelection() {
 }
 function openProject(project?: Project) {
   editing.value = project || null
-  const { name, alias, url, gitlab_url, gitlab_id, skip_slash_branches } = project || blankProject()
-  Object.assign(draft, { name, alias, url, gitlab_url, gitlab_id, skip_slash_branches })
+  Object.assign(draft, project || blankProject())
   editor.value?.showModal()
 }
 function saveProject() {
   const id = editing.value?.id
   void perform(async () => {
-    await api(id ? `/reviews/projects/${id}` : '/reviews/projects', id ? 'PUT' : 'POST', draft)
+    const { name, alias, url, gitlab_url, gitlab_id, skip_slash_branches, deployment_level, deployment_network } = draft
+    await api(id ? `/reviews/projects/${id}` : '/reviews/projects', id ? 'PUT' : 'POST', {
+      name, alias, url, gitlab_url: gitlab_url || null, gitlab_id: gitlab_id || null,
+      skip_slash_branches, deployment_level, deployment_network,
+    })
     projects.value = await api<Project[]>('/reviews/projects')
     syncSelection(); editor.value?.close(); feedback.value = '已保存审查项目'
   })
@@ -164,7 +170,7 @@ function removeProject(project: Project) {
   <section class="panel review-panel">
     <div class="review-panel-head"><h2>审查项目</h2><button class="primary-button" type="button" :disabled="busy" @click="openProject()">＋ 手动新增</button></div>
     <div v-for="project in projects" :key="project.id" class="review-project">
-      <div><strong>{{ project.alias }}</strong><p>{{ project.name }}</p><a :href="project.url" target="_blank" rel="noopener noreferrer">{{ project.url }}</a><p>分支范围：{{ project.skip_slash_branches ? '只审查名称不含 / 的分支' : '所有分支' }}</p></div>
+      <div><strong>{{ project.alias }}</strong><p>{{ project.name }}</p><a :href="project.url" target="_blank" rel="noopener noreferrer">{{ project.url }}</a><p>分支范围：{{ project.skip_slash_branches ? '只审查名称不含 / 的分支' : '所有分支' }}</p><p>部署配置　{{ project.deployment_level && project.deployment_network ? `${project.deployment_level === 'national' ? '国铁级' : '路局级'} · ${networkLabels[project.deployment_network]}` : '待配置' }}</p></div>
       <div class="top-actions">
         <button class="mini-button" type="button" :disabled="busy" @click="toggleCommon(project)">{{ project.is_common ? '取消常用' : '设为常用' }}</button>
         <button class="mini-button" type="button" :disabled="busy" @click="openProject(project)">编辑</button>
@@ -179,6 +185,10 @@ function removeProject(project: Project) {
       <label>项目名称<input v-model="draft.name" maxlength="250" required /></label>
       <label>项目别名<input v-model="draft.alias" maxlength="250" :placeholder="draft.name || '默认使用项目名称'" /></label>
       <label>项目 URL<input v-model="draft.url" type="url" maxlength="1000" required /></label>
+      <label>GitLab 实例地址<input v-model="draft.gitlab_url" type="url" maxlength="1000" /></label>
+      <label>GitLab 项目 ID<input v-model.number="draft.gitlab_id" type="number" min="1" step="1" /></label>
+      <label>部署级别<select v-model="draft.deployment_level"><option :value="null">待配置</option><option value="national">国铁级</option><option value="regional">路局级</option></select></label>
+      <label>部署网络<select v-model="draft.deployment_network"><option :value="null">待配置</option><option value="internal">内服网</option><option value="external">外服网</option><option value="dedicated">专网</option></select></label>
       <label class="review-checkbox"><input v-model="draft.skip_slash_branches" type="checkbox" />只审查名称不含 / 的分支</label>
       <p class="review-error" v-if="error" role="alert">{{ error }}</p>
       <div class="top-actions"><button type="button" class="secondary-button" @click="editor?.close()">取消</button><button class="primary-button" :disabled="busy">保存项目</button></div>

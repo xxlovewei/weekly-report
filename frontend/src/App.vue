@@ -8,6 +8,7 @@ import MonthCalendar from './MonthCalendar.vue'
 import MeetingEditor from './MeetingEditor.vue'
 import ReleaseNotes from './ReleaseNotes.vue'
 import ReviewConfig from './ReviewConfig.vue'
+import Deployments from './Deployments.vue'
 import ReviewRecords from './ReviewRecords.vue'
 import MessageCenter from './MessageCenter.vue'
 import ScheduledTasks from './ScheduledTasks.vue'
@@ -25,6 +26,17 @@ const user = ref<User | null>(null), ready = ref(false), mobileOpen = ref(false)
 const mobileSidebarQuery = window.matchMedia('(max-width: 800px)')
 const desktopSidebar = ref(!mobileSidebarQuery.matches), sidebarCollapsed = ref(false)
 const compactSidebar = computed(() => desktopSidebar.value && sidebarCollapsed.value)
+const deploymentMenuOpen = ref(false)
+const deploymentSections = [
+  { id: 'overview', label: '部署总览' }, { id: 'plans', label: '升级计划' }, { id: 'memos', label: '发版备忘' },
+] as const
+const deploymentSection = computed(() => route.query.tab === 'memos' ? 'memos'
+  : route.query.tab === 'plans' || route.query.plan ? 'plans' : 'overview')
+watch(() => route.name, name => { if (name === 'deployments') deploymentMenuOpen.value = true }, { immediate: true })
+function toggleDeploymentMenu() {
+  if (compactSidebar.value) { sidebarCollapsed.value = false; deploymentMenuOpen.value = true }
+  else deploymentMenuOpen.value = !deploymentMenuOpen.value
+}
 function updateSidebarViewport(event: MediaQueryListEvent) { desktopSidebar.value = !event.matches }
 const navItems = [
   { name: 'work', label: '本周工作', icon: 'M8 7V3h8v4 M3 7h18v13H3z M3 12h18 M10 12v2h4v-2' },
@@ -34,6 +46,7 @@ const navItems = [
   { name: 'meetings', label: '会议记录', icon: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5' },
   { name: 'review-records', label: '审查记录', icon: 'M8 5 3 12l5 7 M16 5l5 7-5 7 M14 4l-4 16' },
   { name: 'review-config', label: '审查配置', icon: 'M4 6h16 M4 12h16 M4 18h16 M8 4v4 M16 10v4 M10 16v4' },
+  { name: 'deployments', label: '发版管理', icon: 'M4 10l8-6 8 6v9H4z M9 19v-5h6v5' },
   { name: 'scheduled-tasks', label: '定时任务', icon: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z M12 7v5l3 2' },
   { name: 'users', label: '用户管理', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0z M22 21v-2a4 4 0 0 0-3-4 M17 3a4 4 0 0 1 0 8' },
 ] as const
@@ -67,7 +80,7 @@ function workPath(suffix = '', revision = false) {
 }
 const reviewToday = ref(todayShanghai()), summaryRequest = ref(0), unreadMessages = ref(0)
 const showUnreadReminder = ref(false)
-const releaseNotice = ref(''), releaseRefreshing = ref(false)
+const releaseVersion = ref(''), releaseRefreshing = ref(false)
 const notificationPermission = ref<ReturnType<typeof desktopNotificationPermission>>(desktopNotificationPermission())
 const showPermissionReminder = ref(false), requestingPermission = ref(false)
 const liveMessages = ref<LiveMessage[]>([])
@@ -106,7 +119,7 @@ function checkNotificationPermission() {
   if (notificationPermission.value === 'granted') {
     showPermissionReminder.value = false
     showUnreadReminder.value = false
-    liveMessages.value = []
+    liveMessages.value = liveMessages.value.filter(message => message.kind === '发版检查')
   }
 }
 async function enableNotifications() {
@@ -235,14 +248,14 @@ watch([sidebarTourAccount, page], async ([account, activePage], _previous, onCle
   if (cancelled) return
 
   stop = module.startSidebarTour({
-    menu: visibleNavItems.value.filter(item => item.name !== 'review-config' && item.name !== 'review-records' && item.name !== 'scheduled-tasks' && item.name !== 'task-board'),
+    menu: visibleNavItems.value.filter(item => item.name !== 'review-config' && item.name !== 'review-records' && item.name !== 'scheduled-tasks' && item.name !== 'task-board' && item.name !== 'deployments'),
     showMeetingShortcut: activePage === 'reports',
     setCollapsed: collapsed => { sidebarCollapsed.value = collapsed },
     onShown: () => markGuideSeen(key),
     onClosed: close,
   })
 }, { flush: 'post' })
-const title = computed(() => ({ work: '本周工作', 'task-board': '任务看板', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码', 'review-config': '审查配置', 'review-records': '审查记录', messages: '消息中心', 'scheduled-tasks': '定时任务' }[page.value] || '周报'))
+const title = computed(() => ({ work: '本周工作', 'task-board': '任务看板', reports: '周报汇总', categories: '任务类型', meetings: '会议记录', users: '用户管理', password: '修改密码', 'review-config': '审查配置', 'review-records': '审查记录', deployments: '发版管理', messages: '消息中心', 'scheduled-tasks': '定时任务' }[page.value] || '周报'))
 const taskFontSizeKey = 'zhoubao.task-font-size'
 function loadTaskFontSize() {
   try {
@@ -635,10 +648,10 @@ async function chooseWorkMember(id: number) {
     else await loadPage()
   } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
-async function navigate(name: string) {
+async function navigate(name: string, query?: { tab: string }) {
   if (name === 'review-records') reviewToday.value = todayShanghai()
-  if (page.value === name && !(name === 'meetings' && targetMeeting.value)) { mobileOpen.value = false; return }
-  try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push(`/${name}`); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
+  if (!query && page.value === name && !(name === 'meetings' && targetMeeting.value)) { mobileOpen.value = false; return }
+  try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push({ path: `/${name}`, query }); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
 async function login(event: Event) {
   try {
@@ -735,7 +748,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   showUnreadReminder.value = false
   showPermissionReminder.value = false
   liveMessages.value = []
-  releaseNotice.value = ''
+  releaseVersion.value = ''
   unreadMessages.value = 0
   void refreshUnread()
   if (!account) return
@@ -765,7 +778,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
   }, message => {
     // 合并多个即时提醒时保留最新三条，其余可在消息中心查看。
     liveMessages.value = [...liveMessages.value.slice(-2), message]
-  }, message => openLiveMessage(message), message => { releaseNotice.value = message })
+  }, message => openLiveMessage(message), version => { releaseVersion.value = version })
   // 配置或账号变更时，丢弃旧扫描尚未返回的结果。
   async function scanUnread() {
     if (checking) return
@@ -808,10 +821,23 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       </div>
       <div id="sidebar-body" class="sidebar-body">
         <nav v-if="!user.must_change_password" aria-label="主导航">
-          <button v-for="item in visibleNavItems" :key="item.name" :data-sidebar-tour="item.name" class="sidebar-link" type="button" :class="{ active: page === item.name }" :aria-current="page === item.name ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined" @click="navigate(item.name)">
+          <template v-for="item in visibleNavItems" :key="item.name">
+          <button :data-sidebar-tour="item.name" class="sidebar-link" type="button" :class="{ active: page === item.name }"
+            :aria-current="page === item.name && item.name !== 'deployments' ? 'page' : undefined" :aria-label="item.label" :title="compactSidebar ? item.label : undefined"
+            :aria-expanded="item.name === 'deployments' ? deploymentMenuOpen && !compactSidebar : undefined"
+            :aria-controls="item.name === 'deployments' && !compactSidebar ? 'deployment-submenu' : undefined"
+            @click="item.name === 'deployments' ? toggleDeploymentMenu() : navigate(item.name)">
             <svg class="sidebar-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
             <span v-if="!compactSidebar">{{ item.label }}</span>
+            <span v-if="item.name === 'deployments' && !compactSidebar" class="sidebar-disclosure" aria-hidden="true">{{ deploymentMenuOpen ? '▾' : '▸' }}</span>
           </button>
+          <div v-if="item.name === 'deployments' && !compactSidebar" v-show="deploymentMenuOpen" id="deployment-submenu" class="sidebar-submenu">
+            <button v-for="section in deploymentSections" :key="section.id" type="button" class="sidebar-link"
+              :class="{ active: page === 'deployments' && deploymentSection === section.id }"
+              :aria-current="page === 'deployments' && deploymentSection === section.id ? 'page' : undefined"
+              @click="navigate('deployments', { tab: section.id })">{{ section.label }}</button>
+          </div>
+          </template>
         </nav>
       </div>
       <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="currentWorkWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
@@ -885,6 +911,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board', 'plan-work-area': planBoardOpen }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
+      <Deployments v-else-if="page === 'deployments'" :key="user.id" :admin="isAdmin" :section="deploymentSection" />
       <ScheduledTasks v-else-if="page === 'scheduled-tasks' && isAdmin" :key="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />
@@ -958,13 +985,6 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
     <div v-if="modal" class="modal-scrim" @keydown.esc="modal = null"><div class="modal" role="dialog" aria-modal="true" :aria-label="futureWork ? '确认删除任务计划' : '确认删除任务'"><h2>删除这项{{ futureWork ? '任务计划' : '任务' }}？</h2><p>{{ futureWork ? '该计划将从任务计划表移除。' : '该任务将从本周工作明细移除。' }}</p><div class="modal-actions"><button ref="modalFirst" class="secondary-button" type="button" @click="modal = null">取消</button><button class="primary-button" type="button" @click="confirmDelete(modal.taskId)">确认删除</button></div></div></div>
     <MeetingEditor v-if="meetingOpen" :meeting="meetingDraft" @close="meetingOpen = false" @saved="meetingSaved" />
     <div class="unread-reminder-region" aria-live="polite">
-      <div v-if="releaseNotice" class="notification-permission release-notice" role="group" aria-label="版本更新">
-        <strong>{{ releaseNotice }}</strong>
-        <div class="notification-permission-actions">
-          <button class="mini-button primary-button" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
-          <button class="mini-button" type="button" @click="releaseNotice = ''">稍后刷新</button>
-        </div>
-      </div>
       <div v-if="showPermissionReminder && notificationPermission !== 'granted'" class="notification-permission" role="group" aria-label="桌面通知权限">
         <strong>开启桌面通知</strong>
         <p v-if="notificationPermission === 'default'">授权后，未读消息将通过操作系统提醒。</p>
@@ -991,6 +1011,14 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <button class="unread-reminder-close" type="button" aria-label="关闭未读消息提醒" @click="showUnreadReminder = false">×</button>
         </div>
       </Transition>
+      <div v-if="releaseVersion" class="release-notice" role="group" aria-label="版本更新">
+        <span class="release-notice-icon" aria-hidden="true">🎉</span>
+        <p class="release-notice-text">有新版 <strong>v{{ releaseVersion }}</strong> 已就绪</p>
+        <div class="release-notice-actions">
+          <button class="release-notice-refresh" type="button" :disabled="releaseRefreshing" @click="refreshForRelease">刷新页面</button>
+          <button class="release-notice-later" type="button" @click="releaseVersion = ''">稍后</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>

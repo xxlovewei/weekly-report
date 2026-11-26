@@ -57,7 +57,7 @@ async function jump(item: Message) {
     <label v-if="admin">查看范围<select v-model="allUsers"><option :value="false">我的消息</option><option :value="true">所有人员</option></select></label>
     <label>日期<input v-model="day" type="date" /></label>
     <label>状态<select v-model="status"><option value="">全部</option><option value="false">未读</option><option value="true">已读</option></select></label>
-    <label>类型<select v-model="kind"><option value="">全部</option><option>转交任务</option><option>会议指派</option><option>代码审查</option><option>系统通知</option></select></label>
+    <label>类型<select v-model="kind"><option value="">全部</option><option>转交任务</option><option>会议指派</option><option>代码审查</option><option>系统通知</option><option>发版检查</option></select></label>
   </section>
   <p v-if="error" class="review-error" role="alert">{{ error }}</p>
   <p v-if="loading" class="empty" role="status">正在加载消息…</p>
