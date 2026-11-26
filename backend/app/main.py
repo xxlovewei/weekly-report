@@ -552,7 +552,8 @@ def add_task(week_start: str, revision: int, idempotency_key: str | None = Heade
     if old is not None: return old
     row = checked_week(db, auth[0], week_start, revision)
     db.execute(update(Task).where(Task.week_id == row.id).values(position=Task.position + 1))
-    create_card_for_detail(db, row, Task(week_id=row.id, position=1, task_group=""))
+    # 新增的周任务与同步创建的看板卡片共用默认类型。
+    create_card_for_detail(db, row, Task(week_id=row.id, position=1, task_group="", category_name="其他"))
     return finish(db, auth[0].id, idempotency_key, operation, work_week_json(db, row))
 
 def own_task(db: Session, task_id: int, week_id: int):

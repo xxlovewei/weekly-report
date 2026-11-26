@@ -133,7 +133,7 @@ test('个人看板拖拽与明细双向同步，管理员可以代管明细', as
   const secondName = '第二条看板卡片'
   await inbox.getByRole('button', { name: '添加任务' }).click()
   await add.getByLabel('任务名称').fill(secondName)
-  await add.getByLabel('任务类型').selectOption('其他')
+  await expect(add.getByLabel('任务类型')).toHaveValue('其他')
   await add.getByRole('button', { name: '保存' }).click()
   const second = inbox.getByRole('article', { name: `${secondName}，优先级低` })
   await expect(second).toBeVisible()
@@ -211,6 +211,7 @@ test('新增和复制周任务同步到看板，删除当周明细保留卡片',
   const original = created.tasks[0]
   expect(original.position).toBe(1)
   const added = page.locator(`#work-task-${original.id}`)
+  await expect(added.getByLabel('任务类型')).toHaveValue('其他')
   await added.getByLabel('任务名称').fill(name)
   await added.getByLabel('完成状态').selectOption('40%')
   await expect(page.getByText('✓ 已保存')).toBeVisible()

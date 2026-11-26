@@ -351,7 +351,7 @@ function open(nextAction: Dialog) {
   formError.value = ''
   if (nextAction.kind === 'edit') {
     const card = nextAction.card
-    Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '', priority: card?.priority ?? '低', notes: card?.notes ?? '' })
+    Object.assign(form, { name: card?.name ?? '', category_name: card?.category_name ?? '其他', priority: card?.priority ?? '低', notes: card?.notes ?? '' })
     estimatedDays.value = card?.estimated_days ?? ''
     createRequest = null
   }

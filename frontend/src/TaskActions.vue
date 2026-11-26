@@ -11,13 +11,17 @@ const emit = defineEmits<{
 }>()
 
 const menu = ref<HTMLElement | null>(null)
+const priorityTrigger = ref<HTMLButtonElement | null>(null)
+const priorityMenu = ref<HTMLElement | null>(null)
 const action = ref<{ id: number; x: number; y: number } | null>(null)
 const choosingPriority = ref(false)
+const priorityOpensLeft = ref(false)
 const index = computed(() => props.tasks.findIndex(task => task.id === action.value?.id))
 const priorities = ['高', '中', '低'] as const
 // 历史任务的空优先级在菜单里默认选中低，主动选择后才保存。
 const currentPriority = computed(() => props.tasks[index.value]?.priority ?? '低')
 let previousFocus: HTMLElement | null = null
+let priorityDismissTimer: number | undefined
 
 async function placeMenu() {
   await nextTick()
@@ -33,6 +37,7 @@ async function placeMenu() {
 function open(event: MouseEvent | KeyboardEvent, id: number) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   if (!action.value) previousFocus = document.activeElement as HTMLElement | null
+  window.clearTimeout(priorityDismissTimer)
   choosingPriority.value = false
   action.value = {
     id,
@@ -45,7 +50,9 @@ defineExpose({ open })
 
 function close(restoreFocus = false) {
   if (!action.value) return
+  window.clearTimeout(priorityDismissTimer)
   action.value = null
+  choosingPriority.value = false
   if (restoreFocus) previousFocus?.focus({ preventScroll: true })
 }
 function dismissOutside(event: Event) {
@@ -59,6 +66,7 @@ onMounted(() => {
   window.addEventListener('resize', dismiss)
 })
 onUnmounted(() => {
+  window.clearTimeout(priorityDismissTimer)
   document.removeEventListener('pointerdown', dismissOutside, true)
   window.removeEventListener('wheel', dismissOutside, true)
   window.removeEventListener('resize', dismiss)
@@ -72,9 +80,38 @@ function move(targetIndex: number) {
   close(true)
   if (task && target) emit('move', task.id, target.id, after)
 }
-function showPriorities() {
+async function showPriorities(focus = false) {
+  window.clearTimeout(priorityDismissTimer)
   choosingPriority.value = true
-  void placeMenu()
+  await nextTick()
+  const submenu = priorityMenu.value
+  if (!submenu || !menu.value || !priorityTrigger.value) return
+  const { left, right } = menu.value.getBoundingClientRect()
+  const { top } = priorityTrigger.value.getBoundingClientRect()
+  const { offsetWidth, offsetHeight } = submenu
+  const { clientWidth, clientHeight } = document.documentElement
+  const spaceOnLeft = left - 8
+  const spaceOnRight = clientWidth - right - 8
+  // 右侧放不下时，使用空间更宽的一侧，并把菜单限制在视口内。
+  priorityOpensLeft.value = spaceOnRight < offsetWidth && spaceOnLeft > spaceOnRight
+  const x = priorityOpensLeft.value ? left - offsetWidth : right
+  submenu.style.left = `${Math.max(8, Math.min(x, clientWidth - offsetWidth - 8))}px`
+  submenu.style.top = `${Math.max(8, Math.min(top, clientHeight - offsetHeight - 8))}px`
+  if (focus) submenu.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus({ preventScroll: true })
+}
+function hidePriorities() {
+  window.clearTimeout(priorityDismissTimer)
+  if (priorityMenu.value?.contains(document.activeElement)) priorityTrigger.value?.focus({ preventScroll: true })
+  choosingPriority.value = false
+}
+function dismissPrioritiesOnOtherAction(event: PointerEvent) {
+  if (!choosingPriority.value || !(event.target instanceof Element)) return
+  window.clearTimeout(priorityDismissTimer)
+  const button = event.target.closest('button')
+  // 斜移至二级菜单的较低选项时，允许鼠标短暂经过相邻操作。
+  if (button && button !== priorityTrigger.value && !priorityMenu.value?.contains(button)) {
+    priorityDismissTimer = window.setTimeout(hidePriorities, 250)
+  }
 }
 function setPriority(priority: TaskPriority) {
   const task = props.tasks[index.value]
@@ -121,19 +158,19 @@ function confirmTransfer() {
 
 <template>
   <Teleport to="body">
-    <div v-if="action && index >= 0" ref="menu" class="task-context-menu" role="group" :aria-label="choosingPriority ? '设置优先级' : '任务操作'" @keydown.esc.stop.prevent="close(true)">
-      <template v-if="choosingPriority">
+    <div v-if="action && index >= 0" ref="menu" class="task-context-menu" role="group" aria-label="任务操作"
+      @keydown.esc.stop.prevent="close(true)" @pointerleave="hidePriorities" @pointerover="dismissPrioritiesOnOtherAction">
+      <button v-if="!delegated" type="button" :disabled="index === 0" @click="move(0)">置顶</button>
+      <button v-if="!delegated" type="button" :disabled="index === 0" @click="move(index - 1)">上移一行</button>
+      <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(index + 1)">下移一行</button>
+      <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(tasks.length - 1)">置底</button>
+      <button ref="priorityTrigger" type="button" :aria-expanded="choosingPriority"
+        @pointerenter="showPriorities()" @click="showPriorities(true)">设置优先级 <span aria-hidden="true">{{ choosingPriority && priorityOpensLeft ? '‹' : '›' }}</span></button>
+      <div v-if="choosingPriority" ref="priorityMenu" class="task-context-menu" role="group" aria-label="设置优先级">
         <button v-for="priority in priorities" :key="priority" type="button"
           :aria-pressed="currentPriority === priority" @click="setPriority(priority)">{{ priority }}</button>
-      </template>
-      <template v-else>
-        <button v-if="!delegated" type="button" :disabled="index === 0" @click="move(0)">置顶</button>
-        <button v-if="!delegated" type="button" :disabled="index === 0" @click="move(index - 1)">上移一行</button>
-        <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(index + 1)">下移一行</button>
-        <button v-if="!delegated" type="button" :disabled="index === tasks.length - 1" @click="move(tasks.length - 1)">置底</button>
-        <button type="button" @click="showPriorities">设置优先级 <span aria-hidden="true">›</span></button>
-        <button v-if="!delegated && isCurrentWeek" type="button" aria-haspopup="dialog" :disabled="tasks[index]?.has_history" :title="tasks[index]?.has_history ? '已有历史周明细，无法转交' : undefined" @click="startTransfer">转交任务</button>
-      </template>
+      </div>
+      <button v-if="!delegated && isCurrentWeek" type="button" aria-haspopup="dialog" :disabled="tasks[index]?.has_history" :title="tasks[index]?.has_history ? '已有历史周明细，无法转交' : undefined" @click="startTransfer">转交任务</button>
     </div>
     <dialog ref="dialog" class="modal task-transfer-dialog" aria-labelledby="task-transfer-title" @close="transferClosed">
       <form @submit.prevent="confirmTransfer">

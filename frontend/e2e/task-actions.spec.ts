@@ -66,16 +66,37 @@ test('任务右键排序、优先级及转交', async ({ page, browser, baseURL 
 
     const last = rows.last()
     const priorityMenu = page.getByRole('group', { name: '设置优先级' })
+    const priorityTrigger = action('设置优先级')
     await open(baseline.length + 2)
-    await action('设置优先级').click()
+    await expect(priorityMenu).toBeHidden()
+    await priorityTrigger.hover()
+    await expect(priorityTrigger).toHaveAttribute('aria-expanded', 'true')
     await expect(priorityMenu.getByRole('button')).toHaveText(['高', '中', '低'])
+    expect((await priorityMenu.boundingBox())!.x).toBeGreaterThan((await menu.boundingBox())!.x)
+    await action('转交任务').hover()
+    await expect(priorityMenu).toBeHidden()
+    await priorityTrigger.press('Enter')
     await expect(priorityMenu.getByRole('button', { name: '低' })).toHaveAttribute('aria-pressed', 'true')
     await expect(priorityMenu.getByRole('button', { name: '低' })).toBeFocused()
     await page.keyboard.press('Escape')
 
+    // 用靠近视口右下角的右键坐标验证二级菜单翻转和边界限制。
+    const { width, height } = await page.evaluate(() => ({ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }))
+    await last.evaluate((element, { width, height }) => {
+      element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, button: 2, clientX: width - 1, clientY: height - 1 }))
+    }, { width, height })
+    await priorityTrigger.hover()
+    await expect(priorityMenu).toBeVisible()
+    const submenuBounds = (await priorityMenu.boundingBox())!
+    expect(submenuBounds.x + submenuBounds.width).toBeLessThanOrEqual((await menu.boundingBox())!.x)
+    expect(submenuBounds.y + submenuBounds.height).toBeLessThan(height)
+    await priorityMenu.getByRole('button', { name: '低' }).hover()
+    await expect(priorityMenu).toBeVisible()
+    await page.keyboard.press('Escape')
+
     for (const [priority, color] of [['高', 'rgb(225, 48, 66)'], ['中', 'rgb(219, 117, 0)'], ['低', 'rgb(36, 114, 206)'], ['高', 'rgb(225, 48, 66)']]) {
       await open(baseline.length + 2)
-      await action('设置优先级').click()
+      await priorityTrigger.hover()
       await priorityMenu.getByRole('button', { name: priority, exact: true }).click()
       await expect(last).toHaveCSS('border-left-color', color)
       await expect(last).toHaveCSS('box-shadow', new RegExp(color.replace(/[()]/g, char => '\\' + char)))
