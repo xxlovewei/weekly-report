@@ -48,3 +48,34 @@ def test_release_announces_only_after_confirmation_and_legacy_delivery_is_idempo
     assert snapshot(offline, "2.3.0")["release"] == {"version": "2.3.1", "message": message}
     assert snapshot(offline, "2.3.1")["release"] is None
     assert snapshot(offline, None, reconnect=True)["messages"] == []
+
+
+def test_release_desktop_delivery_is_compatible_with_open_old_tabs(monkeypatch):
+    with SessionLocal.begin() as db:
+        db.add_all([ReleaseRecord(version=version, description="更新说明") for version in ("2.4.2", "2.4.3")])
+        users = db.scalars(select(User).order_by(User.id)).all()
+        old_client, new_client, offline = [user.id for user in users]
+    monkeypatch.setattr("app.notifications.active_session", lambda user_id, db: (db.get(User, user_id), None))
+    opened_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    def snapshot(user_id, version, cursor=0):
+        return stream_snapshot(user_id, user_id, cursor, version, False, opened_at)
+
+    assert announce_release("2.4.2")
+    old = snapshot(old_client, "2.4.1")
+    assert old["release"]["version"] == "2.4.2"
+    message, = old["messages"]
+    assert message["kind"] == "系统通知" and "2.4.2" in message["title"]
+    assert snapshot(old_client, "2.4.1", old["cursor"])["messages"] == []
+    assert snapshot(old_client, "2.4.2")["messages"] == []
+    assert snapshot(new_client, "2.4.2")["release"] is None
+    assert announce_release("2.4.3")
+    new = snapshot(new_client, "2.4.2")
+    assert new["release"]["version"] == "2.4.3" and not new["messages"]
+    with SessionLocal.begin() as db:
+        record = db.scalar(select(ReleaseRecord).where(ReleaseRecord.version == "2.4.3"))
+        record.announced_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        previous = db.scalar(select(ReleaseRecord).where(ReleaseRecord.version == "2.4.2"))
+        previous.announced_at = record.announced_at - timedelta(days=1)
+    late = snapshot(offline, "2.4.1")
+    assert late["release"]["version"] == "2.4.3" and not late["messages"]

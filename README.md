@@ -108,7 +108,7 @@ python scripts/prepare_release.py 1.2.6 --notes-file release-notes.txt
 docker compose -p zhoubao-server -f compose.yaml -f compose.server.yaml exec -T api python -m app.release_announcement 2.4.0
 ```
 
-命令可以安全重试，同一版本只发布一次。已加载新版本的页面跳过提示，仍在运行旧版本的页签重新连接后也能补收。「刷新页面」重新加载当前页签，「稍后」关闭该页签的本次提示。不支持上报版本号的旧客户端仍通过普通消息接收，补收窗口为十分钟。迁移 `0017_release_announcement` 保存实际通知时间。
+命令可以安全重试，同一版本只发布一次。已加载新版本的页面跳过提示，仍在运行旧版本的页签重新连接后也能补收。「刷新页面」重新加载当前页签，「稍后」关闭该页签的本次提示。已授权桌面通知时，点击发版通知会返回周报系统并显示右下角提示。旧客户端通过普通系统消息兼容桌面提醒，补收窗口为十分钟。迁移 `0017_release_announcement` 保存实际通知时间。
 
 发版记录表由迁移 `0008_release_records` 创建。历史版本 `1.2.5` 的说明依据已有发版提交补录。测试环境使用独立数据库，也会在启动时导入随镜像提供的说明。
 
