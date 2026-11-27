@@ -912,6 +912,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
             </button>
           </template>
         </template>
+        <div v-if="deploymentSection" id="deployment-page-actions"></div>
         <button v-if="!user.must_change_password" class="secondary-button" type="button" @click="navigate('messages')">消息中心<span v-if="unreadMessages" class="unread-count" :aria-label="`未读 ${unreadMessages} 条`">{{ unreadMessages > 99 ? '99+' : unreadMessages }}</span></button>
         <button v-if="page === 'review-records'" class="primary-button" type="button" @click="summaryRequest++">审查总结</button>
       </div>
@@ -919,7 +920,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
         <button v-for="member in workMembers" :key="member.id" type="button" role="tab" :disabled="workLoading" :aria-selected="(workMember ?? user.id) === member.id" :class="{ selected: (workMember ?? user.id) === member.id }" @click="chooseWorkMember(member.id)">{{ member.name }}<small v-if="member.id === user.id">（本人）</small><small v-else-if="!member.is_active">（已停用）</small></button>
       </div>
       <div v-if="page === 'reports' && tabs.length" class="tabs" role="tablist" aria-label="成员"><button v-for="tab in tabs" :key="tab.id" type="button" role="tab" draggable="true" title="拖动调整成员顺序" :aria-selected="activeTab === tab.id" :class="{ selected: activeTab === tab.id, dragging: draggedReportTabId === tab.id }" @click="chooseTab(tab.id)" @dragstart="startReportTabDrag($event, tab.id)" @dragover="allowReportTabDrop" @drop="dropReportTab($event, tab.id)" @dragend="draggedReportTabId = null">{{ tab.name }}<small v-if="tab.is_deleted">（已删除）</small><small v-else-if="!tab.is_active">（已停用）</small></button></div></div>
-      <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board', 'plan-work-area': planBoardOpen }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
+      <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board', 'plan-work-area': planBoardOpen, 'deployment-overview-work-area': deploymentSection === 'overview' }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
       <Deployments v-else-if="deploymentSection" :key="user.id" :admin="isAdmin" :section="deploymentSection" />

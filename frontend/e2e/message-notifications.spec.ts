@@ -155,7 +155,7 @@ test('发版检查从消息中心、站内提醒和桌面通知直达发版计�
   await page.route('**/api/deployments/overview', route => route.fulfill({ json: {
     projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: {}, targets: [],
   } }))
-  await page.route('**/api/deployments/plans', route => route.fulfill({ json: [] }))
+  await page.route('**/api/deployments/plans?*', route => route.fulfill({ json: { items: [], total: 0, page: 1, page_size: 20 } }))
   await page.route('**/api/deployments/plans/7', route => route.fulfill({ json: {
     id: 7, project_name: '消息对应项目', site: 'beijing', version: { number: '1.1.0' }, status: 'ready', items: [],
   } }))

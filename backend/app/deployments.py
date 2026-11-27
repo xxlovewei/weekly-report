@@ -9,7 +9,7 @@ from urllib.request import Request, build_opener
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AwareDatetime, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .db import get_db
@@ -444,6 +444,7 @@ def memo_candidates(db, plan):
     latest = version_key(plan.version.number)
     rows = db.scalars(select(DeploymentMemo).join(DeploymentMemoTarget)
                       .where(DeploymentMemo.project_id == plan.project_id, DeploymentMemo.network == plan.network,
+                             DeploymentMemo.deleted_at.is_(None),
                              DeploymentMemoTarget.site == plan.site, DeploymentMemo.id.not_in(handled))
                       .order_by(DeploymentMemo.id))
     # 已补录的基线覆盖更早的归档事项；基线后明确移除的事项仍需处理。
@@ -483,22 +484,37 @@ def create_plans(data: PlansInput, _=Depends(admin), db: Session = Depends(get_d
 @router.get("/plans")
 def list_plans(project_id: int | None = None, site: str | None = None, network: str | None = None,
                version: str | None = None, start: date | None = None, end: date | None = None,
-               history: bool = False, _=Depends(active_session), db: Session = Depends(get_db)):
-    query = select(DeploymentPlan).options(selectinload(DeploymentPlan.items)).where(
-        DeploymentPlan.status.in_(HISTORY_STATES if history else OPEN_STATES))
+               history: bool = False, include_open: bool | None = None,
+               status: Literal["draft", "ready", "baseline", "succeeded", "failed"] | None = None,
+               page: int | None = Query(default=None, ge=1), page_size: int = Query(default=20, ge=1, le=100),
+               _=Depends(active_session), db: Session = Depends(get_db)):
+    with_open = not history if include_open is None else include_open
+    states = (OPEN_STATES if with_open else ()) + (HISTORY_STATES if history else ())
+    filters = [DeploymentPlan.status.in_(states)]
+    is_open = DeploymentPlan.status.in_(OPEN_STATES)
     actual_at = func.coalesce(DeploymentPlan.rolled_back_at, DeploymentPlan.deployed_at)
+    # 待执行以计划时间筛选，历史以实际发版或回滚时间筛选。
+    list_date = case((is_open, DeploymentPlan.scheduled_at), else_=actual_at)
     for column, value in ((DeploymentPlan.project_id, project_id), (DeploymentPlan.site, site),
-                          (DeploymentPlan.network, network)):
+                          (DeploymentPlan.network, network), (DeploymentPlan.status, status)):
         if value is not None:
-            query = query.where(column == value)
+            filters.append(column == value)
     if version:
-        query = query.where(DeploymentPlan.version.has(DeploymentVersion.number == version.strip()))
+        filters.append(DeploymentPlan.version.has(DeploymentVersion.number == version.strip()))
     if start:
-        query = query.where(actual_at >= datetime.combine(start, time.min, tzinfo=SHANGHAI))
+        filters.append(list_date >= datetime.combine(start, time.min, tzinfo=SHANGHAI))
     if end:
-        query = query.where(actual_at <= datetime.combine(end, time.max, tzinfo=SHANGHAI))
-    order = actual_at.desc().nulls_last() if history else DeploymentPlan.scheduled_at
-    return [plan_json(row) for row in db.scalars(query.order_by(order, DeploymentPlan.id.desc()))]
+        filters.append(list_date <= datetime.combine(end, time.max, tzinfo=SHANGHAI))
+    query = select(DeploymentPlan).options(selectinload(DeploymentPlan.items)).where(*filters).order_by(
+        is_open.desc(), case((is_open, list_date)).asc().nulls_last(),
+        case((~is_open, list_date)).desc().nulls_last(), DeploymentPlan.id.desc(),
+    )
+    if page is None:
+        return [plan_json(row) for row in db.scalars(query)]
+    total = db.scalar(select(func.count()).select_from(DeploymentPlan).where(*filters))
+    page = min(page, max(1, (total + page_size - 1) // page_size))
+    items = [plan_json(row) for row in db.scalars(query.limit(page_size).offset((page - 1) * page_size))]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def get_plan(db, plan_id):
@@ -798,8 +814,16 @@ def memo_json(db, memo):
 
 @router.get("/memos")
 def list_memos(auth=Depends(active_session), db: Session = Depends(get_db)):
-    rows = db.scalars(select(DeploymentMemo).where(DeploymentMemo.author_id == auth[0].id).order_by(DeploymentMemo.id.desc()))
+    rows = db.scalars(select(DeploymentMemo).where(DeploymentMemo.author_id == auth[0].id,
+                                                 DeploymentMemo.deleted_at.is_(None)).order_by(DeploymentMemo.id.desc()))
     return [memo_json(db, memo) for memo in rows]
+
+
+def own_memo(db, memo_id, actor):
+    memo = db.get(DeploymentMemo, memo_id)
+    if memo is None or memo.author_id != actor.id or memo.deleted_at is not None:
+        raise HTTPException(404, "个人备忘不存在")
+    return memo
 
 
 @router.post("/memos", status_code=201)
@@ -818,9 +842,7 @@ def create_memo(data: MemoInput, auth=Depends(active_session), db: Session = Dep
 @router.put("/memos/{memo_id}")
 def edit_memo(memo_id: int, data: MemoInput, auth=Depends(active_session), db: Session = Depends(get_db)):
     lock_task_changes(db)
-    memo = db.get(DeploymentMemo, memo_id)
-    if memo is None or memo.author_id != auth[0].id:
-        raise HTTPException(404, "个人备忘不存在")
+    memo = own_memo(db, memo_id, auth[0])
     if memo.version_id is not None:
         raise HTTPException(409, "备忘已关联发版版本，内容已锁定")
     if data.project_id != memo.project_id:
@@ -852,3 +874,19 @@ def edit_memo(memo_id: int, data: MemoInput, auth=Depends(active_session), db: S
                 week.revision += 1
     db.commit()
     return memo_json(db, memo)
+
+
+@router.delete("/memos/{memo_id}", status_code=204)
+def delete_memo(memo_id: int, auth=Depends(active_session), db: Session = Depends(get_db)):
+    lock_task_changes(db)
+    memo = own_memo(db, memo_id, auth[0])
+    memo.deleted_at = datetime.now(timezone.utc)
+    # 保留已归档清单与周报明细，只撤回待执行计划中的检查项。
+    items = db.scalars(select(DeploymentItem).join(DeploymentPlan).where(
+        DeploymentItem.memo_id == memo.id, DeploymentPlan.status.in_(OPEN_STATES), DeploymentItem.removed.is_(False),
+    )).all()
+    for item in items:
+        item.removed = True
+        withdraw_item(db, item)
+        item.plan.revision += 1
+    db.commit()

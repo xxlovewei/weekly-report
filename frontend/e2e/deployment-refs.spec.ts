@@ -1,6 +1,10 @@
 import { test, expect } from './fixtures'
 import { mondayOf, todayShanghai } from '../src/dates'
 
+function planPage(items: unknown[] = [], total = items.length, page = 1) {
+  return { items, total, page, page_size: 20 }
+}
+
 for (const mode of ['补录部署基线', '新增发版计划'] as const) {
   test(`${mode}使用 GitLab 查询结果选择分支和标签`, async ({ page }) => {
     const admin = { id: 42, username: 'admin', display_name: '管理员', roles: ['admin'], is_active: true, status: '正常' }
@@ -40,6 +44,7 @@ for (const mode of ['补录部署基线', '新增发版计划'] as const) {
         savedTargets.push(request.postDataJSON())
         return route.fulfill({ json: [{ id: 1 }] })
       }
+      if (path.endsWith('/deployments/plans')) return route.fulfill({ json: planPage() })
       if (path.endsWith('/notifications/unread')) return route.fulfill({ json: { count: 0 } })
       return route.fulfill({ json: [] })
     })
@@ -130,6 +135,7 @@ test('路局发版计划显示当前版本并可省略 GitLab 引用，升级内
       if (pathname.endsWith('/versions')) return route.fulfill({ json: { id: 2, ...saved.at(-1) } })
       return route.fulfill({ json: [{ id: 5 }] })
     }
+    if (pathname.endsWith('/deployments/plans')) return route.fulfill({ json: planPage() })
     if (pathname.endsWith('/notifications/unread')) return route.fulfill({ json: { count: 0 } })
     return route.fulfill({ json: [] })
   })
@@ -170,7 +176,9 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
     if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: {
       projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: { internal: '内服网' }, targets: [],
     } })
-    if (pathname.endsWith('/deployments/plans')) return route.fulfill({ json: (url.searchParams.has('history') === (plan.status === 'failed')) ? [plan] : [] })
+    if (pathname.endsWith('/deployments/plans')) return route.fulfill({ json: planPage(
+      (url.searchParams.has('history') === (plan.status === 'failed')) ? [plan] : [],
+    ) })
     if (pathname.endsWith('/plans/5/schedule')) {
       expect(request.postDataJSON()).toEqual({ revision: 0, scheduled_at: '2026-11-26T14:00:00+08:00', upgrade_content: '新的上线说明' })
       plan.upgrade_content = request.postDataJSON().upgrade_content
@@ -237,7 +245,7 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
   await confirmation.getByLabel('实际回滚时间（北京时间）').fill('2026-11-26T15:00')
   await confirmation.getByRole('button', { name: '保存', exact: true }).click()
   await expect(confirmation).toBeHidden()
-  await page.getByLabel('计划范围').selectOption('history')
+  await page.getByRole('checkbox', { name: '发版历史' }).check()
   await expect(row.getByText('发版失败')).toBeVisible()
   await expect(row.getByRole('button', { name: '删除', exact: true })).toHaveCount(0)
   await page.goto(`/deployments?plan=${plan.id}`)
@@ -250,14 +258,15 @@ test('部署总览按项目列展示，零检查项直接确认，未派发计�
   const plan = { id: 3, project_id: 1, project_name: '项目甲', site: 'beijing', network: 'internal', version,
     status: 'draft', scheduled_at: '2026-11-26T14:00:00+08:00', upgrade_content: '', checklist_count: 0, can_confirm: true, revision: 0 }
   const projects = ['项目甲', '项目乙'].map((name, index) => ({ id: index + 1, name, level: 'regional', network: 'internal', sites: ['beijing', 'shanghai'] }))
+  const extraSites = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`region-${index}`, `机房 ${index + 1}`]))
   await page.route('**/api/**', route => {
     const request = route.request(), { pathname } = new URL(request.url())
     if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 42, display_name: '管理员', roles: ['admin'] }, csrf_token: 'test' } })
     if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: { projects, history_projects: [],
-      sites: { national: '国铁侧', beijing: '北京局', shanghai: '上海局' }, networks: { internal: '内服网' },
+      sites: { national: '国铁侧', beijing: '北京局', shanghai: '上海局', ...extraSites }, networks: { internal: '内服网' },
       targets: [{ project_id: 2, site: 'shanghai', current: { version: { ...version, number: '2.0.0' }, deployed_at: null } }],
     } })
-    if (pathname.endsWith('/plans')) return route.fulfill({ json: [plan] })
+    if (pathname.endsWith('/plans')) return route.fulfill({ json: planPage([plan]) })
     if (pathname.endsWith('/tags')) return route.fulfill({ json: { items: [{ name: 'v1.1.0', sha: 'b'.repeat(40) }], has_more: false } })
     if (pathname.endsWith('/schedule')) {
       expect(request.postDataJSON().version).toEqual({ number: '1.1.0', branch: 'main', sha: 'a'.repeat(40), tag: 'v1.1.0', tag_sha: 'b'.repeat(40) })
@@ -271,12 +280,21 @@ test('部署总览按项目列展示，零检查项直接确认，未派发计�
   await expect(page).toHaveURL(/\/deployments\/overview$/)
   const overview = page.getByLabel('项目与机房部署总览')
   await expect(overview.getByRole('columnheader')).toHaveText(['部署机房', /项目甲/, /项目乙/])
+  await expect(page.getByRole('button', { name: '新增发版计划' })).toHaveCount(0)
+  const filter = page.getByRole('combobox', { name: '部署级别' })
+  const header = overview.getByRole('columnheader', { name: '部署机房' })
+  const filterY = (await filter.boundingBox())?.y, headerY = (await header.boundingBox())?.y
+  expect(await overview.evaluate(element => { element.scrollTop = 240; return element.scrollTop })).toBeGreaterThan(0)
+  expect((await header.boundingBox())?.y).toBe(headerY)
+  expect((await filter.boundingBox())?.y).toBe(filterY)
+  await overview.evaluate(element => { element.scrollTop = 0 })
   const shanghai = overview.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '上海局' }) })
   await expect(shanghai.getByRole('cell').nth(1)).toContainText('2.0.0')
   await shanghai.getByRole('button', { name: '2.0.0', exact: true }).click()
   await expect(page).toHaveURL(/\/deployments\/plans\?history=true&project_id=2&site=shanghai$/)
   await page.reload()
-  await expect(page.getByLabel('计划范围')).toHaveValue('history')
+  await expect(page.getByRole('checkbox', { name: '发版历史' })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: '待执行' })).not.toBeChecked()
   await expect(page.getByRole('combobox', { name: '项目', exact: true })).toHaveValue('2')
   await expect(page.getByRole('combobox', { name: '机房', exact: true })).toHaveValue('shanghai')
   await page.goBack()
@@ -314,6 +332,7 @@ test('任务看板和任务列表的发版检查直达命名子路由', async ({
     if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: {
       projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: {}, targets: [],
     } })
+    if (pathname.endsWith('/deployments/plans')) return route.fulfill({ json: planPage() })
     if (pathname.endsWith('/deployments/plans/7')) return route.fulfill({ json: {
       id: 7, project_name: '计划项目', site: 'beijing', version: { number: '1.0.0' }, status: 'ready', items: [],
     } })
@@ -327,4 +346,77 @@ test('任务看板和任务列表的发版检查直达命名子路由', async ({
     await expect(page).toHaveURL(/\/deployments\/plans\?plan=7$/)
     await expect(page.getByRole('dialog', { name: '备忘检查清单' })).toContainText('计划项目')
   }
+})
+
+test('发版计划共用筛选条件，混合范围支持分页', async ({ page }) => {
+  const plans = [
+    { id: 1, project_name: '待执行项目', status: 'ready' },
+    { id: 2, project_name: '历史项目', status: 'succeeded' },
+    { id: 3, project_name: '第二页历史', status: 'failed' },
+  ].map(row => ({ ...row, version: { number: '1.0.0' }, site: 'beijing', network: 'internal', checklist_count: 0 }))
+  await page.route('**/api/**', route => {
+    const { pathname, searchParams } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 1, role: 'admin' }, csrf_token: 'test' } })
+    if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: {
+      projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: { internal: '内服网' }, targets: [],
+    } })
+    if (pathname.endsWith('/deployments/plans')) {
+      if (!searchParams.has('history')) return route.fulfill({ json: planPage([plans[0]]) })
+      expect(searchParams.get('include_open')).toBe('true')
+      if (searchParams.get('status') === 'ready') return route.fulfill({ json: planPage([plans[0]]) })
+      if (searchParams.get('page') === '2') return route.fulfill({ json: planPage([plans[2]], 21, 2) })
+      return route.fulfill({ json: planPage(plans.slice(0, 2), 21) })
+    }
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/deployments/plans')
+  await expect(page.locator('.page-top .top-actions button')).toHaveText(['新增发版计划', '补录部署基线', '消息中心'])
+  await expect(page.getByRole('checkbox', { name: '待执行' })).toBeChecked()
+  const history = page.getByRole('checkbox', { name: '发版历史' })
+  await expect(history).not.toBeChecked()
+  const names = page.getByRole('rowheader')
+  await expect(names).toHaveText(['待执行项目'])
+  await history.check()
+  await expect(names).toHaveText(['待执行项目', '历史项目'])
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(names).toHaveText(['第二页历史'])
+  await expect(page).toHaveURL(/page=2$/)
+  await page.getByRole('combobox', { name: '发版状态' }).selectOption('ready')
+  await page.getByRole('button', { name: '查询', exact: true }).click()
+  await expect(names).toHaveText(['待执行项目'])
+  await expect(page.getByRole('button', { name: '上一页' })).toBeDisabled()
+})
+
+test('备忘页头显示状态和新增入口，可确认删除备忘', async ({ page }) => {
+  let removed = false
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 1, role: 'user' }, csrf_token: 'test' } })
+    if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: {
+      projects: [{ id: 1, name: '项目甲', network: 'internal', sites: ['beijing'] }], history_projects: [],
+      sites: { beijing: '北京局' }, networks: { internal: '内服网' }, targets: [],
+    } })
+    if (pathname.endsWith('/deployments/memos/5')) {
+      expect(route.request().method()).toBe('DELETE')
+      removed = true
+      return route.fulfill({ status: 204 })
+    }
+    if (pathname.endsWith('/deployments/memos')) return route.fulfill({ json: removed ? [] : [{ id: 5, project_id: 1,
+      title: '升级前核对', done: false, targets: [{ site: 'beijing', done: false }] }] })
+    return route.fulfill({ json: [] })
+  })
+  await page.goto('/deployments/memos')
+  const top = page.locator('.page-top .top-actions')
+  await expect(top.getByRole('combobox', { name: '备忘状态' })).toHaveValue('pending')
+  await expect(top.getByRole('button')).toHaveText(['新增备忘', '消息中心'])
+  const memo = page.getByRole('article').filter({ hasText: '升级前核对' })
+  await expect(memo.getByText('发版进度（0/1）')).toBeVisible()
+  page.once('dialog', dialog => dialog.dismiss())
+  await memo.getByRole('button', { name: '删除' }).click()
+  await expect(memo).toBeVisible()
+  expect(removed).toBe(false)
+  page.once('dialog', dialog => dialog.accept())
+  await memo.getByRole('button', { name: '删除' }).click()
+  await expect(memo).toHaveCount(0)
+  await expect(page.getByRole('status')).toHaveText('备忘已删除')
 })

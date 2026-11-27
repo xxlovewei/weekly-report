@@ -206,6 +206,50 @@ def test_dispatch_notifies_owner_and_deleting_plan_cleans_linked_tasks(gitlab_ma
     assert "target" not in alice.get("/api/notifications?kind=发版检查").json()["items"][0]
 
 
+def test_deleting_memo_withdraws_open_checks_and_preserves_history(gitlab_main):
+    operator, alice, bob = client("admin"), client("alice"), client("bob")
+    project = project_for(operator)
+    version = version_for(operator, project, "1.0.0")
+    payload = {"project_id": project, "title": "核对部署配置", "sites": ["beijing", "shanghai"]}
+    memo = alice.post(f"{ROOT}/memos", json=payload).json()
+    beijing, shanghai = [dispatch(operator, plan) for plan in create_plan(operator, project, version, "beijing", "shanghai")]
+    beijing = alice.patch(f"{ROOT}/plans/{beijing['id']}/items/{beijing['items'][0]['id']}", json={"done": True}).json()
+    released = success(operator, beijing)
+    assert released.status_code == 200, released.text
+    path = f"{ROOT}/memos/{memo['id']}"
+    assert bob.delete(path).status_code == 404
+    assert alice.delete(path).status_code == 204
+    assert alice.get(f"{ROOT}/memos").json() == []
+    assert alice.put(path, json=payload).status_code == 404
+    assert details(operator, beijing)["items"] == released.json()["items"]
+    pending = details(operator, shanghai)
+    assert pending["revision"] == shanghai["revision"] + 1 and pending["can_confirm"]
+    assert pending["items"][0]["removed"] and not pending["items"][0]["dispatched"]
+    assert all(card["deployment_plan_id"] != shanghai["id"] for card in alice.get("/api/board-tasks").json()["tasks"])
+    another, = create_plan(operator, project, version, "wuhan")
+    assert another["checklist_count"] == 0
+
+
+def test_plan_filters_and_pagination_keep_open_plans_before_history(gitlab_main):
+    operator = client("admin")
+    project = project_for(operator)
+    version = version_for(operator, project, "1.0.0")
+    baseline = operator.post(f"{ROOT}/baselines", json={
+        "project_id": project, "version_id": version, "sites": ["wuhan"], "deployed_at": "2026-01-01T13:00:00+08:00",
+    }).json()[0]
+    draft, ready = create_plan(operator, project, version, "beijing", "shanghai")
+    dispatch(operator, ready)
+    filters = {"history": True, "include_open": True, "project_id": project, "network": "internal", "version": "1.0.0",
+               "start": "2026-01-01", "end": "2026-01-01"}
+    for page, plan in enumerate((ready, draft, baseline), 1):
+        result = operator.get(f"{ROOT}/plans", params={**filters, "page": page, "page_size": 1}).json()
+        assert (result["total"], result["page"], result["page_size"]) == (3, page, 1)
+        assert [item["id"] for item in result["items"]] == [plan["id"]]
+    ready_only = operator.get(f"{ROOT}/plans", params={**filters, "status": "ready", "site": "shanghai", "page": 4}).json()
+    assert (ready_only["total"], ready_only["page"], ready_only["items"][0]["id"]) == (1, 1, ready["id"])
+    assert operator.get(f"{ROOT}/plans?include_open=false&page=1").json()["total"] == 0
+
+
 def test_release_result_requires_completed_checklist_and_failure_keeps_current_version(gitlab_main):
     operator, alice = client("admin"), client("alice")
     project = project_for(operator)

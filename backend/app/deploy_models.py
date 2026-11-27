@@ -63,6 +63,7 @@ class DeploymentMemo(Base):
     version_id: Mapped[int | None] = mapped_column(ForeignKey("deployment_versions.id"))
     version: Mapped[DeploymentVersion | None] = relationship(lazy="joined")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     targets: Mapped[list["DeploymentMemoTarget"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
 
 

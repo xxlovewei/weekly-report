@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { api } from './api'
 import { deploymentLocation, type DeploymentSection } from './deploymentRoutes'
@@ -22,41 +22,47 @@ interface Plan {
   confirmed_by: string | null; revision: number; checklist_count: number; can_confirm: boolean
 }
 interface Detail extends Plan { items: Item[] }
+interface PlanPage { items: Plan[]; total: number; page: number; page_size: number }
 interface Target { project_id: number; site: string; current?: Plan; planned?: Plan }
 interface MemoTarget { site: string; done: boolean; item_id: number | null; plan_id: number | null; can_complete: boolean; baseline_covered: boolean }
 interface Memo { id: number; project_id: number; title: string; notes: string; version: Version | null; network: string; done: boolean; targets: MemoTarget[] }
 interface Overview { projects: Project[]; history_projects: { id: number; name: string }[]; sites: Record<string, string>; networks: Record<string, string>; targets: Target[] }
 type FormMode = 'plan' | 'baseline' | 'memo'
+type PlanScope = 'open' | 'history'
 
 const route = useRoute(), router = useRouter()
 const states = { baseline: '基线补录', draft: '待确认清单', ready: '待发版', succeeded: '发版成功', failed: '发版失败', cancelled: '已取消' }
 const tab = computed(() => props.section)
-const historyMode = computed(() => route.name === 'deployments-plans' && route.query.history === 'true')
 const routePlan = computed(() => {
   const plan = route.query.plan
   const id = typeof plan === 'string' ? Number(plan) : 0
   return route.name === 'deployments-plans' && Number.isSafeInteger(id) && id > 0 ? id : null
 })
 const overview = ref<Overview>({ projects: [], history_projects: [], sites: {}, networks: {}, targets: [] })
-const plans = ref<Plan[]>([]), history = ref<Plan[]>([]), memos = ref<Memo[]>([])
+const planList = ref<PlanPage>({ items: [], total: 0, page: 1, page_size: 20 }), memos = ref<Memo[]>([])
+const pageCount = computed(() => Math.max(1, Math.ceil(planList.value.total / planList.value.page_size)))
 const detail = ref<Detail | null>(null), removedIds = ref<number[]>([])
 const operation = ref<'edit' | 'result'>('edit'), actionPlan = ref<Plan | null>(null)
 const schedule = ref(''), detailContent = ref(''), actual = ref(''), outcome = ref<'succeeded' | 'failed' | ''>('')
 const editNumber = ref(''), editBranch = ref<GitLabRef | null>(null), editTag = ref<GitLabRef | null>(null)
 const editBranchPicker = ref<InstanceType<typeof GitLabRefPicker> | null>(null), editTagPicker = ref<InstanceType<typeof GitLabRefPicker> | null>(null)
 const overviewLevel = ref('regional'), overviewSite = ref(''), overviewNetwork = ref(''), projectSearch = ref('')
-const historyProject = ref<number | ''>(''), historySite = ref(''), historyNetwork = ref('')
-const historyVersion = ref(''), start = ref(''), end = ref('')
-const historyFilters = { project_id: historyProject, site: historySite, network: historyNetwork, version: historyVersion, start, end }
-const historySearch = computed(() => {
-  const query = new URLSearchParams({ history: 'true' })
-  for (const key of Object.keys(historyFilters)) {
+const planScopes = ref<PlanScope[]>(['open'])
+const planFilters = reactive({ project_id: '', site: '', network: '', version: '', start: '', end: '', status: '' })
+const filterKeys = Object.keys(planFilters) as Array<keyof typeof planFilters>
+const planPage = computed(() => {
+  const page = Number(route.query.page)
+  return Number.isSafeInteger(page) && page > 0 ? page : 1
+})
+const planSearch = computed(() => {
+  const query = new URLSearchParams({ page: String(planPage.value) })
+  for (const key of ['include_open', 'history', ...filterKeys]) {
     const value = route.query[key]
     if (typeof value === 'string' && value) query.set(key, value)
   }
   return query.toString()
 })
-const listKey = computed(() => historyMode.value ? historySearch.value : tab.value)
+const listKey = computed(() => tab.value === 'plans' ? planSearch.value : tab.value)
 const memoStatus = ref('pending')
 const editor = ref<HTMLDialogElement | null>(null), planDialog = ref<HTMLDialogElement | null>(null)
 const operationDialog = ref<HTMLDialogElement | null>(null), itemTooltip = ref<HTMLElement | null>(null)
@@ -82,12 +88,13 @@ const overviewProjects = computed(() => configured.value.filter(item => item.lev
   && (!overviewNetwork.value || item.network === overviewNetwork.value)
   && item.name.toLowerCase().includes(projectSearch.value.trim().toLowerCase())))
 const targets = computed(() => new Map(overview.value.targets.map(item => [`${item.project_id}/${item.site}`, item])))
-const historyProjects = computed(() => [...new Map([
+const planProjects = computed(() => [...new Map([
   ...overview.value.history_projects.map(row => [row.id, row.name] as const),
   ...projects.value.map(row => [row.id, row.name] as const),
 ]).entries()])
 const visibleMemos = computed(() => memos.value.filter(item => memoStatus.value === 'all' || item.done === (memoStatus.value === 'done')))
 function isEditable(plan: Plan) { return plan.status === 'draft' || plan.status === 'ready' }
+const planStatuses = ['draft', 'ready', 'baseline', 'succeeded', 'failed'] as const
 const editable = computed(() => !!detail.value && isEditable(detail.value))
 const kept = computed(() => detail.value?.items.filter(item => !removedIds.value.includes(item.id)) || [])
 const checklistChanged = computed(() => detail.value?.items.some(item => item.removed !== removedIds.value.includes(item.id)))
@@ -116,15 +123,19 @@ async function run(work: () => Promise<void>) {
 }
 
 async function loadOverview() { overview.value = await api<Overview>('/deployments/overview') }
-async function loadHistory() {
-  history.value = await api<Plan[]>(`/deployments/plans?${historySearch.value}`)
+async function loadPlans() {
+  const search = planSearch.value
+  const result = await api<PlanPage>(`/deployments/plans?${search}`)
+  if (route.name !== 'deployments-plans' || planSearch.value !== search) return
+  planList.value = result
+  if (result.page !== planPage.value) {
+    await router.replace(deploymentLocation('plans', { ...route.query, page: result.page > 1 ? result.page : undefined }))
+    loadedList = listKey.value
+  }
 }
 async function loadTab() {
   if (tab.value === 'overview') await loadOverview()
-  if (tab.value === 'plans') {
-    if (historyMode.value) await loadHistory()
-    else plans.value = await api<Plan[]>('/deployments/plans')
-  }
+  if (tab.value === 'plans') await loadPlans()
   if (tab.value === 'memos') memos.value = await api<Memo[]>('/deployments/memos')
 }
 async function showSection(next: DeploymentSection, query?: LocationQueryRaw) {
@@ -132,13 +143,16 @@ async function showSection(next: DeploymentSection, query?: LocationQueryRaw) {
   await nextTick()
   await loadRoute(true)
 }
-function historyQuery() {
-  return { history: 'true', ...Object.fromEntries(Object.entries(historyFilters)
-    .filter(([, field]) => field.value !== '').map(([key, field]) => [key, field.value])) }
+function searchPlans() {
+  const hasOpen = planScopes.value.includes('open'), hasHistory = planScopes.value.includes('history')
+  const query = Object.fromEntries(filterKeys.filter(key => planFilters[key]).map(key => [key, planFilters[key]]))
+  // 旧历史链接只传 history=true 时继续显示历史记录。
+  if (hasHistory) query.history = 'true'
+  if (hasOpen === hasHistory) query.include_open = String(hasOpen)
+  void run(() => showSection('plans', query))
 }
-function showPlanList(historical: boolean) {
-  if (historyMode.value === historical) return
-  void run(() => showSection('plans', historical ? historyQuery() : undefined))
+function goToPlanPage(page: number) {
+  void run(() => showSection('plans', { ...route.query, page: page > 1 ? page : undefined }))
 }
 function showHistory(projectId: number, site: string) {
   void run(() => showSection('plans', { history: 'true', project_id: projectId, site }))
@@ -147,11 +161,13 @@ async function loadRoute(refresh = false) {
   const key = listKey.value
   if (key !== loadedList || refresh) {
     loadedList = key
-    if (historyMode.value) {
+    if (tab.value === 'plans') {
       // 恢复链接中的筛选条件，便于刷新、分享和浏览器前进后退。
-      const query = new URLSearchParams(historySearch.value)
-      historyProject.value = Number(query.get('project_id')) || ''
-      for (const field of ['site', 'network', 'version', 'start', 'end'] as const) historyFilters[field].value = query.get(field) || ''
+      const query = new URLSearchParams(planSearch.value)
+      const hasHistory = query.get('history') === 'true'
+      const hasOpen = (query.get('include_open') ?? String(!hasHistory)) === 'true'
+      planScopes.value = [...(hasOpen ? ['open' as const] : []), ...(hasHistory ? ['history' as const] : [])]
+      for (const key of filterKeys) planFilters[key] = query.get(key) || ''
     }
     await loadTab()
   }
@@ -313,6 +329,15 @@ function deletePlan(plan: Plan) {
   })
 }
 
+function deleteMemo(memo: Memo) {
+  if (!window.confirm(`删除备忘「${memo.title}」？待执行计划中的相关检查任务会收回。`)) return
+  void run(async () => {
+    await api(`/deployments/memos/${memo.id}`, 'DELETE')
+    await loadTab()
+    feedback.value = '备忘已删除'
+  })
+}
+
 function resetVersion() {
   branch.value = null; tag.value = null; number.value = ''
 }
@@ -396,7 +421,17 @@ async function saveForm() {
 </script>
 
 <template>
-  <section class="panel deployment">
+  <Teleport v-if="tab !== 'overview'" defer to="#deployment-page-actions">
+    <template v-if="tab === 'memos'">
+      <label class="release-memo-status">备忘状态<select v-model="memoStatus"><option value="pending">未完成</option><option value="done">已完成</option><option value="all">全部</option></select></label>
+      <button type="button" class="primary-button" :disabled="busy || !configured.length" @click="openForm('memo')">新增备忘</button>
+    </template>
+    <template v-else-if="admin">
+      <button type="button" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
+      <button type="button" class="secondary-button" :disabled="busy || !configured.length" @click="openForm('baseline')">补录部署基线</button>
+    </template>
+  </Teleport>
+  <section class="panel deployment" :class="{ 'deployment-overview': tab === 'overview' }">
     <p v-if="error" class="review-error" role="alert">{{ error }}</p>
     <p v-if="feedback" role="status">{{ feedback }}</p>
 
@@ -406,7 +441,6 @@ async function saveForm() {
         <label v-if="overviewLevel === 'regional'">铁路局<select v-model="overviewSite"><option value="">全部铁路局</option><option v-for="[id, name] in siteEntries.slice(1)" :key="id" :value="id">{{ name }}</option></select></label>
         <label>部署网络<select v-model="overviewNetwork"><option value="">全部网络</option><option v-for="(name, id) in overview.networks" :key="id" :value="id">{{ name }}</option></select></label>
         <label>项目搜索<input v-model="projectSearch" type="search" placeholder="项目名称" /></label>
-        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
       </div>
       <div v-if="overviewProjects.length" class="release-table release-matrix" tabindex="0" aria-label="项目与机房部署总览">
         <table>
@@ -441,34 +475,33 @@ async function saveForm() {
     </template>
 
     <template v-else-if="tab === 'plans'">
-      <div class="release-toolbar">
-        <label>计划范围<select :value="historyMode ? 'history' : 'open'" :disabled="busy" @change="showPlanList(($event.target as HTMLSelectElement).value === 'history')">
-          <option value="open">待执行</option><option value="history">发版历史</option>
-        </select></label>
-        <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
-        <button v-if="admin" class="secondary-button" :disabled="busy || !configured.length" @click="openForm('baseline')">补录部署基线</button>
-      </div>
-      <form v-if="historyMode" class="release-toolbar" @submit.prevent="run(() => showSection('plans', historyQuery()))">
-        <label>项目<select v-model="historyProject"><option value="">全部项目</option><option v-for="[id, name] in historyProjects" :key="id" :value="id">{{ name }}</option></select></label>
-        <label>机房<select v-model="historySite"><option value="">全部机房</option><option v-for="[id, name] in siteEntries" :key="id" :value="id">{{ name }}</option></select></label>
-        <label>网络<select v-model="historyNetwork"><option value="">全部网络</option><option v-for="(name, id) in overview.networks" :key="id" :value="id">{{ name }}</option></select></label>
-        <label>版本号<input v-model.trim="historyVersion" placeholder="x.x.x" /></label>
-        <label>起始日期<input v-model="start" type="date" :max="end || undefined" /></label>
-        <label>截止日期<input v-model="end" type="date" :min="start || undefined" /></label>
+      <form class="release-toolbar" @submit.prevent="searchPlans">
+        <fieldset class="release-scope">
+          <legend>计划范围</legend>
+          <label><input v-model="planScopes" type="checkbox" value="open" :disabled="busy" @change="searchPlans" />待执行</label>
+          <label><input v-model="planScopes" type="checkbox" value="history" :disabled="busy" @change="searchPlans" />发版历史</label>
+        </fieldset>
+        <label>项目<select v-model="planFilters.project_id"><option value="">全部项目</option><option v-for="[id, name] in planProjects" :key="id" :value="String(id)">{{ name }}</option></select></label>
+        <label>机房<select v-model="planFilters.site"><option value="">全部机房</option><option v-for="[id, name] in siteEntries" :key="id" :value="id">{{ name }}</option></select></label>
+        <label>网络<select v-model="planFilters.network"><option value="">全部网络</option><option v-for="(name, id) in overview.networks" :key="id" :value="id">{{ name }}</option></select></label>
+        <label>发版状态<select v-model="planFilters.status"><option value="">全部状态</option><option v-for="state in planStatuses" :key="state" :value="state">{{ states[state] }}</option></select></label>
+        <label>版本号<input v-model.trim="planFilters.version" placeholder="x.x.x" /></label>
+        <label>起始日期<input v-model="planFilters.start" type="date" :max="planFilters.end || undefined" /></label>
+        <label>截止日期<input v-model="planFilters.end" type="date" :min="planFilters.start || undefined" /></label>
         <button class="secondary-button" :disabled="busy">查询</button>
       </form>
-      <div class="release-table" tabindex="0" :aria-label="historyMode ? '发版历史' : '发版计划'">
+      <div class="release-table" tabindex="0" aria-label="发版计划">
         <table>
           <thead><tr><th scope="col">项目</th><th scope="col">部署位置</th><th scope="col">目标版本</th><th scope="col">GitLab 分支</th><th scope="col">GitLab 标签</th>
-            <th scope="col">{{ historyMode ? '实际发版 / 回滚时间' : '计划时间' }}</th><th scope="col">升级内容</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
+            <th scope="col">计划 / 实际时间</th><th scope="col">升级内容</th><th scope="col">发版状态</th><th scope="col">操作</th></tr></thead>
           <tbody>
-            <tr v-for="row in historyMode ? history : plans" :key="row.id">
+            <tr v-for="row in planList.items" :key="row.id">
               <th scope="row">{{ row.project_name }}</th>
               <td>{{ siteName(row.site) }}<small>{{ networkName(row.network) }}</small></td>
               <td>{{ row.version.number }}<small v-if="row.from_version">从 {{ row.from_version.number }} 升级</small></td>
               <td><a v-if="row.version.branch" :href="row.version.branch_url || undefined" target="_blank" rel="noopener noreferrer">{{ row.version.branch }}</a><span v-else class="release-muted">—</span></td>
               <td><a v-if="row.version.tag" :href="row.version.tag_url || undefined" target="_blank" rel="noopener noreferrer">{{ row.version.tag }}</a><span v-else class="release-muted">—</span></td>
-              <td>{{ dateText(historyMode ? row.rolled_back_at || row.deployed_at : row.scheduled_at) }}</td>
+              <td>{{ dateText(isEditable(row) ? row.scheduled_at : row.rolled_back_at || row.deployed_at) }}</td>
               <td><span class="release-upgrade-summary" :title="row.upgrade_content || undefined">{{ row.upgrade_content || '—' }}</span></td>
               <td>{{ states[row.status] }}</td>
               <td><div class="release-row-actions">
@@ -489,17 +522,18 @@ async function saveForm() {
                 <span v-if="row.status === 'baseline'" class="release-muted">—</span>
               </div></td>
             </tr>
-            <tr v-if="!(historyMode ? history : plans).length"><td colspan="9" class="empty">{{ historyMode ? '暂无符合条件的发版历史' : '暂无待执行的发版计划' }}</td></tr>
+            <tr v-if="!planList.items.length"><td colspan="9" class="empty">暂无符合条件的发版计划</td></tr>
           </tbody>
         </table>
       </div>
+      <nav class="meeting-pagination release-pagination" aria-label="发版计划分页">
+        <span>共 {{ planList.total }} 条 · 第 {{ planList.page }} / {{ pageCount }} 页</span>
+        <button type="button" class="mini-button" :disabled="busy || planList.page <= 1" @click="goToPlanPage(planList.page - 1)">上一页</button>
+        <button type="button" class="mini-button" :disabled="busy || planList.page >= pageCount" @click="goToPlanPage(planList.page + 1)">下一页</button>
+      </nav>
     </template>
 
     <template v-else>
-      <div class="release-toolbar">
-        <label>备忘状态<select v-model="memoStatus"><option value="pending">未完成</option><option value="done">已完成</option><option value="all">全部</option></select></label>
-        <button class="primary-button" :disabled="busy || !configured.length" @click="openForm('memo')">新增备忘</button>
-      </div>
       <p v-if="!visibleMemos.length" class="empty">暂无符合条件的备忘</p>
       <article v-for="memo in visibleMemos" :key="memo.id" class="release-memo">
         <div>
@@ -507,9 +541,12 @@ async function saveForm() {
           <p class="release-muted">{{ projectName(memo.project_id) }} · {{ networkName(memo.network) }} · {{ memo.done ? '已完成' : '未完成' }}<span v-if="memo.version"> · 已归档至 {{ memo.version.number }}</span></p>
           <p v-if="memo.notes" class="release-notes">{{ memo.notes }}</p>
         </div>
-        <button v-if="!memo.version" class="mini-button" :disabled="busy || !configured.some(p => p.id === memo.project_id && p.network === memo.network)" @click="openForm('memo', memo)">编辑</button>
+        <div class="release-memo-actions">
+          <button v-if="!memo.version" class="mini-button" :disabled="busy || !configured.some(p => p.id === memo.project_id && p.network === memo.network)" @click="openForm('memo', memo)">编辑</button>
+          <button class="mini-button danger" :disabled="busy" @click="deleteMemo(memo)">删除</button>
+        </div>
         <details>
-          <summary>机房进度（{{ memo.targets.filter(item => item.done).length }}/{{ memo.targets.length }}）</summary>
+          <summary>发版进度（{{ memo.targets.filter(item => item.done).length }}/{{ memo.targets.length }}）</summary>
           <div class="release-targets">
             <label v-for="item in memo.targets" :key="item.site">
               <input type="checkbox" :checked="item.done" :disabled="busy || !item.can_complete"
@@ -648,11 +685,23 @@ async function saveForm() {
 .release-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-block: .5rem 1rem; }
 .release-toolbar label { display: grid; gap: .25rem; }
 .release-toolbar input, .release-toolbar select { max-width: 14rem; }
+:global(#deployment-page-actions) { display: contents; }
+.release-memo-status { display: flex; align-items: center; gap: .4rem; white-space: nowrap; }
+.release-scope { display: flex; gap: .65rem; margin: 0; border: 2px solid currentColor; padding: .5rem; }
+.release-scope legend { font-weight: 700; font-size: 12px; }
+.release-scope label { display: flex; align-items: center; }
+.release-scope input { width: auto; margin: 0; }
+.release-pagination { justify-content: flex-start; flex-wrap: wrap; }
 .release-table { max-width: 100%; overflow: auto; }
 .release-table table { width: 100%; border-collapse: separate; border-spacing: 0; text-align: left; }
 .release-table th, .release-table td { border-bottom: 1px solid var(--line, #cbd5e1); padding: .75rem; vertical-align: top; }
 .release-matrix :is(td, th[scope="col"]) { min-width: 9rem; }
 .release-matrix th:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel, Canvas); min-width: 10rem; }
+:global(.shell .work-area.deployment-overview-work-area) { display: flex; flex-direction: column; overflow: hidden; }
+.deployment-overview { display: flex; flex-direction: column; min-height: 0; }
+.deployment-overview .release-toolbar { flex-shrink: 0; }
+.release-matrix thead th { position: sticky; top: 0; z-index: 2; background: var(--panel, Canvas); }
+.release-matrix thead th:first-child { z-index: 3; }
 .release-table small { display: block; }
 .release-table a { overflow-wrap: anywhere; }
 .release-muted, small { color: var(--muted, #596579); }
@@ -662,6 +711,7 @@ async function saveForm() {
 .release-unconfigured { margin-top: 1rem; }
 .release-memo { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: start; border-top: 1px solid var(--line, #cbd5e1); padding-block: .85rem; }
 .release-memo details { grid-column: 1 / -1; }
+.release-memo-actions { display: flex; gap: .5rem; }
 .release-memo p, .release-memo h3 { margin-block: .2rem; }
 .release-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
 .release-targets { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: .5rem; margin-block: .5rem; }
