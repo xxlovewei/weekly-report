@@ -815,8 +815,9 @@ def carry_over(week_start: str, revision: int, data: CopyInput, idempotency_key:
 def report_tabs(week_start: str, auth=Depends(active_session), db: Session = Depends(get_db)):
     start = monday(week_start)
     active = db.scalars(select(User).where(User.is_active.is_(True), User.is_deleted.is_(False), User.has_role("user"))).all()
-    past_ids = db.scalars(select(Week.user_id).join(Task).where(Week.start_date == start).distinct()).all()
-    inactive = db.scalars(select(User).where((User.is_active.is_(False)) | (User.is_deleted.is_(True)), User.has_role("user"), User.id.in_(past_ids))).all() if past_ids else []
+    record_type = TaskPlan if start > current_work_week() else Task
+    member_ids = select(Week.user_id).join(record_type).where(Week.start_date == start)
+    inactive = db.scalars(select(User).where((User.is_active.is_(False)) | (User.is_deleted.is_(True)), User.has_role("user"), User.id.in_(member_ids))).all()
     return member_tags(active + inactive)
 
 def member_tags(members: list[User]):
@@ -833,7 +834,8 @@ def report_tasks(week_start: str, user_id: int, auth=Depends(active_session), db
         raise HTTPException(404, "用户不存在")
     apply_due_plans(db, user_id, start)
     row = week_row(db, user_id, start)
-    payload = week_json(db, row)
+    # 未来周返回原始计划，到期后沿用周报任务明细格式。
+    payload = work_week_json(db, row) if start > current_work_week() else week_json(db, row)
     db.commit()
     return payload
 
@@ -858,14 +860,17 @@ def calendar_marks(year: int, month: int, scope: Literal["work", "reports", "rev
         return [day.isoformat() for day in db.scalars(days)]
     start = first - timedelta(days=first.weekday())
     end = start + timedelta(days=42)
-    query = select(Week.start_date).join(Task).where(Week.start_date >= start, Week.start_date < end)
+    has_tasks = select(Task.id).where(Task.week_id == Week.id).exists()
+    has_plans = select(TaskPlan.id).where(TaskPlan.week_id == Week.id).exists()
+    query = select(Week.start_date).where(Week.start_date >= start, Week.start_date < end)
     if scope == "work":
-        query = (select(Week.start_date).where(Week.start_date >= start, Week.start_date < end,
-                 Week.user_id == work_owner(db, auth[0], user_id),
-                 select(Task.id).where(Task.week_id == Week.id).exists() |
-                 select(TaskPlan.id).where(TaskPlan.week_id == Week.id).exists()))
+        query = query.where(Week.user_id == work_owner(db, auth[0], user_id), has_tasks | has_plans)
     else:
-        query = query.join(User, Week.user_id == User.id).where(User.has_role("user"))
+        current = current_work_week()
+        query = query.join(User, Week.user_id == User.id).where(
+            User.has_role("user"),
+            ((Week.start_date > current) & has_plans) | ((Week.start_date <= current) & has_tasks),
+        )
     return sorted(day.isoformat() for day in db.scalars(query.distinct()).all())
 
 def touch_weeks(db: Session, week_ids: set[int]):

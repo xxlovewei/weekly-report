@@ -60,6 +60,8 @@ const sidebarTourActive = ref(false)
 const seenGuides = new Set<string>()
 const selectedWeek = ref(mondayOf(todayShanghai()))
 const currentWorkWeek = ref('')
+const currentReportWeek = ref(selectedWeek.value)
+const futureReport = computed(() => selectedWeek.value > currentReportWeek.value)
 const workMembers = ref<ReportTab[]>([])
 const workMember = ref<number | null>(null)
 const workLoading = ref(false)
@@ -186,7 +188,8 @@ const planBoardOpen = ref(false), planBoardTrigger = ref<HTMLButtonElement | nul
 const draggedPlanCard = ref<number | null>(null), planDropActive = ref(false)
 const plannedCardIds = computed(() => new Set((week.value.plans ?? []).flatMap(plan => plan.board_task_id == null ? [] : [plan.board_task_id])))
 const categories = ref<Category[]>([]), users = ref<User[]>([]), tabs = ref<ReportTab[]>([])
-const activeTab = ref<number | null>(null), reportTasks = ref<Task[]>([])
+const activeTab = ref<number | null>(null), reportWeekData = ref<WeekData | null>(null)
+const reportTasks = computed(() => (futureReport.value ? reportWeekData.value?.plans : reportWeekData.value?.tasks) ?? [])
 const draggedReportTabId = ref<number | null>(null)
 const calendarKey = ref(0)
 const meetings = ref<MeetingPage>({ items: [], total: 0, page: 1, page_size: 10 })
@@ -273,6 +276,7 @@ let flushPromise: Promise<void> | null = null
 let structuralPromise: Promise<void> | null = null
 let queue: Promise<unknown> = Promise.resolve()
 let loadSerial = 0
+let reportMemberRequest = 0
 let signingOut = false
 const drafts = new Map<number, Partial<TaskField>>()
 
@@ -490,7 +494,9 @@ async function loadPage() {
         document.getElementById(`work-task-${targetTask.value}`)?.scrollIntoView({ block: 'center' })
       }
     } else if (page.value === 'reports') {
-      reportTasks.value = []
+      currentReportWeek.value = mondayOf(todayShanghai())
+      reportWeekData.value = null
+      notice.value = ''
       todayWeeklyMeetingLoading.value = true
       const [newTabs, weeklyMeeting] = await Promise.all([
         api<ReportTab[]>(`/reports/${selectedWeek.value}`),
@@ -500,11 +506,8 @@ async function loadPage() {
       todayWeeklyMeeting.value = weeklyMeeting
       tabs.value = restoreReportTabOrder(newTabs, storedReportTabOrder())
       if (!tabs.value.some(tab => tab.id === activeTab.value)) activeTab.value = tabs.value[0]?.id || null
-      if (activeTab.value) {
-        const requestedTab = activeTab.value
-        const response = await api<WeekData>(`/reports/${selectedWeek.value}/users/${requestedTab}`)
-        if (serial === loadSerial && activeTab.value === requestedTab) reportTasks.value = response.tasks
-      }
+      if (activeTab.value) await loadReportMember(activeTab.value)
+      return
     } else if (page.value === 'categories') {
       categories.value = await api<Category[]>('/categories')
       categories.value.forEach(item => { categoryDrafts[item.id] = item.name })
@@ -583,13 +586,22 @@ async function removeMeeting(meeting: Meeting) {
     else await loadMeetings()
   } catch (error) { showError(error) }
 }
-async function chooseTab(id: number) {
-  activeTab.value = id; reportTasks.value = []
+async function loadReportMember(id: number) {
+  activeTab.value = id
+  reportWeekData.value = null
   const requestedWeek = selectedWeek.value
+  const pageRequest = loadSerial, memberRequest = ++reportMemberRequest
+  // 快速切换周或成员时，只显示最后一次请求的结果。
+  const isLatest = () => pageRequest === loadSerial && memberRequest === reportMemberRequest &&
+    page.value === 'reports' && selectedWeek.value === requestedWeek
   try {
     const response = await api<WeekData>(`/reports/${requestedWeek}/users/${id}`)
-    if (activeTab.value === id && selectedWeek.value === requestedWeek && page.value === 'reports') reportTasks.value = response.tasks
-  } catch (error) { showError(error) }
+    if (isLatest()) reportWeekData.value = response
+  } catch (error) { if (isLatest()) throw error }
+}
+async function chooseTab(id: number) {
+  notice.value = ''
+  try { await loadReportMember(id) } catch (error) { showError(error) }
 }
 function openReportExport() {
   reportExportStart.value = mondayToWeekInput(selectedWeek.value)
@@ -839,7 +851,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           </template>
         </nav>
       </div>
-      <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="currentWorkWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
+      <MonthCalendar v-if="page === 'work' || page === 'reports'" :selected="selectedWeek" :scope="page" :current-week="page === 'work' ? currentWorkWeek : currentReportWeek" :member-id="page === 'work' && delegatedWork ? workMember : null" :refresh-key="calendarKey" :compact="compactSidebar" @select="selectWeek" />
       <MonthCalendar v-else-if="page === 'review-records'" :selected="reviewDay" scope="review-records" :refresh-key="calendarKey + reviewRefresh" :compact="compactSidebar" @select="selectReviewDay" />
       <div class="sidebar-bottom">
         <div class="sidebar-user">
@@ -935,7 +947,11 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
           <TaskTable :tasks="week.plans" plan readonly />
         </details>
       </div>
-      <div v-else-if="page === 'reports'"><div v-if="!tabs.length" class="empty">暂无成员记录。</div><TaskTable v-if="activeTab" :tasks="reportTasks" readonly /></div>
+      <div v-else-if="page === 'reports'" :role="futureReport ? 'region' : undefined" :aria-label="futureReport ? '任务计划表' : undefined">
+        <div v-if="futureReport" class="section-head"><strong>任务计划表 <span v-if="reportWeekData">{{ reportTasks.length }}</span></strong></div>
+        <div v-if="!tabs.length" class="empty">暂无成员记录。</div>
+        <TaskTable v-if="activeTab && reportWeekData" :tasks="reportTasks" :plan="futureReport" readonly />
+      </div>
       <section v-else-if="page === 'categories'" class="panel"><p>为自己的任务维护类型；修改或删除后，历史任务名称保持原样。系统内置类型所有人可直接选择。</p><form class="inline-form" @submit.prevent="addCategory"><label>新任务类型<input v-model="newCategory" maxlength="100" required placeholder="例如：产品开发" /></label><button class="primary-button" type="submit">新增类型</button></form><div v-for="category in categories" :key="category.id" class="list-row"><input v-model="categoryDrafts[category.id]" :aria-label="`任务类型 ${category.name}`" maxlength="100" /><button class="mini-button" type="button" @click="renameCategory(category.id)">保存名称</button><button class="mini-button danger" type="button" @click="deleteCategory(category.id)">删除</button></div><div v-if="!categories.length" class="empty">还没有个人任务类型，可在上方新增。</div></section>
       <section v-else-if="page === 'meetings'" class="meetings-page">
         <div v-if="targetMeeting" class="section-head"><button class="secondary-button" type="button" @click="searchMeetings">返回会议列表</button></div>

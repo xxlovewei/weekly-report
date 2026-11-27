@@ -27,8 +27,10 @@ def test_next_week_plans_expire_and_leave_an_independent_work_detail(monkeypatch
         "status": "已完成", "category_name": "联调联试", "priority": "高",
     }).json()
     assert alice.get(week).json() == edited
-    assert alice.get(f"/api/reports/{following}/users/2").json()["tasks"] == []
+    assert bob.get(f"/api/reports/{following}/users/2").json() == edited
+    assert bob.get(f"/api/reports/{following}/users/3").json() == {"revision": 0, "tasks": []}
     assert str(following) in alice.get("/api/calendar/marks", params={"year": 2026, "month": 11, "scope": "work"}).json()
+    assert str(following) in bob.get("/api/calendar/marks", params={"year": 2026, "month": 11, "scope": "reports"}).json()
 
     current = following
     assert mutate(alice, "PATCH", path, edited["revision"], {"task_group": "到期后写入"}).status_code == 403
@@ -36,6 +38,9 @@ def test_next_week_plans_expire_and_leave_an_independent_work_detail(monkeypatch
     assert alice.delete(f"{path}?revision={edited['revision']}").status_code == 403
     assert mutate(alice, "POST", plans, 0, key="plan").status_code == 403
     applied = alice.get(week).json()
+    assert bob.get(f"/api/reports/{following}/users/2").json() == {
+        "revision": applied["revision"], "tasks": applied["tasks"],
+    }
     assert applied["plans"] == edited["plans"]
     detail, = applied["tasks"]
     assert detail["task_group"] == "下周联调\n确认发布计划" and detail["work_days"] == [1, 3]
@@ -47,6 +52,18 @@ def test_next_week_plans_expire_and_leave_an_independent_work_detail(monkeypatch
     changed = mutate(alice, "PATCH", f"{week}/tasks/{detail['id']}", applied["revision"], {"description": "联调已完成"}).json()
     assert changed["plans"] == edited["plans"]
     assert changed["tasks"][0]["description"] == "联调已完成"
+
+
+def test_future_report_includes_inactive_members_with_plans(monkeypatch):
+    monkeypatch.setattr("app.main.current_work_week", lambda: date(2026, 11, 23))
+    alice, admin = client("alice"), client("admin")
+    assert mutate(alice, "POST", "/api/weeks/2026-11-30/plans", 0).status_code == 201
+    for user_id in (2, 3):
+        assert admin.patch(f"/api/users/{user_id}", json={"is_active": False}).status_code == 200
+    assert admin.get("/api/reports/2026-11-30").json() == [
+        {"id": 2, "name": "小王", "is_active": False, "is_deleted": False},
+    ]
+    assert admin.get("/api/reports/2026-12-07").json() == []
 
 
 def test_copy_in_progress_reuses_card_and_rolls_over_latest_actual_status(monkeypatch):

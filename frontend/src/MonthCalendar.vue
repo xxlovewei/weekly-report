@@ -8,7 +8,7 @@ const displayed = ref({ year: Number(props.selected.slice(0, 4)), month: Number(
 const current = ref(todayShanghai())
 const byDay = computed(() => props.scope === 'review-records')
 const dateKey = (day: string) => byDay.value ? day : mondayOf(day)
-const currentKey = computed(() => props.scope === 'work' && props.currentWeek ? props.currentWeek : dateKey(current.value))
+const currentKey = computed(() => !byDay.value && props.currentWeek ? props.currentWeek : dateKey(current.value))
 // 周历只需要日期，审查月历用问题数区分已审查的日期。
 type CalendarMark = string | { date: string; issue_count: number }
 const marked = ref(new Map<string, number | null>())
@@ -35,6 +35,11 @@ function reviewMarkLabel(day: string) {
   const count = marked.value.get(day)
   return count === undefined ? undefined : count === null ? '有审查记录' : `已审查，${count} 条问题`
 }
+function weekMarkLabel(day: string) {
+  const week = mondayOf(day)
+  if (day !== addDays(week, 6) || !marked.value.has(week)) return ''
+  return props.scope === 'reports' && week > currentKey.value ? '，已有任务计划' : '，已有任务'
+}
 function shift(offset: number) {
   const date = new Date(Date.UTC(displayed.value.year, displayed.value.month - 1 + offset, 1))
   displayed.value = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
@@ -58,10 +63,10 @@ function goCurrent() {
       </div>
     </div>
     <div v-if="!compact" class="calendar-grid"><span v-for="label in ['一','二','三','四','五','六','日']" :key="label" class="calendar-label">{{ label }}</span>
-      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === currentKey, outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? [day, reviewMarkLabel(day)].filter(Boolean).join('，') : `${day}，选择该周${day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day)) ? '，已有任务' : ''}`" :aria-pressed="dateKey(day) === selected" :title="byDay ? reviewMarkLabel(day) : undefined" @click="emit('select', dateKey(day))">
+      <button v-for="day in days" :key="day" type="button" class="calendar-day" :class="{ chosen: dateKey(day) === selected, current: dateKey(day) === currentKey, outside: Number(day.slice(5,7)) !== displayed.month }" :aria-label="byDay ? [day, reviewMarkLabel(day)].filter(Boolean).join('，') : `${day}，选择该周${weekMarkLabel(day)}`" :aria-pressed="dateKey(day) === selected" :title="byDay ? reviewMarkLabel(day) : undefined" @click="emit('select', dateKey(day))">
         {{ Number(day.slice(8)) }}
         <span v-if="byDay && marked.has(day)" class="review-day-mark" :class="{ 'review-day-mark-empty': marked.get(day) === 0 }" aria-hidden="true" />
-        <span v-if="!byDay && day === addDays(mondayOf(day), 6) && marked.has(mondayOf(day))" class="week-check" aria-hidden="true">√</span>
+        <span v-if="!byDay && weekMarkLabel(day)" class="week-check" aria-hidden="true">√</span>
       </button>
     </div>
     <p class="calendar-caption" :aria-live="compact ? 'polite' : undefined">{{ byDay ? (compact ? selected.slice(5) : selected) : compact ? `第${weekOfMonth(selected)}周` : `${selected} — ${addDays(selected, 6)}` }}</p>
