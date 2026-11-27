@@ -5,6 +5,7 @@ import stopwatch from './assets/task-stopwatch.png'
 import { addDays } from './dates'
 import ReviewIssueDialog from './ReviewIssueDialog.vue'
 import DeploymentTaskIcon from './DeploymentTaskIcon.vue'
+import { deploymentLocation } from './deploymentRoutes'
 import { taskStatuses } from './taskStatuses'
 import { sharedTaskTypes } from './taskTypes'
 import type { Category, MeetingPerson, TaskPriority, WeekData } from './types'
@@ -572,7 +573,7 @@ function drop(event: DragEvent, state: State) {
                     <span aria-hidden="true">i</span>
                   </button>
                   <RouterLink v-if="card.deployment_plan_id" class="task-transfer-mark task-meeting-link" :draggable="false"
-                    :to="{ name: 'deployments', query: { plan: card.deployment_plan_id } }" title="查看机房发版计划" aria-label="查看机房发版计划"><DeploymentTaskIcon /></RouterLink>
+                    :to="deploymentLocation('plans', { plan: card.deployment_plan_id })" title="查看机房发版计划" aria-label="查看机房发版计划"><DeploymentTaskIcon /></RouterLink>
                   <span v-if="card.estimated_days" class="board-card-estimate" role="img"
                     :aria-label="`预估 ${card.estimated_days} 人天`" :style="{ '--estimate-length': card.estimated_days.length }">
                     <img :src="stopwatch" alt="" draggable="false" />

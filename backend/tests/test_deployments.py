@@ -194,7 +194,7 @@ def test_dispatch_notifies_owner_and_deleting_plan_cleans_linked_tasks(gitlab_ma
     card, = board["tasks"]
     assert (card["priority"], card["category_name"], card["deployment_plan_id"]) == ("高", "发版检查", plan["id"])
     messages, = alice.get("/api/notifications?kind=发版检查").json()["items"]
-    assert messages["target"] == {"board_task": card["id"]}
+    assert messages["target"] == {"board_task": card["id"], "deployment_plan": plan["id"]}
     assert bob.get("/api/notifications?kind=发版检查").json()["items"] == []
     path = f"{ROOT}/plans/{plan['id']}"
     updated = alice.patch(f"{path}/items/{ready['items'][0]['id']}", json={"done": True}).json()

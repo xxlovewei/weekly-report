@@ -11,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal, get_db
+from .deploy_models import DeploymentItem
 from .main import Input, active_session
 from .models import BoardTask, Notification, User
 from .notification_events import notification_lifespan, subscribers
@@ -32,11 +33,15 @@ def count_unread(db, user_id):
     ))
 
 
-def notification_target(row, board_owner, user_id):
+def notification_target(row, board_owner, plan_id, user_id):
     if row.review_date:
         return {"date": row.review_date}
     if board_owner == user_id:
-        return {"board_task": row.board_task_id}
+        target = {"board_task": row.board_task_id}
+        # 发版检查直接打开计划，保留任务编号供旧客户端跳转看板。
+        if row.kind == "发版检查" and plan_id is not None:
+            target["deployment_plan"] = plan_id
+        return target
     return None
 
 
@@ -51,15 +56,16 @@ def stream_snapshot(request, user_id, cursor, client_version, legacy_reconnect, 
         if cursor is None:
             cursor = db.scalar(select(func.max(Notification.id)).where(Notification.user_id == user.id)) or 0
         release = stream_release(db, user_id, client_version, legacy_reconnect, connected_at)
-        query = (select(Notification, BoardTask.user_id)
+        query = (select(Notification, BoardTask.user_id, DeploymentItem.plan_id)
                  .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
+                 .outerjoin(DeploymentItem, DeploymentItem.card_id == BoardTask.id)
                  .where(Notification.user_id == user_id, Notification.id > cursor))
         if client_version is not None and version_number(client_version) >= DESKTOP_RELEASE_VERSION:
             query = query.where(or_(Notification.event_key.is_(None), ~Notification.event_key.startswith("release:")))
         rows = db.execute(query.order_by(Notification.id).limit(100)).all()
         messages = [{"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read,
-                     "target": notification_target(row, board_owner, user_id)}
-                    for row, board_owner in rows]
+                     "target": notification_target(row, board_owner, plan_id, user_id)}
+                    for row, board_owner, plan_id in rows]
         return {"count": count_unread(db, user_id), "messages": messages,
                 "release": release,
                 "unread_reminder": task_settings(db, UNREAD_REMINDER).model_dump(),
@@ -141,17 +147,18 @@ def list_notifications(
         filters.append(Notification.kind == kind)
     if is_read is not None:
         filters.append(Notification.is_read.is_(is_read))
-    rows = db.execute(select(Notification, User.display_name, BoardTask.user_id)
+    rows = db.execute(select(Notification, User.display_name, BoardTask.user_id, DeploymentItem.plan_id)
                       .join(User, User.id == Notification.user_id)
                       .outerjoin(BoardTask, BoardTask.id == Notification.board_task_id)
+                      .outerjoin(DeploymentItem, DeploymentItem.card_id == BoardTask.id)
                       .where(*filters).order_by(Notification.created_at.desc(), Notification.id.desc())
                       .limit(20).offset((page - 1) * 20))
     items = []
-    for row, recipient, board_owner in rows:
+    for row, recipient, board_owner, plan_id in rows:
         item = {"id": row.id, "kind": row.kind, "title": row.title, "is_read": row.is_read, "created_at": row.created_at}
         if all_users:
             item["recipient"] = recipient
-        elif target := notification_target(row, board_owner, user.id):
+        elif target := notification_target(row, board_owner, plan_id, user.id):
             item["target"] = target
         items.append(item)
     return {"items": items, "total": db.scalar(select(func.count()).select_from(Notification).where(*filters))}

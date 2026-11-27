@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures'
+import { mondayOf, todayShanghai } from '../src/dates'
 
 for (const mode of ['补录部署基线', '新增发版计划'] as const) {
   test(`${mode}使用 GitLab 查询结果选择分支和标签`, async ({ page }) => {
@@ -190,7 +191,11 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
   await menu.click()
   await expect(menu).toHaveAttribute('aria-expanded', 'true')
   await expect(page.locator('#deployment-submenu').getByRole('button')).toHaveText(['部署总览', '发版计划', '发版备忘'])
+  await page.getByRole('button', { name: '发版备忘', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/memos$/)
+  await expect(page.getByRole('button', { name: '发版备忘', exact: true })).toHaveAttribute('aria-current', 'page')
   await page.getByRole('button', { name: '发版计划', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/plans$/)
   const row = page.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '示例项目' }) })
   await expect(row.getByRole('button', { name: '示例项目' })).toHaveCount(0)
   await expect(row.getByRole('button', { name: '确认发版' })).toBeDisabled()
@@ -204,6 +209,7 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
 
   await row.getByRole('button', { name: '备忘检查' }).click()
   const checklist = page.getByRole('dialog', { name: '备忘检查清单' })
+  await expect(page).toHaveURL(new RegExp(`/deployments/plans\\?plan=${plan.id}$`))
   const card = checklist.getByRole('article')
   await expect(card.getByRole('img', { name: '待检查' })).toBeVisible()
   await card.hover()
@@ -222,6 +228,7 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
   await expect.poll(() => refreshes).toBe(1)
   await expect(checklist.getByLabel('实际发版时间', { exact: false })).toHaveCount(0)
   await checklist.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/plans$/)
 
   await row.getByRole('button', { name: '确认发版' }).click()
   const confirmation = page.getByRole('dialog', { name: '确认发版' })
@@ -233,6 +240,9 @@ test('发版管理二级菜单分开计划编辑、备忘卡片和发版结果',
   await page.getByLabel('计划范围').selectOption('history')
   await expect(row.getByText('发版失败')).toBeVisible()
   await expect(row.getByRole('button', { name: '删除', exact: true })).toHaveCount(0)
+  await page.goto(`/deployments?plan=${plan.id}`)
+  await expect(page).toHaveURL(new RegExp(`/deployments/plans\\?plan=${plan.id}$`))
+  await expect(checklist).toBeVisible()
 })
 
 test('部署总览按项目列展示，零检查项直接确认，未派发计划可编辑版本引用', async ({ page }) => {
@@ -257,11 +267,20 @@ test('部署总览按项目列展示，零检查项直接确认，未派发计�
     if (pathname.endsWith('/notifications/unread')) return route.fulfill({ json: { count: 0 } })
     return route.fulfill({ json: [] })
   })
-  await page.goto('/deployments')
+  await page.goto('/deployments?tab=overview')
+  await expect(page).toHaveURL(/\/deployments\/overview$/)
   const overview = page.getByLabel('项目与机房部署总览')
   await expect(overview.getByRole('columnheader')).toHaveText(['部署机房', /项目甲/, /项目乙/])
   const shanghai = overview.getByRole('row').filter({ has: page.getByRole('rowheader', { name: '上海局' }) })
   await expect(shanghai.getByRole('cell').nth(1)).toContainText('2.0.0')
+  await shanghai.getByRole('button', { name: '2.0.0', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/plans\?history=true&project_id=2&site=shanghai$/)
+  await page.reload()
+  await expect(page.getByLabel('计划范围')).toHaveValue('history')
+  await expect(page.getByRole('combobox', { name: '项目', exact: true })).toHaveValue('2')
+  await expect(page.getByRole('combobox', { name: '机房', exact: true })).toHaveValue('shanghai')
+  await page.goBack()
+  await expect(overview).toBeVisible()
   await page.getByRole('button', { name: '发版计划', exact: true }).click()
   await expect(page.getByRole('button', { name: '备忘检查', exact: true })).toBeDisabled()
   await expect(page.getByTitle('无需检查')).toBeVisible()
@@ -276,4 +295,36 @@ test('部署总览按项目列展示，零检查项直接确认，未派发计�
   await edit.getByRole('button', { name: '保存', exact: true }).click()
   await expect(edit).toBeHidden()
   await expect(page.getByRole('cell', { name: '1.1.0', exact: true })).toBeVisible()
+})
+
+test('任务看板和任务列表的发版检查直达命名子路由', async ({ page }) => {
+  const week = mondayOf(todayShanghai())
+  const task = { id: 8, task_group: '核对配置', deployment_plan_id: 7, category_name: '发版检查',
+    description: '', work_days: [], notes: '', status: '未开始', position: 0, priority: '高' }
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: {
+      user: { id: 42, username: 'member', display_name: '测试成员', role: 'user' }, csrf_token: 'test',
+    } })
+    if (pathname.endsWith('/work-context')) return route.fulfill({ json: { current_week: week, members: [] } })
+    if (pathname.endsWith(`/weeks/${week}`)) return route.fulfill({ json: { revision: 0, tasks: [task] } })
+    if (pathname.endsWith('/board-tasks')) return route.fulfill({ json: {
+      current_week: week, tasks: [{ ...task, name: task.task_group, state: 'inbox' }],
+    } })
+    if (pathname.endsWith('/deployments/overview')) return route.fulfill({ json: {
+      projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: {}, targets: [],
+    } })
+    if (pathname.endsWith('/deployments/plans/7')) return route.fulfill({ json: {
+      id: 7, project_name: '计划项目', site: 'beijing', version: { number: '1.0.0' }, status: 'ready', items: [],
+    } })
+    return route.fulfill({ json: [] })
+  })
+  for (const source of ['/task-board', '/work']) {
+    await page.goto(source)
+    const link = page.getByRole('link', { name: '查看机房发版计划' })
+    await expect(link).toHaveAttribute('href', '/deployments/plans?plan=7')
+    await link.click()
+    await expect(page).toHaveURL(/\/deployments\/plans\?plan=7$/)
+    await expect(page.getByRole('dialog', { name: '备忘检查清单' })).toContainText('计划项目')
+  }
 })

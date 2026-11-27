@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { api } from './api'
+import { deploymentLocation, type DeploymentSection } from './deploymentRoutes'
 import GitLabRefPicker from './GitLabRefPicker.vue'
 
-const props = defineProps<{ admin: boolean; section: Tab }>()
+const props = defineProps<{ admin: boolean; section: DeploymentSection }>()
 
 interface Version {
   id: number; number: string; branch: string | null; branch_url: string | null; sha: string | null
@@ -25,13 +26,17 @@ interface Target { project_id: number; site: string; current?: Plan; planned?: P
 interface MemoTarget { site: string; done: boolean; item_id: number | null; plan_id: number | null; can_complete: boolean; baseline_covered: boolean }
 interface Memo { id: number; project_id: number; title: string; notes: string; version: Version | null; network: string; done: boolean; targets: MemoTarget[] }
 interface Overview { projects: Project[]; history_projects: { id: number; name: string }[]; sites: Record<string, string>; networks: Record<string, string>; targets: Target[] }
-type Tab = 'overview' | 'plans' | 'memos'
 type FormMode = 'plan' | 'baseline' | 'memo'
 
 const route = useRoute(), router = useRouter()
 const states = { baseline: '基线补录', draft: '待确认清单', ready: '待发版', succeeded: '发版成功', failed: '发版失败', cancelled: '已取消' }
 const tab = computed(() => props.section)
-const historyMode = ref(false)
+const historyMode = computed(() => route.name === 'deployments-plans' && route.query.history === 'true')
+const routePlan = computed(() => {
+  const plan = route.query.plan
+  const id = typeof plan === 'string' ? Number(plan) : 0
+  return route.name === 'deployments-plans' && Number.isSafeInteger(id) && id > 0 ? id : null
+})
 const overview = ref<Overview>({ projects: [], history_projects: [], sites: {}, networks: {}, targets: [] })
 const plans = ref<Plan[]>([]), history = ref<Plan[]>([]), memos = ref<Memo[]>([])
 const detail = ref<Detail | null>(null), removedIds = ref<number[]>([])
@@ -42,6 +47,16 @@ const editBranchPicker = ref<InstanceType<typeof GitLabRefPicker> | null>(null),
 const overviewLevel = ref('regional'), overviewSite = ref(''), overviewNetwork = ref(''), projectSearch = ref('')
 const historyProject = ref<number | ''>(''), historySite = ref(''), historyNetwork = ref('')
 const historyVersion = ref(''), start = ref(''), end = ref('')
+const historyFilters = { project_id: historyProject, site: historySite, network: historyNetwork, version: historyVersion, start, end }
+const historySearch = computed(() => {
+  const query = new URLSearchParams({ history: 'true' })
+  for (const key of Object.keys(historyFilters)) {
+    const value = route.query[key]
+    if (typeof value === 'string' && value) query.set(key, value)
+  }
+  return query.toString()
+})
+const listKey = computed(() => historyMode.value ? historySearch.value : tab.value)
 const memoStatus = ref('pending')
 const editor = ref<HTMLDialogElement | null>(null), planDialog = ref<HTMLDialogElement | null>(null)
 const operationDialog = ref<HTMLDialogElement | null>(null), itemTooltip = ref<HTMLElement | null>(null)
@@ -54,7 +69,7 @@ const newVersion = ref(false), number = ref('')
 const branch = ref<GitLabRef | null>(null), tag = ref<GitLabRef | null>(null)
 const branchPicker = ref<InstanceType<typeof GitLabRefPicker> | null>(null), tagPicker = ref<InstanceType<typeof GitLabRefPicker> | null>(null)
 const busy = ref(false), error = ref(''), feedback = ref('')
-let loadedSection: Tab | undefined, handledPlan: unknown
+let loadedList: string | undefined, handledPlan: number | null = null
 
 const projects = computed(() => overview.value.projects)
 const configured = computed(() => projects.value.filter(project => project.sites.length))
@@ -102,12 +117,7 @@ async function run(work: () => Promise<void>) {
 
 async function loadOverview() { overview.value = await api<Overview>('/deployments/overview') }
 async function loadHistory() {
-  const query = new URLSearchParams({ history: 'true' })
-  for (const [key, value] of Object.entries({ project_id: historyProject.value, site: historySite.value,
-    network: historyNetwork.value, version: historyVersion.value, start: start.value, end: end.value })) {
-    if (value) query.set(key, String(value))
-  }
-  history.value = await api<Plan[]>(`/deployments/plans?${query}`)
+  history.value = await api<Plan[]>(`/deployments/plans?${historySearch.value}`)
 }
 async function loadTab() {
   if (tab.value === 'overview') await loadOverview()
@@ -117,42 +127,49 @@ async function loadTab() {
   }
   if (tab.value === 'memos') memos.value = await api<Memo[]>('/deployments/memos')
 }
-async function showSection(next: Tab) {
-  if (tab.value !== next) await router.push({ name: 'deployments', query: { tab: next } })
-  loadedSection = next
-  await loadTab()
+async function showSection(next: DeploymentSection, query?: LocationQueryRaw) {
+  await router.push(deploymentLocation(next, query))
+  await nextTick()
+  await loadRoute(true)
+}
+function historyQuery() {
+  return { history: 'true', ...Object.fromEntries(Object.entries(historyFilters)
+    .filter(([, field]) => field.value !== '').map(([key, field]) => [key, field.value])) }
 }
 function showPlanList(historical: boolean) {
   if (historyMode.value === historical) return
-  historyMode.value = historical
-  void run(loadTab)
+  void run(() => showSection('plans', historical ? historyQuery() : undefined))
 }
 function showHistory(projectId: number, site: string) {
-  historyProject.value = projectId; historySite.value = site; historyNetwork.value = ''
-  historyVersion.value = ''; start.value = ''; end.value = ''
-  historyMode.value = true
-  void run(() => showSection('plans'))
+  void run(() => showSection('plans', { history: 'true', project_id: projectId, site }))
 }
-async function loadRoute() {
-  const section = tab.value, plan = route.query.plan
-  if (section !== loadedSection) {
-    loadedSection = section
+async function loadRoute(refresh = false) {
+  const key = listKey.value
+  if (key !== loadedList || refresh) {
+    loadedList = key
+    if (historyMode.value) {
+      // 恢复链接中的筛选条件，便于刷新、分享和浏览器前进后退。
+      const query = new URLSearchParams(historySearch.value)
+      historyProject.value = Number(query.get('project_id')) || ''
+      for (const field of ['site', 'network', 'version', 'start', 'end'] as const) historyFilters[field].value = query.get(field) || ''
+    }
     await loadTab()
   }
+  const plan = routePlan.value
   if (plan !== handledPlan) {
     handledPlan = plan
-    const id = Number(plan)
-    if (Number.isSafeInteger(id) && id > 0) await loadDetail(id)
+    if (planDialog.value?.open) planDialog.value.close()
+    if (plan) await loadDetail(plan)
   }
 }
 onMounted(() => run(async () => {
   await loadOverview()
-  loadedSection = 'overview'
+  loadedList = 'overview'
   await loadRoute()
 }))
-watch([tab, () => route.query.plan, busy], () => {
-  if (route.name === 'deployments' && !busy.value && (tab.value !== loadedSection || route.query.plan !== handledPlan)) {
-    void run(loadRoute)
+watch([listKey, routePlan, busy], () => {
+  if (!busy.value && (listKey.value !== loadedList || routePlan.value !== handledPlan)) {
+    void run(() => loadRoute())
   }
 })
 
@@ -164,11 +181,23 @@ function setDetail(value: Detail, keepSelection = false) {
   detail.value = value
 }
 async function loadDetail(id: number) {
-  setDetail(await api<Detail>(`/deployments/plans/${id}`))
+  const plan = await api<Detail>(`/deployments/plans/${id}`)
+  if (routePlan.value !== id) return
+  setDetail(plan)
   await nextTick()
-  if (!planDialog.value?.open) planDialog.value?.showModal()
+  if (routePlan.value === id && !planDialog.value?.open) planDialog.value?.showModal()
 }
-function openDetail(id: number) { void run(() => loadDetail(id)) }
+function openDetail(id: number) {
+  const query = route.name === 'deployments-plans' ? route.query : {}
+  void router.push(deploymentLocation('plans', { ...query, plan: id }))
+}
+function closeDetail() {
+  hideItemInfo()
+  if (!routePlan.value || routePlan.value !== detail.value?.id || planDialog.value?.open) return
+  const query = { ...route.query }
+  delete query.plan
+  void router.replace(deploymentLocation('plans', query))
+}
 function detailAction(path: string, method: string, payload: object, keepSelection = false) {
   void run(async () => {
     const value = await api<Detail>(`/deployments/plans/${detail.value!.id}${path}`, method, payload)
@@ -358,12 +387,7 @@ async function saveForm() {
         ...payload, version_id: versionId.value, ...(baseline ? { deployed_at: datePayload(timestamp.value) }
           : { scheduled_at: datePayload(timestamp.value), upgrade_content: upgradeContent.value }),
       })
-      if (baseline) {
-        historyProject.value = projectId.value; historySite.value = ''; historyNetwork.value = ''
-        historyVersion.value = ''; start.value = ''; end.value = ''
-      }
-      historyMode.value = baseline
-      await showSection('plans')
+      await showSection('plans', baseline ? { history: 'true', project_id: projectId.value } : undefined)
       feedback.value = baseline ? `已补录 ${rows.length} 个机房的基线` : `已生成 ${rows.length} 条发版计划`
     }
     editor.value?.close()
@@ -424,7 +448,7 @@ async function saveForm() {
         <button v-if="admin" class="primary-button" :disabled="busy || !configured.length" @click="openForm('plan')">新增发版计划</button>
         <button v-if="admin" class="secondary-button" :disabled="busy || !configured.length" @click="openForm('baseline')">补录部署基线</button>
       </div>
-      <form v-if="historyMode" class="release-toolbar" @submit.prevent="run(loadHistory)">
+      <form v-if="historyMode" class="release-toolbar" @submit.prevent="run(() => showSection('plans', historyQuery()))">
         <label>项目<select v-model="historyProject"><option value="">全部项目</option><option v-for="[id, name] in historyProjects" :key="id" :value="id">{{ name }}</option></select></label>
         <label>机房<select v-model="historySite"><option value="">全部机房</option><option v-for="[id, name] in siteEntries" :key="id" :value="id">{{ name }}</option></select></label>
         <label>网络<select v-model="historyNetwork"><option value="">全部网络</option><option v-for="(name, id) in overview.networks" :key="id" :value="id">{{ name }}</option></select></label>
@@ -550,7 +574,7 @@ async function saveForm() {
     </form>
   </dialog>
 
-  <dialog ref="planDialog" class="review-dialog summary-dialog release-dialog release-check-dialog" aria-labelledby="release-detail-title" @close="hideItemInfo" @scroll="hideItemInfo">
+  <dialog ref="planDialog" class="review-dialog summary-dialog release-dialog release-check-dialog" aria-labelledby="release-detail-title" @close="closeDetail" @scroll="hideItemInfo">
     <section v-if="detail" class="stack-form">
       <header class="release-dialog-header"><h2 id="release-detail-title">备忘检查清单</h2><button type="button" class="mini-button release-dialog-close" aria-label="关闭" @click="planDialog?.close()">×</button></header>
       <div class="release-check-summary"><p>{{ detail.project_name }} · {{ siteName(detail.site) }} · {{ detail.version.number }}</p><strong>{{ kept.filter(item => item.done).length }} / {{ kept.length }} 已完成</strong></div>

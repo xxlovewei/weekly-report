@@ -19,6 +19,7 @@ import { api, ApiError, credentialApi, newIdempotencyKey, setCsrf } from './api'
 import { addDays, mondayOf, mondayToWeekInput, todayShanghai, weekInputToMonday, weeksInRange } from './dates'
 import { moveReportTab, restoreReportTabOrder } from './reportTabOrder'
 import { desktopNotificationPermission, subscribeToMessages } from './notificationStream'
+import { deploymentLocation, deploymentSections } from './deploymentRoutes'
 import type { Category, LiveMessage, Meeting, MeetingPage, ReportTab, Task, TaskField, User, UserRole, WeekData } from './types'
 
 const route = useRoute(), router = useRouter()
@@ -27,12 +28,8 @@ const mobileSidebarQuery = window.matchMedia('(max-width: 800px)')
 const desktopSidebar = ref(!mobileSidebarQuery.matches), sidebarCollapsed = ref(false)
 const compactSidebar = computed(() => desktopSidebar.value && sidebarCollapsed.value)
 const deploymentMenuOpen = ref(false)
-const deploymentSections = [
-  { id: 'overview', label: '部署总览' }, { id: 'plans', label: '发版计划' }, { id: 'memos', label: '发版备忘' },
-] as const
-const deploymentSection = computed(() => route.query.tab === 'memos' ? 'memos'
-  : route.query.tab === 'plans' || route.query.plan ? 'plans' : 'overview')
-watch(() => route.name, name => { if (name === 'deployments') deploymentMenuOpen.value = true }, { immediate: true })
+const deploymentSection = computed(() => deploymentSections.find(section => section.name === route.name)?.id)
+watch(deploymentSection, section => { if (section) deploymentMenuOpen.value = true }, { immediate: true })
 function toggleDeploymentMenu() {
   if (compactSidebar.value) { sidebarCollapsed.value = false; deploymentMenuOpen.value = true }
   else deploymentMenuOpen.value = !deploymentMenuOpen.value
@@ -141,16 +138,18 @@ async function jumpToMessage(item: LiveMessage) {
   const account = user.value?.id
   if (!account) return
   const target = item.target
+  const reviewDate = target?.date || todayShanghai()
   const destination = item.kind === '代码审查'
-    ? { name: 'review-records', query: { date: target?.date || todayShanghai() } }
-    : item.kind === '系统通知' || !target?.board_task ? { name: 'messages' }
-      : { name: 'task-board', query: { task: target.board_task } }
+    ? { name: 'review-records', query: { date: reviewDate } }
+    : item.kind === '发版检查' && target?.deployment_plan ? deploymentLocation('plans', { plan: target.deployment_plan })
+      : item.kind === '系统通知' || !target?.board_task ? { name: 'messages' }
+        : { name: 'task-board', query: { task: target.board_task } }
   try {
     if (page.value === 'work' && hasPending()) {
       if (structuralPromise) await structuralPromise
       await flushPending()
     }
-    const sameReviewDay = page.value === 'review-records' && reviewDay.value === destination.query?.date
+    const sameReviewDay = item.kind === '代码审查' && page.value === 'review-records' && reviewDay.value === reviewDate
     if (sameReviewDay && reviewRecords.value && !await reviewRecords.value.flushReview()) return
     const failure = await router.push(destination)
     const sameLocation = isNavigationFailure(failure, NavigationFailureType.duplicated)
@@ -208,7 +207,7 @@ const modalFirst = ref<HTMLButtonElement | null>(null)
 const reportExportOpen = ref(false), reportExporting = ref(false), reportExportError = ref('')
 const reportExportStart = ref(''), reportExportEnd = ref('')
 const reportExportStartInput = ref<HTMLInputElement | null>(null)
-const page = computed(() => String(route.name || 'work'))
+const page = computed(() => deploymentSection.value ? 'deployments' : String(route.name || 'work'))
 // 页内导航共用页头的折叠状态，刷新后默认展开。
 const pageTopCollapsed = ref(false)
 const sidebarTourAccount = computed(() =>
@@ -648,10 +647,10 @@ async function chooseWorkMember(id: number) {
     else await loadPage()
   } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
-async function navigate(name: string, query?: { tab: string }) {
+async function navigate(name: string) {
   if (name === 'review-records') reviewToday.value = todayShanghai()
-  if (!query && page.value === name && !(name === 'meetings' && targetMeeting.value)) { mobileOpen.value = false; return }
-  try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push({ path: `/${name}`, query }); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
+  if (route.name === name && !(name === 'meetings' && targetMeeting.value) && !(deploymentSection.value && Object.keys(route.query).length)) { mobileOpen.value = false; return }
+  try { if (structuralPromise) await structuralPromise; await flushPending(); if (name === 'reports') activeTab.value = null; await router.push({ name }); mobileOpen.value = false } catch { notice.value = '当前修改尚未保存，请先重试。' }
 }
 async function login(event: Event) {
   try {
@@ -741,7 +740,7 @@ onMounted(async () => {
   if (user.value) await loadPage()
 })
 onUnmounted(() => { mobileSidebarQuery.removeEventListener('change', updateSidebarViewport); removeRouteGuard(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('invalid', localizeInvalid, true); document.removeEventListener('input', clearValidation, true); document.removeEventListener('change', clearValidation, true); if (timer) clearTimeout(timer); if (maxWaitTimer) clearTimeout(maxWaitTimer) })
-watch(() => [route.name, route.query.week, route.query.task, route.query.meeting], () => { if (ready.value && user.value) void loadPage() })
+watch(() => [page.value, route.query.week, route.query.task, route.query.meeting], () => { if (ready.value && user.value) void loadPage() })
 watch([page, selectedWeek, workMember, canManageOwnWork, futureWork, () => user.value?.id], () => closePlanBoard(false))
 watch(unreadMessages, count => { if (!count) showUnreadReminder.value = false })
 watch(() => user.value && !user.value.must_change_password ? user.value.id : null, (account, _, onCleanup) => {
@@ -835,7 +834,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
             <button v-for="section in deploymentSections" :key="section.id" type="button" class="sidebar-link"
               :class="{ active: page === 'deployments' && deploymentSection === section.id }"
               :aria-current="page === 'deployments' && deploymentSection === section.id ? 'page' : undefined"
-              @click="navigate('deployments', { tab: section.id })">{{ section.label }}</button>
+              @click="navigate(section.name)">{{ section.label }}</button>
           </div>
           </template>
         </nav>
@@ -911,7 +910,7 @@ watch(() => user.value && !user.value.must_change_password ? user.value.id : nul
       <div class="work-area" :class="{ 'review-work-area': page === 'review-records', 'board-work-area': page === 'task-board', 'plan-work-area': planBoardOpen }"><p v-if="notice" class="message" :class="{ error: saveStatus === 'failed' || saveStatus === 'conflict' }" role="alert">{{ notice }}</p>
       <p v-if="messageJumpNotice" class="message error" role="alert">{{ messageJumpNotice }}</p>
       <ReviewConfig v-if="page === 'review-config' && isAdmin" :key="user.id" :account-id="user.id" />
-      <Deployments v-else-if="page === 'deployments'" :key="user.id" :admin="isAdmin" :section="deploymentSection" />
+      <Deployments v-else-if="deploymentSection" :key="user.id" :admin="isAdmin" :section="deploymentSection" />
       <ScheduledTasks v-else-if="page === 'scheduled-tasks' && isAdmin" :key="user.id" />
       <ReviewRecords v-else-if="page === 'review-records'" ref="reviewRecords" :day="reviewDay" :summary-request="summaryRequest" :refresh-key="reviewRefresh" />
       <MessageCenter v-else-if="page === 'messages'" :admin="isAdmin" :jump-to-message="jumpToMessage" :refresh-key="messagesRefresh" @change="refreshUnread" />

@@ -19,7 +19,7 @@ export type MeetingPerson = Pick<User, 'id' | 'username' | 'display_name'>
 export interface Meeting { revision?: number; id: number; meeting_date: string; meeting_type: string; content: string; needs_follow_up: boolean; creator: MeetingPerson | null; updaters: MeetingPerson[]; tasks: MeetingTask[] }
 export interface MeetingPage { items: Meeting[]; total: number; page: number; page_size: number }
 
-export interface MessageTarget { date?: string; board_task?: number }
+export interface MessageTarget { date?: string; board_task?: number; deployment_plan?: number }
 export interface LiveMessage {
   id: number
   kind: '转交任务' | '会议指派' | '代码审查' | '系统通知' | '发版检查'

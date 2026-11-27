@@ -129,28 +129,63 @@ test('发版桌面通知在多个页签只显示一次，点击回到系统并�
   expect((await desktopCounts()).reduce((sum, count) => sum + count, 0)).toBe(1)
 })
 
-test('发版检查派发同时展示桌面通知和站内提醒', async ({ page }) => {
+test('发版检查从消息中心、站内提醒和桌面通知直达发版计划', async ({ page }) => {
   await page.addInitScript(() => {
-    const state = Object.assign(window, { deploymentDesktopTitles: [] as string[] })
+    const state = Object.assign(window, { deploymentNotices: [] as Notification[] })
     window.Notification = class {
       static permission = 'granted'
-      constructor(title: string) { state.deploymentDesktopTitles.push(title) }
+      onclick: Notification['onclick'] = null
+      constructor(readonly title: string) { state.deploymentNotices.push(this as unknown as Notification) }
       close() {}
     } as unknown as typeof Notification
   })
   const user = { id: 3, role: 'user', display_name: '测试用户', must_change_password: false }
-  const message = { id: 99, kind: '发版检查', title: '项目 1.1.0 · 【北京局】核对配置', is_read: false, target: { board_task: 8 }, created_at: '2026-11-26T08:00:00Z' }
+  const message = { id: 99, kind: '发版检查', title: '项目 1.1.0 · 【北京局】核对配置', is_read: false, target: { board_task: 8, deployment_plan: 7 }, created_at: '2026-11-26T08:00:00Z' }
+  const marked: unknown[] = []
   await page.route('**/api/auth/me', route => route.fulfill({ json: { user, csrf_token: 'test' } }))
   await page.route('**/api/notifications/unread', route => route.fulfill({ json: { count: 1 } }))
   await page.route('**/api/notifications?*', route => route.fulfill({ json: { items: [message], total: 1 } }))
+  await page.route('**/api/notifications/99', route => {
+    marked.push(route.request().postDataJSON())
+    return route.fulfill({ json: { ok: true } })
+  })
   await page.route('**/api/notifications/stream*', route => route.fulfill({ contentType: 'text/event-stream',
     body: `retry: 50\ndata: ${JSON.stringify({ count: 1, messages: [message], unread_reminder: { enabled: false } })}\n\n`,
   }))
+  await page.route('**/api/deployments/overview', route => route.fulfill({ json: {
+    projects: [], history_projects: [], sites: { beijing: '北京局' }, networks: {}, targets: [],
+  } }))
+  await page.route('**/api/deployments/plans', route => route.fulfill({ json: [] }))
+  await page.route('**/api/deployments/plans/7', route => route.fulfill({ json: {
+    id: 7, project_name: '消息对应项目', site: 'beijing', version: { number: '1.1.0' }, status: 'ready', items: [],
+  } }))
   await page.goto('/messages')
-  await expect(page.locator('.live-message-reminder').getByRole('button', { name: /发版检查.*核对配置/ })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => (window as unknown as { deploymentDesktopTitles: string[] }).deploymentDesktopTitles)).toEqual(['收到发版检查任务'])
+  const reminder = page.locator('.live-message-reminder').getByRole('button', { name: /发版检查.*核对配置/ })
+  await expect(reminder).toBeVisible()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { deploymentNotices: Notification[] }).deploymentNotices.map(item => item.title))).toEqual(['收到发版检查任务'])
   await page.getByRole('region', { name: '消息筛选' }).getByLabel('类型').selectOption('发版检查')
-  await expect(page.getByRole('article').getByText(message.title)).toBeVisible()
+  const row = page.getByRole('article').filter({ hasText: message.title })
+  await row.getByRole('button', { name: '跳转' }).click()
+  const checklist = page.getByRole('dialog', { name: '备忘检查清单' })
+  const openedPlan = async () => {
+    await expect(page).toHaveURL(/\/deployments\/plans\?plan=7$/)
+    await expect(checklist.getByText('消息对应项目 · 北京局 · 1.1.0')).toBeVisible()
+  }
+  await openedPlan()
+  await expect.poll(() => marked).toEqual([{ is_read: true }])
+
+  await checklist.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/plans$/)
+  await reminder.click()
+  await openedPlan()
+
+  await checklist.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page).toHaveURL(/\/deployments\/plans$/)
+  await page.evaluate(() => {
+    const state = window as unknown as { deploymentNotices: Notification[] }
+    state.deploymentNotices[0].onclick?.(new Event('click'))
+  })
+  await openedPlan()
 })
 
 test('未读轮询和即时消息按权限选择提醒，点击桌面通知后标记已读', async ({ page }) => {
